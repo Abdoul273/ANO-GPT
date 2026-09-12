@@ -811,7 +811,8 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "list | search | add | update | delete"},
+                "action": {"type": "STRING", "description": "list | search | add | update (merges new emails/aliases with the existing ones, newest first) | remove_email | remove_alias | remove_phone | delete"},
+                "value": {"type": "STRING", "description": "remove_email/remove_alias: the exact value to remove"},
                 "id": {"type": "STRING"}, "query": {"type": "STRING"},
                 "name": {"type": "STRING"},
                 "aliases": {"type": "ARRAY", "items": {"type": "STRING"}},

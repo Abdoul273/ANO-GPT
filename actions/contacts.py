@@ -52,6 +52,25 @@ def contacts_control(parameters: dict | None = None) -> str:
             except Exception:
                 pass
             return f"Contact enregistré : {contact['name']} ({contact['id']})."
+        if action in {"remove_email", "remove_alias", "remove_phone", "retirer"}:
+            target = str(params.get("id") or params.get("name") or params.get("query") or "")
+            matches = book.find(target)
+            if len(matches) != 1:
+                return (f"Contact introuvable : {target}." if not matches
+                        else f"Plusieurs contacts correspondent à « {target} » : précisez.")
+            row = matches[0]
+            value = str(params.get("value") or params.get("email") or params.get("alias") or "").strip()
+            if action == "remove_phone" or (not value and params.get("phone")):
+                book.save(contact_id=row["id"], phone="")
+                return f"Téléphone retiré pour {row['name']}."
+            if not value:
+                return "Précisez la valeur à retirer."
+            field = "emails" if ("@" in value or action == "remove_email") else "aliases"
+            kept = [v for v in row.get(field) or [] if v.casefold() != value.casefold()]
+            if len(kept) == len(row.get(field) or []):
+                return f"« {value} » n'est pas enregistré pour {row['name']}."
+            book.replace_field(row["id"], field, kept)
+            return f"« {value} » retiré de {row['name']}."
         if action in {"delete", "remove", "supprimer"}:
             value = str(params.get("id") or params.get("query") or params.get("name") or "")
             if not value:
@@ -68,6 +87,7 @@ def contacts_control(parameters: dict | None = None) -> str:
                     pass
             return (f"Contact supprimé : {value}." if deleted
                     else f"Contact introuvable : {value}.")
-        return "Action contact inconnue. Actions : list, search, add, update, delete."
+        return ("Action contact inconnue. Actions : list, search, add, update "
+                "(fusionne e-mails et surnoms), remove_email, remove_alias, remove_phone, delete.")
     except (ContactError, ContactAmbiguous) as exc:
         return f"Erreur contact : {exc}"

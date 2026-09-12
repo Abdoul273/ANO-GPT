@@ -37,3 +37,28 @@ def test_contact_update_and_delete(tmp_path):
     assert book.delete(row["id"])
     assert book.list() == []
 
+
+
+def test_update_merges_and_prefers_newest(tmp_path):
+    book = ContactsBook(tmp_path / "contacts.json")
+    row = book.save(name="Maman", emails=["maman@old.org"], phone="06 12 34 56 78")
+    book.save(contact_id=row["id"], emails=["maman@new.org"], aliases=["mère"])
+    updated = book.find("maman")[0]
+    assert updated["emails"] == ["maman@new.org", "maman@old.org"]
+    assert updated["aliases"] == ["mère"]
+    assert updated["phone"] == "0612345678"
+    assert book.resolve("mere", "email").value == "maman@new.org"
+
+
+def test_fuzzy_find_tolerates_transcription(tmp_path):
+    book = ContactsBook(tmp_path / "contacts.json")
+    book.save(name="Abdoulaye Diallo")
+    assert book.find("abdoulai")[0]["name"] == "Abdoulaye Diallo"
+    assert book.find("zzzz") == []
+
+
+def test_replace_field_removes_one_email(tmp_path):
+    book = ContactsBook(tmp_path / "contacts.json")
+    row = book.save(name="Paul", emails=["a@x.org", "b@x.org"])
+    book.replace_field(row["id"], "emails", ["b@x.org"])
+    assert book.find("paul")[0]["emails"] == ["b@x.org"]

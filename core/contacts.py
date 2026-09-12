@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import tempfile
@@ -41,6 +42,16 @@ def _fold(value: Any) -> str:
         c for c in unicodedata.normalize("NFKD", str(value or "").casefold())
         if not unicodedata.combining(c)
     ).strip()
+
+
+def _clean_phone(value: Any) -> str:
+    """« 06 12 34 56 78 » → « 0612345678 » ; un « + » de tête est conservé."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    plus = text.startswith("+")
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return ("+" if plus else "") + digits if digits else text
 
 
 def _clean_list(value: Any) -> list[str]:
@@ -107,12 +118,15 @@ class ContactsBook:
                 rows.append(target)
             if name:
                 target["name"] = name
+            # À la voix on *ajoute* une adresse ou un surnom ; remplacer la
+            # liste effacerait ce qui était déjà connu. Fusion sans doublon,
+            # les valeurs nouvelles en tête : c'est la plus récente qui sert.
             if aliases is not None:
-                target["aliases"] = _clean_list(aliases)
+                target["aliases"] = _clean_list(_clean_list(aliases) + list(target.get("aliases") or []))
             if emails is not None:
-                target["emails"] = _clean_list(emails)
+                target["emails"] = _clean_list(_clean_list(emails) + list(target.get("emails") or []))
             if phone is not None:
-                target["phone"] = str(phone or "").strip()
+                target["phone"] = _clean_phone(phone)
             if handles is not None:
                 target["handles"] = {
                     _fold(k): str(v).strip() for k, v in dict(handles).items()
@@ -125,6 +139,19 @@ class ContactsBook:
             target.setdefault("phone", "")
             target.setdefault("handles", {})
             target.setdefault("notes", "")
+            self._write(rows)
+            return dict(target)
+
+    def replace_field(self, contact_id: str, field: str, values: list[str]) -> dict[str, Any]:
+        """Remplace entièrement une liste (e-mails, surnoms) d'un contact."""
+        if field not in {"emails", "aliases"}:
+            raise ContactError(f"Champ non modifiable : {field}")
+        with self._lock:
+            rows = self._read()
+            target = next((r for r in rows if r.get("id") == contact_id), None)
+            if target is None:
+                raise ContactError("Contact introuvable.")
+            target[field] = _clean_list(values)
             self._write(rows)
             return dict(target)
 
@@ -158,7 +185,20 @@ class ContactsBook:
                 prefix.append(row)
             elif any(needle in v for v in folded):
                 partial.append(row)
-        return exact or prefix or partial
+        if exact or prefix or partial:
+            return exact or prefix or partial
+        # Dernier recours : ressemblance tolérante aux fautes de transcription
+        # (« Abdoulaye » dicté « Abdoulai »).
+        fuzzy = []
+        for row in rows:
+            names = [row.get("name", "")] + list(row.get("aliases") or [])
+            words = [w for n in names for w in _fold(n).split()] + [_fold(n) for n in names]
+            best = max((difflib.SequenceMatcher(None, needle, w).ratio() for w in words if w),
+                       default=0.0)
+            if best >= 0.8:
+                fuzzy.append((best, row))
+        fuzzy.sort(key=lambda item: -item[0])
+        return [row for _, row in fuzzy]
 
     def resolve(self, query: str, channel: str = "") -> ResolvedContact | None:
         matches = self.find(query)
