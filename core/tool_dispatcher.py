@@ -741,7 +741,7 @@ TOOL_DECLARATIONS = [
                 "provider": {"type": "STRING", "description": "auto | google | caldav"},
                 "id": {"type": "STRING", "description": "Identifiant de l'événement pour update/delete"},
                 "title": {"type": "STRING", "description": "Titre du rendez-vous"},
-                "start": {"type": "STRING", "description": "Début ISO 8601 ou date AAAA-MM-JJ"},
+                "start": {"type": "STRING", "description": "Début ISO 8601, date AAAA-MM-JJ, ou période dictée pour list : aujourd'hui, demain, cette semaine, semaine prochaine, ce week-end, ce mois, vendredi, 3 prochains jours"},
                 "end": {"type": "STRING", "description": "Fin ISO 8601 ou date AAAA-MM-JJ"},
                 "description": {"type": "STRING"},
                 "location": {"type": "STRING"},
