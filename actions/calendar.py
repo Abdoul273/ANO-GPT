@@ -115,15 +115,15 @@ _MONTHS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août"
 
 def _human_when(start: Any, end: Any = None) -> str:
     """« mardi 15 sept. 14:00–15:00 » plutôt qu'un ISO 8601 lu à la voix."""
+    if isinstance(start, str) and len(start.strip()) == 10:
+        try:
+            d = date.fromisoformat(start.strip())
+            return f"{_DAYS_FR[d.weekday()]} {d.day} {_MONTHS_FR[d.month - 1]} (journée)"
+        except ValueError:
+            return start
     try:
         s = start if isinstance(start, datetime) else datetime.fromisoformat(str(start).replace("Z", "+00:00"))
     except (TypeError, ValueError):
-        if isinstance(start, str) and len(start) == 10:
-            try:
-                d = date.fromisoformat(start)
-                return f"{_DAYS_FR[d.weekday()]} {d.day} {_MONTHS_FR[d.month - 1]} (journée)"
-            except ValueError:
-                pass
         return str(start)
     if s.tzinfo is not None:
         s = s.astimezone()
