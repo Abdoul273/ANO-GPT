@@ -19,11 +19,11 @@ Corrections par rapport à l'ancienne version :
     - helpers mémoire rendus tolérants aux structures malformées.
 """
 import asyncio
+from core import action_kit as kit
 import json
 import math
 import re
 import shutil
-import subprocess
 import threading
 import time
 from collections import deque
@@ -399,9 +399,9 @@ def _cache_reclaimable_gib() -> float:
     if not existing or not shutil.which("du"):
         return 0.0
     try:
-        result = subprocess.run(
-            ["du", "-sb", "--", *existing], capture_output=True, text=True,
-            timeout=8, check=False,
+        result = kit.run(
+            ["du", "-sb", "--", *existing],
+            timeout=8,
         )
         total = sum(int(line.split()[0]) for line in result.stdout.splitlines() if line.split())
         return total / (1024 ** 3)
@@ -413,9 +413,8 @@ def desktop_blocks_proactivity() -> str:
     """Renvoie la raison de blocage : plein écran ou appel/micro capturé."""
     if shutil.which("hyprctl"):
         try:
-            result = subprocess.run(
-                ["hyprctl", "-j", "activewindow"], capture_output=True,
-                text=True, timeout=0.8, check=False,
+            result = kit.run(
+                ["hyprctl", "-j", "activewindow"], timeout=0.8,
             )
             window = json.loads(result.stdout or "{}")
             if bool(window.get("fullscreen")):
@@ -427,9 +426,8 @@ def desktop_blocks_proactivity() -> str:
             pass
     if shutil.which("pactl"):
         try:
-            result = subprocess.run(
-                ["pactl", "list", "source-outputs"], capture_output=True,
-                text=True, timeout=0.8, check=False,
+            result = kit.run(
+                ["pactl", "list", "source-outputs"], timeout=0.8,
             )
             blocks = result.stdout.lower().split("source output #")[1:]
             for block in blocks:

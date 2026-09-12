@@ -5,7 +5,6 @@ Détection intelligente des interpréteurs, screenshot Wayland‑native,
 auto‑fix itératif, et sandboxing virtuel.
 """
 
-import subprocess
 import sys
 import json
 import re
@@ -147,11 +146,11 @@ def _take_screenshot() -> Optional[Path]:
     if os.environ.get("DISPLAY"):
         try:
             if shutil.which("gnome-screenshot"):
-                subprocess.run(["gnome-screenshot", "-f", str(path)], timeout=3)
+                kit.run(["gnome-screenshot", "-f", str(path)], timeout=3)
                 if path.exists():
                     return path
             if shutil.which("import"):
-                subprocess.run(["import", "-window", "root", str(path)], timeout=3)
+                kit.run(["import", "-window", "root", str(path)], timeout=3)
                 if path.exists():
                     return path
         except Exception:
@@ -250,13 +249,15 @@ def _run_file(path: Path, args: list, timeout: int, env=None, shell: str = None)
         cmd = interp + [str(path)] + (args or [])
 
     try:
-        result = subprocess.run(
+        result = kit.run(
             cmd,
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(path.parent),
             env=env or os.environ,
         )
+        if result.timed_out:
+            return f"Timeout after {timeout}s."
+        if result.not_found:
+            return f"Interpreter missing: {cmd[0]}"
         out = result.stdout.strip()
         err = result.stderr.strip()
         parts = []
@@ -265,10 +266,6 @@ def _run_file(path: Path, args: list, timeout: int, env=None, shell: str = None)
         if err:
             parts.append(f"Stderr:\n{err}")
         return "\n".join(parts) if parts else "Executed (no output)."
-    except subprocess.TimeoutExpired:
-        return f"Timeout after {timeout}s."
-    except FileNotFoundError:
-        return f"Interpreter missing: {cmd[0]}"
     except Exception as e:
         return f"Execution error: {e}"
 

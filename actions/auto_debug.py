@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 from pathlib import Path
 import shutil
-import subprocess
 from core.auto_debug import auto_debug_live, generate_debug_diagnostic
 
 from core import action_kit as kit
@@ -30,17 +29,17 @@ def _apply_verified_unified_patch(target: Path, diff: str) -> str:
     if hunks_at < 0:
         return "Le patch ne contient aucun hunk ; aucun fichier n'a été modifié."
     normalized = f"--- {target.name}\n+++ {target.name}" + diff[hunks_at:]
-    dry_run = subprocess.run(
+    dry_run = kit.run(
         ["patch", "--dry-run", "--batch", "--forward", target.name],
-        cwd=target.parent, input=normalized, text=True, capture_output=True, timeout=8,
+        cwd=target.parent, stdin=normalized, timeout=8,
     )
     if dry_run.returncode != 0:
         return "Le patch ne s'applique pas proprement au fichier actuel ; aucun fichier n'a été modifié."
     backup = target.with_suffix(target.suffix + ".bak")
     shutil.copy2(target, backup)
-    result = subprocess.run(
+    result = kit.run(
         ["patch", "--batch", "--forward", target.name],
-        cwd=target.parent, input=normalized, text=True, capture_output=True, timeout=8,
+        cwd=target.parent, stdin=normalized, timeout=8,
     )
     if result.returncode != 0:
         shutil.copy2(backup, target)

@@ -60,8 +60,8 @@ def test_browser_manager_ignores_previous_firefox_session(monkeypatch):
 def test_legacy_web_opener_ignores_firefox_argument(monkeypatch):
     from actions import web_control
     monkeypatch.setattr(policy, "chrome_binary", lambda: "/usr/bin/google-chrome-stable")
-    launch = Mock()
-    monkeypatch.setattr(web_control.subprocess, "Popen", launch)
+    launch = Mock(return_value=4242)
+    monkeypatch.setattr(web_control.kit, "spawn", launch)
     monkeypatch.setattr(web_control, "_WAYLAND", False)
     result = web_control.open_url("https://example.com", browser="firefox")
     assert launch.call_args.args[0] == ["/usr/bin/google-chrome-stable", "https://example.com"]

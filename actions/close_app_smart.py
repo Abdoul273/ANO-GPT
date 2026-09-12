@@ -27,7 +27,6 @@ Corrections clés par rapport à l'ancienne version :
 import os
 import re
 import shutil
-import subprocess
 from core import action_kit as kit
 import time
 import unicodedata
@@ -55,14 +54,10 @@ except Exception:
     class CommandExecutor:
         @staticmethod
         def run(cmd: str, timeout: float = 5):
-            try:
-                p = subprocess.run(cmd, shell=True, capture_output=True,
-                                   text=True, timeout=timeout)
-                return p.returncode == 0, p.stdout or "", p.stderr or ""
-            except subprocess.TimeoutExpired:
+            p = kit.run(cmd, shell=True, timeout=timeout)
+            if p.timed_out:
                 return False, "", "timeout"
-            except Exception as e:
-                return False, "", str(e)
+            return p.ok, p.out, p.err
 
     def handle_tool_error(e: Exception, ctx: str) -> str:
         return f"❌ Erreur ({ctx}) : {e}"
@@ -296,8 +291,7 @@ def _find_pids(tokens: set) -> List[int]:
                 continue
             pat = re.escape(t) if " " in t else rf"(^|/){re.escape(t)}( |$)"
             try:
-                r = subprocess.run(["pgrep", "-f", pat], capture_output=True,
-                                   text=True, timeout=3)
+                r = kit.run(["pgrep", "-f", pat], timeout=3)
                 for line in (r.stdout or "").splitlines():
                     if line.strip().isdigit():
                         pids.add(int(line.strip()))

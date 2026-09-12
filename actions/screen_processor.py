@@ -5,6 +5,7 @@ Corrections clés : capture Wayland via grim (mss renvoie du noir sous Hyprland)
 chemins config corrigés, gestion d'erreurs robuste, modèle Live configurable.
 """
 from __future__ import annotations
+from core import action_kit as kit
 
 import asyncio
 import base64
@@ -13,7 +14,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -181,7 +181,7 @@ def _capture_screen_grim(target: str = "active_window") -> bytes:
         )
     tmp = Path(tempfile.mktemp(suffix=".png"))
     try:
-        r = subprocess.run(["grim", str(tmp)], capture_output=True, text=True, timeout=15)
+        r = kit.run(["grim", str(tmp)], timeout=15)
         if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
             err = (r.stderr or "").strip() or "image vide"
             raise RuntimeError(f"grim a échoué : {err}")

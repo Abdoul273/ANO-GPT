@@ -30,7 +30,6 @@ POPEN_HERITAGE = {
     "actions/music.py",
     "actions/open_app.py",
     "actions/shell_exec.py",
-    "actions/web_control.py",
     "core/audio_capture.py",
     "core/audio_router.py",
     "core/browser_policy.py",

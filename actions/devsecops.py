@@ -38,7 +38,6 @@ import os
 import re
 import shlex
 import shutil
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -75,32 +74,15 @@ def _run_cmd(
             current_path = f"{ep}:{current_path}"
     run_env["PATH"] = current_path
 
-    try:
-        if isinstance(cmd, str):
-            proc = subprocess.run(
-                cmd,
-                shell=True,
-                cwd=work_dir,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=run_env,
-            )
-        else:
-            proc = subprocess.run(
-                cmd,
-                shell=False,
-                cwd=work_dir,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=run_env,
-            )
-        return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
-    except subprocess.TimeoutExpired:
+    proc = kit.run(cmd, shell=isinstance(cmd, str), cwd=work_dir,
+                   timeout=timeout, env=run_env)
+    if proc.timed_out:
         return -1, "", f"Délai d'exécution dépassé ({timeout}s)"
-    except Exception as e:
-        return -1, "", str(e)
+    if proc.not_found:
+        return -1, "", proc.reason()
+    if proc.code == -1 and not proc.out:
+        return -1, "", proc.err
+    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
 # ════════════════════════════════════════════════════════════════════════════

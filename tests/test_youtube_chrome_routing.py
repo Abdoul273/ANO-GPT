@@ -112,7 +112,6 @@ def test_youtube_video_play_opens_in_chrome(monkeypatch: pytest.MonkeyPatch) -> 
         return proc
 
     monkeypatch.setattr(subprocess, "Popen", mock_popen)
-    monkeypatch.setattr(youtube_action.subprocess, "Popen", mock_popen)
 
     def mock_which(cmd: str) -> str | None:
         if cmd in ("google-chrome-stable", "google-chrome", "chromium"):

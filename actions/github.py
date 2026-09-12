@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -17,14 +16,12 @@ _PROJECT_ROOTS = (Path.home() / "OUTILS", Path.home() / "Documents", Path.home()
 
 
 def _run(args: list[str], cwd: Path, *, timeout: float = 45, env: dict[str, str] | None = None) -> tuple[int, str, str]:
-    try:
-        proc = subprocess.run(args, cwd=cwd, text=True, capture_output=True, timeout=timeout,
-                              env={**os.environ, **(env or {})})
-        return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
-    except subprocess.TimeoutExpired:
+    proc = kit.run(args, cwd=str(cwd), timeout=timeout, env=env)
+    if proc.timed_out:
         return -1, "", "Délai Git dépassé."
-    except OSError as exc:
-        return -1, "", str(exc)
+    if proc.not_found:
+        return -1, "", proc.reason()
+    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
 def _project(value: str) -> Path:

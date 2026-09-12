@@ -9,11 +9,11 @@ Fonctionne sous Linux/macOS/Windows, avec :
 - scoring amélioré (tokens, sous‑chaîne, dossier parent)
 """
 from __future__ import annotations
+from core import action_kit as kit
 
 import os
 import re
 import shutil
-import subprocess
 import time
 import unicodedata
 from pathlib import Path
@@ -38,9 +38,8 @@ def _plocate_candidates(
     candidates: Dict[Path, None] = {}
     for term in terms[:3]:
         try:
-            process = subprocess.run(
-                ["plocate", "-i", "--existing", "--limit", "800", term],
-                capture_output=True, text=True, timeout=2,
+            process = kit.run(
+                ["plocate", "-i", "--existing", "--limit", "800", term], timeout=2,
             )
         except Exception:
             continue
@@ -95,8 +94,8 @@ def _fd_candidates(
             command.extend(["--extension", ext.lstrip(".")])
         command.extend([query, str(root)])
         try:
-            process = subprocess.run(
-                command, capture_output=True, text=True, timeout=3,
+            process = kit.run(
+                command, timeout=3,
             )
         except Exception:
             continue

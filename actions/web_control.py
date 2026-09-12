@@ -6,7 +6,6 @@ Optimisé pour Arch Linux / Hyprland (Wayland), multi-moteurs, workspace-aware.
 import os
 import re
 import shutil
-import subprocess
 from core import action_kit as kit
 import time
 from pathlib import Path
@@ -48,20 +47,16 @@ except Exception:
     class CommandExecutor:
         @staticmethod
         def run(cmd: str, timeout: float = 5.0):
-            try:
-                p = subprocess.run(cmd, shell=True, capture_output=True,
-                                   text=True, timeout=timeout)
-                return p.returncode == 0, p.stdout or "", p.stderr or ""
-            except subprocess.TimeoutExpired:
+            p = kit.run(cmd, shell=True, timeout=timeout)
+            if p.timed_out:
                 return False, "", "timeout"
-            except Exception as e:
-                return False, "", str(e)
+            return p.ok, p.out, p.err
 
     def handle_tool_error(e: Exception, ctx: str) -> str:
         return f"❌ Erreur ({ctx}) : {e}"
 
     def check_command_exists(cmd: str) -> bool:
-        return shutil.which(cmd) is not None
+        return kit.which(cmd) is not None
 
 # ── Hyprland / Wayland helpers ─────────────────────────────────────────────
 _WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY"))
@@ -139,7 +134,7 @@ def _move_new_browser_window(needle: Optional[str], workspace,
                              before: set, timeout: float = 4.0) -> bool:
     """Attend qu'une nouvelle fenêtre navigateur apparaisse et la déplace
     silencieusement vers le bureau demandé."""
-    if not (_WAYLAND and shutil.which("hyprctl")):
+    if not (_WAYLAND and kit.which("hyprctl")):
         return False
     try:
         ws = str(int(workspace))
@@ -189,12 +184,12 @@ def _resolve_browser_binary(name: Optional[str]) -> Optional[str]:
     if not name:
         return None
     key = name.lower().strip()
-    if shutil.which(key):
+    if kit.which(key):
         return key
     for alias, bins in BROWSERS.items():
         if key == alias or key in bins:
             for b in bins:
-                if shutil.which(b):
+                if kit.which(b):
                     return b
     return None
 
@@ -273,14 +268,10 @@ def _open_and_maybe_move(url: str, browser: Optional[str] = None,
         return "❌ Google Chrome est introuvable. Aucun autre navigateur n’a été ouvert."
     binary = _get_default_browser()
     before: set = set()
-    if _WAYLAND and shutil.which("hyprctl"):
+    if _WAYLAND and kit.which("hyprctl"):
         before = {c.get("address", "") for c in (_hyprctl_json("clients") or [])}
-    cmd = [binary, url]
-    try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True, env=_hypr_env())
-    except Exception as e:
-        return handle_tool_error(e, "open_url")
+    if kit.spawn([binary, url], env=_hypr_env()) is None:
+        return handle_tool_error(RuntimeError(f"lancement de {binary} refusé"), "open_url")
     ws_note = ""
     if workspace is not None:
         needle = Path(binary).name.lower() if binary else None

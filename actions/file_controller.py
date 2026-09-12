@@ -34,7 +34,6 @@ import re
 import json
 import shutil
 import platform
-import subprocess
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
@@ -140,8 +139,7 @@ def _xdg_dir(env_var: str, fallbacks: List[str]) -> Path:
         if shutil.which("xdg-user-dir"):
             try:
                 key = env_var.replace("XDG_", "").replace("_DIR", "")
-                r = subprocess.run(["xdg-user-dir", key], capture_output=True,
-                                   text=True, timeout=2)
+                r = kit.run(["xdg-user-dir", key], timeout=2)
                 p = Path(r.stdout.strip()).expanduser()
                 if r.returncode == 0 and p.is_dir():
                     return p

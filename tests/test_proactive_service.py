@@ -104,7 +104,7 @@ def test_plein_ecran_bloque_la_prise_de_parole(monkeypatch):
         lambda name: f"/usr/bin/{name}" if name == "hyprctl" else None,
     )
     monkeypatch.setattr(
-        proactive.subprocess, "run",
+        proactive.kit, "run",
         lambda *args, **kwargs: SimpleNamespace(
             returncode=0, stdout='{"class":"mpv","fullscreen":2}'
         ),
@@ -118,7 +118,7 @@ def test_un_appel_pipewire_bloque_la_prise_de_parole(monkeypatch):
         lambda name: f"/usr/bin/{name}" if name == "pactl" else None,
     )
     monkeypatch.setattr(
-        proactive.subprocess, "run",
+        proactive.kit, "run",
         lambda *args, **kwargs: SimpleNamespace(
             returncode=0,
             stdout=(

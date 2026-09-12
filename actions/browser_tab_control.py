@@ -21,7 +21,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 from core import action_kit as kit
 import time
 import urllib.request
@@ -50,14 +49,10 @@ except Exception:
     class CommandExecutor:
         @staticmethod
         def run(cmd: str, timeout: float = 5):
-            try:
-                p = subprocess.run(cmd, shell=True, capture_output=True,
-                                   text=True, timeout=timeout)
-                return p.returncode == 0, p.stdout or "", p.stderr or ""
-            except subprocess.TimeoutExpired:
+            p = kit.run(cmd, shell=True, timeout=timeout)
+            if p.timed_out:
                 return False, "", "timeout"
-            except Exception as e:
-                return False, "", str(e)
+            return p.ok, p.out, p.err
 
     def handle_tool_error(e: Exception, ctx: str) -> str:
         return f"❌ Erreur ({ctx}) : {e}"
@@ -302,8 +297,7 @@ def get_open_tabs() -> List[Dict[str, str]]:
     # 4 champs : <window-id> <desktop> <host> <titre…> → jamais de match.
     if shutil.which("wmctrl"):
         try:
-            r = subprocess.run(["wmctrl", "-l"], capture_output=True,
-                               text=True, timeout=2)
+            r = kit.run(["wmctrl", "-l"], timeout=2)
             if r.returncode == 0:
                 for line in r.stdout.splitlines():
                     parts = line.split(None, 3)

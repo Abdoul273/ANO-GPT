@@ -7,7 +7,6 @@ import json
 import re
 import sys
 import shutil
-import subprocess
 import platform
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -279,9 +278,8 @@ def _ytdlp_first_video_url(query: str) -> Optional[str]:
     if not shutil.which("yt-dlp"):
         return None
     try:
-        r = subprocess.run(
-            ["yt-dlp", f"ytsearch1:{query}", "--get-id", "--no-warnings"],
-            capture_output=True, text=True, timeout=30,
+        r = kit.run(
+            ["yt-dlp", f"ytsearch1:{query}", "--get-id", "--no-warnings"], timeout=30,
         )
         lines = [l.strip() for l in (r.stdout or "").splitlines() if l.strip()]
         if lines:

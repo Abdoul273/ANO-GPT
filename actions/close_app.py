@@ -19,7 +19,6 @@ Améliorations clés :
 """
 import os
 import platform
-import subprocess
 from core import action_kit as kit
 import time
 import logging
@@ -130,8 +129,8 @@ def _strip_accents(s: str) -> str:
                    if not unicodedata.combining(c))
 
 
-def _run(cmd: List[str], timeout: float = 4.0) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def _run(cmd: List[str], timeout: float = 4.0) -> kit.ProcResult:
+    return kit.run(cmd, timeout=timeout)
 
 
 def _pid_exists(pid: int) -> bool:
@@ -553,8 +552,7 @@ def _get_running_app_names() -> Set[str]:
             pass
     if _SYSTEM == "Windows":
         try:
-            out = subprocess.run(["tasklist", "/NH", "/FO", "CSV"],
-                                 capture_output=True, text=True, timeout=4)
+            out = kit.run(["tasklist", "/NH", "/FO", "CSV"], timeout=4)
             for line in (out.stdout or "").splitlines():
                 parts = line.strip().strip('"').split('","')
                 if parts:

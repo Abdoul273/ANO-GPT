@@ -52,7 +52,7 @@ def test_plocate_fast_path_is_ranked_without_full_walk(tmp_path, monkeypatch):
     candidate.touch()
     monkeypatch.setattr(smart_search.shutil, "which", lambda name: "/usr/bin/plocate")
     monkeypatch.setattr(
-        smart_search.subprocess,
+        smart_search.kit,
         "run",
         lambda *args, **kwargs: SimpleNamespace(
             returncode=0, stdout=str(candidate) + "\n", stderr=""
