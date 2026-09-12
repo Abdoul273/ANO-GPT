@@ -33,6 +33,7 @@ import os
 import re
 import json
 import shutil
+import time
 import platform
 from pathlib import Path
 from datetime import datetime
@@ -472,6 +473,45 @@ def open_path(path: str, name: str = "") -> str:
 # Recherche
 # ════════════════════════════════════════════════════════════════════════════
 
+# Dossiers qui gonflent un parcours sans jamais contenir ce que l'utilisateur
+# cherche à la voix : caches, dépendances, dépôts.
+_NOISY_DIRS = frozenset({
+    ".cache", ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv",
+    "venv", ".npm", ".cargo", ".rustup", ".gradle", ".m2", ".local", ".var",
+    ".mozilla", ".config", ".steam", ".wine", "site-packages", ".trash",
+    "Trash", ".thumbnails", "build", "dist", "target",
+})
+
+
+def _iter_files(root: Path, *, budget_s: float = 4.0):
+    """Parcours borné dans le temps, en élaguant les dossiers bruyants.
+
+    `rglob` sur le dossier personnel pouvait durer une minute entière en
+    traversant `.cache` et `node_modules` : ici on saute ces dossiers et on
+    s'arrête quand le budget est consommé — mieux vaut un résultat partiel
+    rapide qu'un tour de parole gelé.
+    """
+    deadline = time.monotonic() + budget_s
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if time.monotonic() > deadline:
+            return
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if entry.name not in _NOISY_DIRS:
+                                stack.append(Path(entry.path))
+                        elif entry.is_file(follow_symlinks=False):
+                            yield Path(entry.path)
+                    except OSError:
+                        continue
+        except (PermissionError, FileNotFoundError, NotADirectoryError, OSError):
+            continue
+
+
 def _fallback_find(query: str, extension: str, search_path: Path,
                    max_results: int) -> List[tuple]:
     """Repli local si actions.smart_search est absent/échoue."""
@@ -479,9 +519,7 @@ def _fallback_find(query: str, extension: str, search_path: Path,
     ext = (extension or "").lower().lstrip(".")
     matches: List[tuple] = []
     try:
-        for item in search_path.rglob("*"):
-            if not item.is_file():
-                continue
+        for item in _iter_files(search_path):
             name_l = item.name.lower()
             if ext and not name_l.endswith("." + ext):
                 continue
@@ -618,12 +656,11 @@ def get_largest_files(path: str = "downloads", count: int = 10) -> str:
         if not search_path.exists():
             return f"Chemin introuvable : {path}"
         files = []
-        for item in search_path.rglob("*"):
-            if item.is_file():
-                try:
-                    files.append((item.stat().st_size, item))
-                except Exception:
-                    continue
+        for item in _iter_files(search_path, budget_s=8.0):
+            try:
+                files.append((item.stat().st_size, item))
+            except Exception:
+                continue
         files.sort(reverse=True)
         top = files[:count]
         if not top:
