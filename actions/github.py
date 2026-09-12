@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -136,6 +137,113 @@ def _create_repo(name: str, private: bool) -> dict[str, Any]:
     })
 
 
+def _repo_slug(path: Path) -> str:
+    """« owner/repo » depuis l'URL du remote origin (https ou ssh)."""
+    remote = _remote(path)
+    m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", remote)
+    if not m:
+        raise GitHubError("Le remote origin n'est pas un dépôt GitHub.")
+    return f"{m.group(1)}/{m.group(2)}"
+
+
+def _pull(path: Path, branch: str) -> str:
+    """Récupère et rebase proprement : jamais de pull forcé, les modifications
+    locales sont mises de côté puis restaurées."""
+    if not _remote(path):
+        raise GitHubError("Aucun remote GitHub configuré pour ce projet.")
+    env, askpass = _askpass_env(get_github_service().token())
+    try:
+        code, _, err = _run(["git", "fetch", "origin", branch], path, timeout=90, env=env)
+    finally:
+        askpass.unlink(missing_ok=True)
+    if code != 0:
+        return f"Récupération GitHub échouée : {err}"
+    _, dirty, _ = _run(["git", "status", "--porcelain"], path)
+    stashed = False
+    if dirty.strip():
+        code, _, err = _run(["git", "stash", "push", "--include-untracked", "-m", "anogpt-pull"], path)
+        stashed = code == 0
+    code, out, err = _run(["git", "rebase", f"origin/{branch}"], path, timeout=60)
+    if code != 0:
+        _run(["git", "rebase", "--abort"], path)
+        if stashed:
+            _run(["git", "stash", "pop"], path)
+        return ("⚠️ Rebase impossible sans conflit : rien n'a été modifié. "
+                "Résolvez les conflits à la main ou demandez-moi le détail des différences.")
+    if stashed:
+        code, _, err = _run(["git", "stash", "pop"], path)
+        if code != 0:
+            return ("Dépôt à jour, mais vos modifications locales mises de côté n'ont pas pu être "
+                    "réappliquées automatiquement : elles sont dans `git stash list`.")
+    _, last, _ = _run(["git", "log", "-1", "--format=%h %s"], path)
+    return f"✅ {path.name} à jour sur origin/{branch}. Dernier commit : {last}."
+
+
+def _log(path: Path, count: int) -> str:
+    _ensure_git(path)
+    _, out, err = _run(["git", "log", f"-{count}", "--format=%h · %ar · %an · %s"], path)
+    if not out:
+        return f"Aucun commit dans {path.name}." if not err else f"Historique illisible : {err}"
+    return f"Derniers commits de {path.name} :\n" + out
+
+
+def _changes(path: Path) -> str:
+    _ensure_git(path)
+    _, short, _ = _run(["git", "status", "--short"], path)
+    _, stat, _ = _run(["git", "diff", "--stat", "HEAD"], path)
+    if not short.strip():
+        return f"Aucune modification en attente dans {path.name}."
+    files = [line for line in short.splitlines() if line.strip()]
+    summary = stat.splitlines()[-1].strip() if stat.strip() else ""
+    return (f"{len(files)} fichier(s) modifié(s) dans {path.name}" + (f" ({summary})" if summary else "")
+            + " :\n" + "\n".join(files[:40]) + ("\n…" if len(files) > 40 else ""))
+
+
+def _issues(path: Path, state: str, kind: str) -> str:
+    slug = _repo_slug(path)
+    endpoint = "pulls" if kind == "pulls" else "issues"
+    items = get_github_service().api("GET", f"/repos/{slug}/{endpoint}?state={state}&per_page=30")
+    if not isinstance(items, list):
+        raise GitHubError("Réponse GitHub invalide.")
+    if kind == "issues":
+        items = [i for i in items if isinstance(i, dict) and "pull_request" not in i]
+    label = "pull requests" if kind == "pulls" else "issues"
+    if not items:
+        return f"Aucune {label[:-1] if kind == 'pulls' else 'issue'} {state} sur {slug}."
+    return f"{len(items)} {label} ({state}) sur {slug} :\n" + "\n".join(
+        f"- #{i.get('number')} {i.get('title')} — {i.get('user', {}).get('login', '?')}"
+        for i in items if isinstance(i, dict))
+
+
+def _create_issue(path: Path, title: str, body: str) -> str:
+    if not title:
+        raise GitHubError("Donnez un titre à l'issue.")
+    slug = _repo_slug(path)
+    issue = get_github_service().api("POST", f"/repos/{slug}/issues",
+                                     payload={"title": title, "body": body or ""})
+    return f"Issue créée : #{issue.get('number')} {issue.get('title')} — {issue.get('html_url')}"
+
+
+def _clone(url: str, dest: str) -> str:
+    url = str(url or "").strip()
+    if not url:
+        raise GitHubError("Donnez l'URL ou le « owner/repo » à cloner.")
+    if re.fullmatch(r"[\w.-]+/[\w.-]+", url):
+        url = f"https://github.com/{url}.git"
+    root = Path(dest).expanduser() if dest else _PROJECT_ROOTS[0]
+    root.mkdir(parents=True, exist_ok=True)
+    name = Path(url.rstrip("/")).name.removesuffix(".git")
+    target = root / name
+    if target.exists():
+        return f"Le dossier {target} existe déjà."
+    env, askpass = _askpass_env(get_github_service().token())
+    try:
+        code, _, err = _run(["git", "clone", url, str(target)], root, timeout=300, env=env)
+    finally:
+        askpass.unlink(missing_ok=True)
+    return f"✅ Cloné dans {target}." if code == 0 else f"Clonage échoué : {err}"
+
+
 def _status(path: Path) -> str:
     _ensure_git(path)
     branch = _branch(path)
@@ -193,6 +301,8 @@ def github_control(parameters: dict | None = None, ui=None) -> str:
             )
 
         project_ref = str(params.get("project") or params.get("path") or "")
+        if action in {"clone"}:
+            return _clone(str(params.get("url") or params.get("repo_name") or ""), str(params.get("dest") or ""))
         if action in {"create_repo", "create", "new_repo"} and not project_ref:
             repo = _create_repo(str(params.get("repo_name") or ""), bool(params.get("private", True)))
             return f"Dépôt GitHub créé : {repo.get('full_name')}."
@@ -235,6 +345,25 @@ def github_control(parameters: dict | None = None, ui=None) -> str:
             return summary
         if action in {"project_status", "local_status"}:
             return _status(path)
-        raise GitHubError("Action GitHub inconnue : status, connect, disconnect, list, init, create_repo, commit, push, commit_push ou backup_enable.")
+        if action in {"pull", "sync", "fetch", "rebase", "update"}:
+            _ensure_git(path)
+            return _pull(path, str(params.get("branch") or _branch(path)))
+        if action in {"log", "history", "commits"}:
+            try:
+                count = max(1, min(int(params.get("count") or 10), 50))
+            except (TypeError, ValueError):
+                count = 10
+            return _log(path, count)
+        if action in {"changes", "diff", "pending"}:
+            return _changes(path)
+        if action in {"issues", "list_issues"}:
+            return _issues(path, str(params.get("state") or "open"), "issues")
+        if action in {"prs", "pull_requests", "list_prs"}:
+            return _issues(path, str(params.get("state") or "open"), "pulls")
+        if action in {"create_issue", "new_issue", "issue"}:
+            return _create_issue(path, str(params.get("title") or params.get("message") or ""),
+                                 str(params.get("body") or ""))
+        raise GitHubError("Action GitHub inconnue : status, connect, disconnect, list, clone, init, create_repo, "
+                          "commit, push, commit_push, pull, log, changes, issues, prs, create_issue ou backup_enable.")
     except (GitHubError, GitHubSetupRequired) as exc:
         return str(exc)

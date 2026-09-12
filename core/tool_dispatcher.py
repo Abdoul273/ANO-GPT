@@ -1028,7 +1028,12 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "status | connect | disconnect | list | init | create_repo | project_status | commit | push | commit_push | backup_enable | backup_disable"},
+                "action": {"type": "STRING", "description": "status | connect | disconnect | list | clone | init | create_repo | project_status | commit | push | commit_push | pull (fetch + rebase sûr, modifications locales mises de côté) | log | changes | issues | prs | create_issue | backup_enable | backup_disable"},
+                "url": {"type": "STRING", "description": "clone : URL ou owner/repo"},
+                "title": {"type": "STRING", "description": "create_issue : titre"},
+                "body": {"type": "STRING", "description": "create_issue : description"},
+                "state": {"type": "STRING", "description": "issues/prs : open (défaut), closed ou all"},
+                "count": {"type": "INTEGER", "description": "log : nombre de commits (défaut 10)"},
                 "project": {"type": "STRING", "description": "Nom ou chemin du projet local"},
                 "path": {"type": "STRING", "description": "Chemin local explicite"},
                 "repo_name": {"type": "STRING", "description": "Nom du dépôt ; défaut dossier"},
