@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import QSizePolicy
 from ui.core.qtflags import _GL_BASE
 from ui.orb.arc_paint import _HudPaintMixin
 from ui.orb.arc_sprites import _HudSpritesMixin
-from ui.styles.theme import C
 
 # ── HUD Orb natif QPainter — « ARC CORE » (moteur 3D temps réel) ─────────────
 
@@ -65,13 +64,26 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         },
     }
 
-    _LATS = 5        # parallèles de la sphère filaire
-    _LONS = 12       # méridiens
-    _SEG  = 32       # segments par courbe
     _ZBUCKETS = 4    # niveaux de profondeur (1 tracé groupé par niveau)
-    _CAM  = 3.1      # distance caméra (perspective)
+    _CAM  = 3.1      # distance caméra (perspective) pour le nuage
+    _RING_CAM = 7.0  # les anneaux, plus larges, gardent une ellipse lisible
     _SPEC_N = 48     # barres du spectre radial
-    _MOTES  = 52     # poussières libres : proches, lointaines et orbitales
+    # Rayon de la sphère par rapport au petit côté : le réticule extérieur
+    # (1,56 R) doit tenir dans le cadre même sur une fenêtre carrée.
+    _ORB_SCALE = 0.31
+    # Anneaux gyroscopiques : (rayon relatif, inclinaison, vitesse °/s).
+    _RING_SPECS = ((1.12, 1.15, 22.0), (1.24, -0.85, -31.0), (1.38, 0.38, 15.0))
+    _RING_SEG = 48
+    # Cadence : 30 images/s dès que l'orbe est visible. Le coût mesuré d'une
+    # image (simulation + peinture) fait reculer la cadence avant qu'elle ne
+    # mange le temps de la voix : jamais plus de ~40 % du thread Qt.
+    _FRAME_MS = 33
+    # Pendant la voix, le micro et la synthèse ont besoin du GIL : 25 images/s
+    # restent fluides à l'œil et rendent un tiers du temps au moteur audio.
+    _FRAME_MS_VOICE = 40
+    _FRAME_MS_BATTERY = 40
+    _FRAME_MS_MAX = 80
+    _FRAME_MS_SLEEP = 500
     # Un canevas Qt/Python ne bénéficie pas du parallélisme du WebGL : limiter
     # aussi le *calcul* (pas seulement le dessin) est indispensable au micro.
     _PARTICLE_N = 240
@@ -119,12 +131,12 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         # rayon, agitation, taille, lumière, densité des liens, électrons, vortex
         # Rayon constant : chaque état se distingue par le mouvement, la
         # couleur et les échanges, jamais par une sphère qui se contracte.
-        "idle":      (1.00, 0.12, 0.35, 0.42, 0.12, 0.00, 0.00),
-        "listening": (1.00, 0.22, 0.42, 0.72, 0.38, 0.00, 0.00),
-        "thinking":  (1.00, 0.28, 0.40, 0.74, 1.00, 0.015, 0.00),
-        "speaking": (1.00, 0.32, 0.50, 0.86, 0.90, 0.010, 1.40),
-        "acting":   (1.00, 0.38, 0.52, 0.92, 0.76, 0.010, 1.65),
-        "error":    (1.00, 0.30, 0.48, 0.82, 0.62, 0.00, 0.55),
+        "idle":      (1.00, 0.12, 0.35, 0.62, 0.12, 0.00, 0.00),
+        "listening": (1.00, 0.22, 0.42, 0.86, 0.38, 0.00, 0.00),
+        "thinking":  (1.00, 0.28, 0.40, 0.88, 1.00, 0.015, 0.00),
+        "speaking": (1.00, 0.32, 0.50, 1.00, 0.90, 0.010, 1.40),
+        "acting":   (1.00, 0.38, 0.52, 1.00, 0.76, 0.010, 1.65),
+        "error":    (1.00, 0.30, 0.48, 0.92, 0.62, 0.00, 0.55),
     }
 
     def __init__(self, face_path: str, assistant_name: str = "ANO-GPT", parent=None):
@@ -141,6 +153,7 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
 
         # ── Horloge / dynamique ─────────────────────────────────────────────
         self._t0     = time.monotonic()
+        self._last_tick = self._t0
         self._volume = 0.0
         self._target_vol = 0.0
         self._last_ext_vol_t = 0.0
@@ -191,19 +204,14 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         self._clock_segments: list[tuple[int, int]] = []
 
         # ── Systèmes dynamiques ─────────────────────────────────────────────
-        # harmoniques du contour du noyau : (ordre, amplitude, phase, vitesse)
-        self._core_harm = [
-            (k, a, random.uniform(0, 6.28318), sp)
-            for k, a, sp in ((2, 0.055, 1.3), (3, 0.038, -1.9),
-                             (5, 0.020, 2.4), (7, 0.011, -3.1))
-        ]
-        self._spec       = [0.0] * self._SPEC_N
-        self._spec_seed  = [random.uniform(0, 6.28318) for _ in range(self._SPEC_N)]
-        self._spec_dir   = [(math.cos(2 * math.pi * i / self._SPEC_N - math.pi / 2),
-                             math.sin(2 * math.pi * i / self._SPEC_N - math.pi / 2))
-                            for i in range(self._SPEC_N)]
-        self._motes      = self._init_motes()
-        self._arcs: list[dict] = []
+        self._spec = [0.0] * self._SPEC_N
+        self._spec_seed = [random.uniform(0, 6.28318) for _ in range(self._SPEC_N)]
+        self._ring_specs = self._RING_SPECS
+        self._ring_pts = self._build_circle(self._RING_SEG)
+        self._ring_phase = [random.uniform(0.0, 360.0) for _ in self._RING_SPECS]
+        # Ondes vocales en vol : âge normalisé 0 → 1.
+        self._waves: list[float] = []
+        self._next_wave_at = 0.0
         self._sparks: list[dict] = []
 
         # ── Palette vivante : interpole en douceur vers l'état cible au lieu
@@ -222,13 +230,16 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
 
         # ── Cache de sprites ────────────────────────────────────────────────
         self._cache_key = None
-        self._pm: dict[str, QPixmap] = {}
+        self._pm: dict = {}
 
-        # Deux images/s au repos, 15 FPS pendant la voix : l'orbe reste
-        # présent sans déclencher un repaint XWayland permanent.
-        self._frame_ms = 500.0
-        self._interval = 500
+        # Coût mesuré d'une image (moyennes glissantes, ms) : simulation dans
+        # le tick, peinture dans paintEvent. Ensemble ils pilotent la cadence.
+        self._sim_ms = 2.0
+        self._paint_ms = 4.0
+        self._interval = self._FRAME_MS
+        self._low_power = False
         self._anim_tmr = QTimer(self)
+        self._anim_tmr.setTimerType(Qt.TimerType.PreciseTimer)
         self._anim_tmr.timeout.connect(self._tick)
         self._anim_tmr.start(self._interval)
 
@@ -247,6 +258,20 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
             self._on_battery = bool(b and not b.power_plugged)
         except Exception:
             self._on_battery = False
+        self._apply_interval()
+
+    def hideEvent(self, event) -> None:
+        # Fenêtre cachée : seul le battement lent survit, pour que la bulle
+        # compagnon (qui lit `_energy` et `_volume`) reste vivante.
+        super().hideEvent(event)
+        self._apply_interval()
+
+    def showEvent(self, event) -> None:
+        self._last_tick = time.monotonic()
+        super().showEvent(event)
+        if not self._anim_tmr.isActive():
+            self._anim_tmr.start(self._interval)
+        self._apply_interval()
 
     # ══ Géométrie ════════════════════════════════════════════════════════════
     def _init_particles(self) -> list[dict]:
@@ -281,70 +306,6 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
                 "shuttle_speed": random.uniform(0.72, 1.55),
             })
         return out
-
-    def _init_particle_links(self) -> list[tuple[int, int, float]]:
-        """Filaments stables entre voisins 3D, calculés une seule fois.
-
-        Une grille locale donne un réseau lisible et irrégulier, contrairement
-        à des points voisins dans une permutation qui traverseraient la sphère.
-        """
-        cell = self._LINK_CELL
-        grid: dict[tuple[int, int, int], list[int]] = {}
-        limit = self._ACTIVE_PARTICLE_BUDGET
-        for i, pt in enumerate(self._particles[:limit]):
-            key = (int(math.floor(pt["x"] / cell)), int(math.floor(pt["y"] / cell)),
-                   int(math.floor(pt["z"] / cell)))
-            grid.setdefault(key, []).append(i)
-        links: list[tuple[int, int, float]] = []
-        degree = [0] * limit
-        for i, pt in enumerate(self._particles[:limit]):
-            if degree[i] or len(links) >= 145:
-                continue
-            gx, gy, gz = (int(math.floor(pt["x"] / cell)), int(math.floor(pt["y"] / cell)),
-                          int(math.floor(pt["z"] / cell)))
-            candidate = None
-            for ox in (-1, 0, 1):
-                for oy in (-1, 0, 1):
-                    for oz in (-1, 0, 1):
-                        for j in grid.get((gx + ox, gy + oy, gz + oz), ()):
-                            if j <= i or degree[j]:
-                                continue
-                            other = self._particles[j]
-                            dx, dy, dz = pt["x"] - other["x"], pt["y"] - other["y"], pt["z"] - other["z"]
-                            d2 = dx * dx + dy * dy + dz * dz
-                            if d2 < 0.19 and (candidate is None or d2 < candidate[0]):
-                                candidate = (d2, j)
-            if candidate is not None:
-                d2, j = candidate
-                degree[i] = degree[j] = 1
-                links.append((i, j, math.sqrt(d2)))
-        return links
-
-    @staticmethod
-    def _init_surface_mesh() -> tuple[list[tuple[float, float, float, float]], list[tuple[int, int]]]:
-        """Réseau de voisinage réparti sur une vraie sphère, sans pôles lourds."""
-        count = 420
-        nodes: list[tuple[float, float, float, float]] = []
-        golden = math.pi * (3.0 - math.sqrt(5.0))
-        for i in range(count):
-            y = 1.0 - 2.0 * (i + .5) / count
-            radial = math.sqrt(max(0.0, 1.0 - y * y))
-            phase = (i * 2.39996323) % math.tau
-            angle = i * golden + .035 * math.sin(i * 2.17)
-            radius = .94 + .045 * math.sin(i * 1.91)
-            nodes.append((math.cos(angle) * radial * radius, y * radius,
-                          math.sin(angle) * radial * radius, phase))
-        # Trois voisins géométriques : aucun fil traversant arbitrairement le
-        # volume, seulement des facettes locales organiques.
-        edges: set[tuple[int, int]] = set()
-        for i, (x, y, z, _phase) in enumerate(nodes):
-            nearest = sorted(
-                ((x - ox) ** 2 + (y - oy) ** 2 + (z - oz) ** 2, j)
-                for j, (ox, oy, oz, _other_phase) in enumerate(nodes) if j != i
-            )[:4]
-            for _distance, j in nearest:
-                edges.add((i, j) if i < j else (j, i))
-        return nodes, sorted(edges)
 
     def _particle_budget(self) -> int:
         if self._clock_display_active:
@@ -467,15 +428,20 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
 
     def _update_particles(self, dt: float, t: float) -> None:
         """Physique souple et chorégraphies de figures sans coût GPU/Qt élevé."""
+        # `k` : nombre d'images « de référence » (50 Hz) contenues dans dt.
+        # Tous les amortissements par image sont élevés à cette puissance :
+        # la physique est identique à 20, 30 ou 50 images par seconde.
+        k = dt * 50.0
         target = self._CLOUD_PROFILES.get(self._ws, self._CLOUD_PROFILES["idle"])
+        glide = 1.0 - 0.925 ** k
         for i, value in enumerate(target):
-            self._cloud_live[i] += (value - self._cloud_live[i]) * 0.075
+            self._cloud_live[i] += (value - self._cloud_live[i]) * glide
         radius, noise, _size, _light, _density, _electrons, vortex = self._cloud_live
         # Pic réel + filet de sécurité périodique : une voix plate garde vie.
         bass_delta = self._bass - self._last_bass
         self._last_bass = self._bass
         bass_shock = max(0.0, bass_delta - 0.04) * 5.0
-        self._shockwave = max(self._shockwave * 0.82, bass_shock)
+        self._shockwave = max(self._shockwave * 0.82 ** k, bass_shock)
         if self._ws == "speaking":
             if self._next_speaking_surge <= 0.0:
                 self._next_speaking_surge = t + random.uniform(1.3, 1.8)
@@ -485,7 +451,7 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
                 self._next_speaking_surge = t + random.uniform(1.3, 1.8)
         else:
             self._next_speaking_surge = 0.0
-        self._cloud_pulse *= 0.86
+        self._cloud_pulse *= 0.86 ** k
         pulse = self._cloud_pulse * (0.055 + self._bass * 0.050)
         shockwave = max(self._shockwave, pulse * 0.55)
         # Taille globale stable : les impulsions déplacent les photons, elles
@@ -509,7 +475,7 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         motion_drive = min(1.0, max(self._volume, self._bass, self._mid, self._treble))
         onset = max(0.0, motion_drive - self._last_motion_drive)
         self._last_motion_drive = motion_drive
-        self._motion_impulse = max(self._motion_impulse * 0.78, min(1.0, onset * 4.5))
+        self._motion_impulse = max(self._motion_impulse * 0.78 ** k, min(1.0, onset * 4.5))
         if self._ws == "listening":
             formation_speed = 0.75 + motion_drive * 5.2
         elif self._ws == "speaking":
@@ -520,6 +486,7 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
             formation_speed = 1.4 + motion_drive * 5.8
         else:
             formation_speed = 0.38 + motion_drive * 1.2
+        damp = 0.91 ** k
         for particle_index, pt in enumerate(self._particles):
             # Les photons non visibles pendant une figure dense restent en
             # réserve. Ne pas les simuler économise directement le GIL pour la
@@ -533,7 +500,7 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
             if clock_active:
                 digit_index, segment = self._clock_segments[particle_index % len(self._clock_segments)]
                 tx, ty, tz = self._clock_segment_target(digit_index, segment, pt["segment_u"])
-                tx, ty, tz = tx * target_radius * 1.12, ty * target_radius * 1.12, tz
+                tx, ty = tx * target_radius * 1.12, ty * target_radius * 1.12
             elif formation == 0:
                 home = pt["home_r"] * target_radius
                 tx, ty, tz = pt["dx"] * home, pt["dy"] * home, pt["dz"] * home
@@ -643,12 +610,12 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
             # Vortex autour de Y seulement pendant la parole / action.
             vx_force = -pt["z"] * vortex_strength
             vz_force = pt["x"] * vortex_strength
-            pt["vx"] = (pt["vx"] + ((tx + wobx - pt["x"]) * 2.6 + vx_force) * dt) * 0.91
-            pt["vy"] = (pt["vy"] + ((ty + woby - pt["y"]) * 2.6) * dt) * 0.91
-            pt["vz"] = (pt["vz"] + ((tz + wobz - pt["z"]) * 2.6 + vz_force) * dt) * 0.91
-            pt["x"] += pt["vx"] * dt * 50.0
-            pt["y"] += pt["vy"] * dt * 50.0
-            pt["z"] += pt["vz"] * dt * 50.0
+            pt["vx"] = (pt["vx"] + ((tx + wobx - pt["x"]) * 2.6 + vx_force) * dt) * damp
+            pt["vy"] = (pt["vy"] + ((ty + woby - pt["y"]) * 2.6) * dt) * damp
+            pt["vz"] = (pt["vz"] + ((tz + wobz - pt["z"]) * 2.6 + vz_force) * dt) * damp
+            pt["x"] += pt["vx"] * k
+            pt["y"] += pt["vy"] * k
+            pt["z"] += pt["vz"] * k
         self._filament_frame = (self._filament_frame + 1) % self._FILAMENT_REFRESH_FRAMES
         if self._filament_frame == 0:
             self._update_particle_links(t)
@@ -657,20 +624,6 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
     def _build_circle(n: int) -> list[tuple[float, float, float]]:
         return [(math.cos(2 * math.pi * k / n), 0.0, math.sin(2 * math.pi * k / n))
                 for k in range(n + 1)]
-
-    def _init_motes(self) -> list[dict]:
-        """Poussières lumineuses sur des orbites 3D quelconques."""
-        out = []
-        for _ in range(self._MOTES):
-            tx, ty = random.uniform(-1.4, 1.4), random.uniform(-1.4, 1.4)
-            out.append({
-                "r": random.uniform(1.05, 2.05), "ang": random.uniform(0, 6.28318),
-                "ctx": math.cos(tx), "stx": math.sin(tx),
-                "cty": math.cos(ty), "sty": math.sin(ty),
-                "spd": random.uniform(0.25, 1.25) * (1 if random.random() > 0.4 else -1),
-                "size": random.uniform(1.2, 3.0), "ph": random.uniform(0, 6.28318),
-            })
-        return out
 
     @staticmethod
     def _matrix(yaw: float, pitch: float, roll: float):
@@ -683,10 +636,12 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
             (-sy * cr + cy * sp * sr, sy * sr + cy * sp * cr, cy * cp),
         )
 
-    def _project(self, pts, m, cx: float, cy: float, R: float, scale: float = 1.0):
+    def _project(self, pts, m, cx: float, cy: float, R: float, scale: float = 1.0,
+                 cam: float | None = None):
         """Projette des points locaux → [(x_écran, y_écran, z)] en perspective."""
         (a0, a1, a2), (b0, b1, b2), (c0, c1, c2) = m
-        cam = self._CAM
+        if cam is None:
+            cam = self._CAM
         out = []
         for x, y, z in pts:
             x *= scale; y *= scale; z *= scale
@@ -710,18 +665,43 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
     def set_low_power(self, low: bool) -> None:
         """Met le grand orbe en sommeil de calcul quand il n'est plus visible.
 
-        Le `_tick` complet — sphère, anneaux, étincelles, arcs — tournait à
-        50 Hz même fenêtre réduite, pour un rendu que personne ne regardait.
-        Deux cœurs partagés avec la voix ne peuvent pas se le permettre pendant
-        que la bulle compagnon anime, elle, ce qui est réellement à l'écran.
-        Seuls l'énergie et le volume continuent d'évoluer : ce sont les deux
-        valeurs que la bulle lit.
+        Le tick complet tournait même fenêtre réduite, pour un rendu que
+        personne ne regardait. Deux cœurs partagés avec la voix ne peuvent pas
+        se le permettre pendant que la bulle compagnon anime, elle, ce qui est
+        réellement à l'écran. Seuls l'énergie et le volume continuent
+        d'évoluer : ce sont les deux valeurs que la bulle lit.
         """
         low = bool(low)
-        if low == getattr(self, "_low_power", False):
+        if low == self._low_power:
             return
         self._low_power = low
-        self._anim_tmr.setInterval(500 if low else self._interval)
+        self._apply_interval()
+
+    def _dormant(self) -> bool:
+        return self._low_power or not self.isVisible()
+
+    def _desired_interval(self) -> int:
+        if self._dormant():
+            return self._FRAME_MS_SLEEP
+        base = self._FRAME_MS
+        if self._on_battery:
+            base = self._FRAME_MS_BATTERY
+        elif self._ws in ("listening", "speaking"):
+            base = self._FRAME_MS_VOICE
+        # Une image ne doit pas occuper plus de ~40 % du thread Qt : au-delà,
+        # on espace les images plutôt que de laisser la voix attendre le GIL.
+        cost = self._sim_ms + self._paint_ms
+        want = max(base, int(cost * 2.5))
+        return min(self._FRAME_MS_MAX, want)
+
+    def _apply_interval(self) -> None:
+        want = self._desired_interval()
+        if abs(want - self._interval) >= 3 or want == self._FRAME_MS_SLEEP:
+            self._interval = want
+            self._anim_tmr.setInterval(want)
+
+    def _note_paint_cost(self, ms: float) -> None:
+        self._paint_ms += (ms - self._paint_ms) * 0.1
 
     def _tick(self):
         """Frontière de sûreté du slot Qt.
@@ -732,14 +712,10 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         donc uniquement l'animation concernée et on conserve l'interface.
         """
         try:
-            # Le rendu Qt et le flux audio se partagent le GIL. La parole
-            # obtient au maximum 15 FPS; le visuel cède le processeur entre
-            # chaque image.
-            voice_active = self._ws in {"listening", "speaking"}
-            desired_interval = 67 if voice_active else self._interval
-            if not getattr(self, "_low_power", False) and self._anim_tmr.interval() != desired_interval:
-                self._anim_tmr.setInterval(desired_interval)
-            self._tick_frame()
+            started = time.monotonic()
+            self._tick_frame(started)
+            self._sim_ms += ((time.monotonic() - started) * 1000.0 - self._sim_ms) * 0.1
+            self._apply_interval()
         except Exception as exc:
             self._anim_tmr.stop()
             print(
@@ -749,66 +725,121 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
             )
             self.update()
 
-    def _tick_frame(self):
-        dt = 0.020
+    def _tick_frame(self, now: float | None = None):
+        if now is None:
+            now = time.monotonic()
+        # dt réel, borné : une pause (fenêtre cachée, machine chargée) ne fait
+        # pas sauter les photons, et une rafale de ticks ne les fige pas.
+        dt = now - self._last_tick
+        self._last_tick = now
+        if dt <= 0.0 or dt > 0.25:
+            dt = self._interval / 1000.0
+        dt = max(0.004, min(0.1, dt))
+        k = dt * 50.0
         pal = self._PALETTES.get(self._ws, self._PALETTES["idle"])
+        live_audio = (now - self._last_ext_vol_t) < 0.3
 
-        if getattr(self, "_low_power", False):
+        if self._dormant():
             # Le strict nécessaire pour que la bulle compagnon reste vivante.
             self._energy += ((0.15 if self._ws == "idle" else 1.0) - self._energy) * 0.15
-            if (time.monotonic() - self._last_ext_vol_t) >= 0.3:
+            if not live_audio:
                 self._target_vol = max(0.0, self._target_vol - 0.12)
             self._volume += (self._target_vol - self._volume) * 0.5
             return
 
-        # Fondu doux vers la palette cible (≈1.2 s) : le noyau change d'humeur
+        # Fondu doux vers la palette cible (≈1,2 s) : le noyau change d'humeur
         # comme il respire, jamais par un « clic » de couleur.
-        lf = 1 - 0.90 ** (dt * 50)
+        lf = 1.0 - 0.90 ** k
         live = self._pal_live
-        for k in ("core", "halo", "wire", "hot"):
-            live[k] = self._lerp_color(live[k], pal[k], lf)
+        for key in ("core", "halo", "wire", "hot"):
+            live[key] = self._lerp_color(live[key], pal[key], lf)
         live["pulse_speed"] += (pal["pulse_speed"] - live["pulse_speed"]) * lf
-        live["spin"]        += (pal["spin"]        - live["spin"])        * lf
+        live["spin"] += (pal["spin"] - live["spin"]) * lf
         spin = live["spin"]
-        t = time.monotonic() - self._t0
+        t = now - self._t0
 
-        # Énergie : monte hors veille, redescend en veille
-        self._energy += ((0.15 if self._ws == "idle" else 1.0) - self._energy) * 0.06
+        # Énergie : monte hors veille, redescend en veille.
+        self._energy += ((0.15 if self._ws == "idle" else 1.0) - self._energy) * (1.0 - 0.94 ** k)
 
-        # Volume : piloté par le vrai son (micro / flux TTS) quand il arrive
-        # (set_volume() appelé il y a moins de 300 ms) — sinon on retombe sur
-        # une simulation pour que l'orbe reste vivant même sans flux audio
-        # câblé (ancien comportement, gardé en filet de sécurité).
-        live_audio = (time.monotonic() - self._last_ext_vol_t) < 0.3
+        # Volume : piloté par le vrai son (micro / flux TTS) quand il arrive ;
+        # sinon une respiration lissée garde l'orbe vivant sans tremblement.
         if not live_audio:
             if self._ws == "speaking":
-                self._target_vol = random.uniform(0.30, 1.0)
+                self._target_vol = 0.30 + 0.55 * (0.5 + 0.5 * math.sin(t * 7.1)) * (0.6 + 0.4 * math.sin(t * 2.3))
             elif self._ws == "listening":
-                self._target_vol = random.uniform(0.05, 0.24)
+                self._target_vol = 0.06 + 0.12 * (0.5 + 0.5 * math.sin(t * 3.4))
             else:
-                self._target_vol = max(0.0, self._target_vol - 0.05)
+                self._target_vol = max(0.0, self._target_vol - 0.05 * k)
+            if not self._audio_bands_live:
+                self._target_bass = self._target_vol ** 1.3
+                self._target_mid = self._target_vol * 0.8
+                self._target_treble = self._target_vol ** 0.7 * 0.6
         elif self._ws not in ("speaking", "listening"):
-            # Un flux audio traîne encore mais l'état a changé (ex: fin de
-            # parole) : on laisse retomber au lieu de rester bloqué en l'air.
-            self._target_vol = max(0.0, self._target_vol - 0.08)
-        # Attaque rapide (le son monte) / retombée plus douce (le son descend)
+            # Un flux audio traîne encore mais l'état a changé (fin de parole).
+            self._target_vol = max(0.0, self._target_vol - 0.08 * k)
+        # Attaque rapide (le son monte) / retombée plus douce.
         atk = 0.55 if self._target_vol > self._volume else 0.22
-        self._volume += (self._target_vol - self._volume) * atk
+        self._volume += (self._target_vol - self._volume) * (1.0 - (1.0 - atk) ** k)
 
-        # Enveloppes dynamiques par bandes de fréquence (Bass/Mid/Treble)
-        self._bass += (self._target_bass - self._bass) * (0.65 if self._target_bass > self._bass else 0.15)
-        self._mid += (self._target_mid - self._mid) * (0.55 if self._target_mid > self._mid else 0.18)
-        self._treble += (self._target_treble - self._treble) * (0.75 if self._target_treble > self._treble else 0.20)
+        # Enveloppes par bandes (Bass / Mid / Treble).
+        for name in ("bass", "mid", "treble"):
+            cur, tgt = getattr(self, "_" + name), getattr(self, "_target_" + name)
+            rate = 0.65 if tgt > cur else 0.16
+            setattr(self, "_" + name, cur + (tgt - cur) * (1.0 - (1.0 - rate) ** k))
+        if self._audio_bands_live and (now - self._last_ext_vol_t) > 0.6:
+            self._audio_bands_live = False
+
+        self._update_spectrum(t, k)
+        self._update_waves(t, dt)
 
         # Rotation douce du nuage de particules.
-        self._yaw   = (self._yaw + dt * 0.30 * spin) % 6.28318
+        self._yaw = (self._yaw + dt * 0.30 * spin) % 6.28318
         self._pitch = -0.34 + 0.16 * math.sin(t * 0.31)
-        self._roll  = 0.10 * math.sin(t * 0.23)
+        self._roll = 0.10 * math.sin(t * 0.23)
         self._sweep = (self._sweep + dt * 55 * spin) % 360
 
         self._update_particles(dt, t)
-
         self.update()
+
+    def _update_spectrum(self, t: float, k: float) -> None:
+        """48 barres lissées, interpolées sur les 8 bandes FFT (ou synthétisées
+        depuis le volume quand aucun spectre réel n'arrive)."""
+        n = self._SPEC_N
+        bands = self._audio_bands
+        if self._audio_bands_live:
+            targets = []
+            for i in range(n):
+                pos = (i / n) * 8.0
+                lo = int(pos) % 8
+                hi = (lo + 1) % 8
+                f = pos - int(pos)
+                targets.append(bands[lo] * (1.0 - f) + bands[hi] * f)
+        else:
+            vol = self._volume
+            if vol < 0.02 and self._ws not in ("speaking", "listening"):
+                targets = [0.0] * n
+            else:
+                targets = [
+                    max(0.0, vol * (0.55 + 0.45 * math.sin(t * (2.4 + (i % 7) * 0.47) + self._spec_seed[i])))
+                    for i in range(n)
+                ]
+        spec = self._spec
+        up, down = 1.0 - 0.35 ** k, 1.0 - 0.80 ** k
+        for i in range(n):
+            cur, tgt = spec[i], targets[i]
+            spec[i] = cur + (tgt - cur) * (up if tgt > cur else down)
+
+    def _update_waves(self, t: float, dt: float) -> None:
+        """Ondes vocales : un choc de basses ou un pic de parole en émet une."""
+        if self._waves:
+            self._waves = [age + dt * 0.9 for age in self._waves if age + dt * 0.9 < 1.0]
+        if self._ws not in ("speaking", "acting"):
+            return
+        if t < self._next_wave_at or len(self._waves) >= 3:
+            return
+        if self._shockwave > 0.12 or self._volume > 0.62:
+            self._waves.append(0.0)
+            self._next_wave_at = t + 0.42
 
     # ══ State API (compatible avec l'ancien HudCanvas) ═══════════════════════
     @property
@@ -839,21 +870,30 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         self._update_ws()
 
     def set_volume(self, v: float):
-        """Injecte un niveau audio réel (0.0–1.0) et décompose en 3 bandes d'énergie (Bass, Mid, Treble)."""
+        """Injecte un niveau audio réel (0.0–1.0) ; sans FFT réelle, il est
+        décomposé en trois bandes d'énergie (graves, médiums, aigus)."""
         v = max(0.0, min(1.0, float(v)))
+        if not math.isfinite(v):
+            return
         self._target_vol = v
         self._last_ext_vol_t = time.monotonic()
         if not self.isVisible():
             self._volume = v
-
-        # 3 bandes d'analyse dynamique
+        if self._audio_bands_live:
+            return
         self._target_bass = v ** 1.3
         self._target_mid = math.sin(v * math.pi * 0.5) * v
-        self._target_treble = (v ** 0.7) * random.uniform(0.75, 1.0)
+        self._target_treble = v ** 0.7 * 0.85
 
     def set_audio_bands(self, bands) -> None:
         """Injecte les huit bandes FFT réelles calculées par le pont audio."""
-        seq = [max(0.0, min(1.0, float(value))) for value in bands]
+        seq = []
+        for value in bands:
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                f = 0.0
+            seq.append(0.0 if not math.isfinite(f) else max(0.0, min(1.0, f)))
         seq.extend([0.0] * (8 - len(seq)))
         self._audio_bands = seq[:8]
         self._audio_bands_live = True
@@ -863,23 +903,20 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         self._target_vol = max(self._target_vol, sum(self._audio_bands) / 8.0)
         self._last_ext_vol_t = time.monotonic()
 
+    _STATE_TO_WS = {
+        "SPEAKING": "speaking", "LISTENING": "listening",
+        "THINKING": "thinking", "PROCESSING": "thinking",
+        "ACTING": "acting", "EXECUTING": "acting", "RUNNING": "acting",
+        "ERROR": "error",
+    }
+
     def _update_ws(self):
         if self._muted:
             ws = "idle"
         elif self._speaking:
             ws = "speaking"
-        elif self._state == "SPEAKING":
-            ws = "speaking"
-        elif self._state == "LISTENING":
-            ws = "listening"
-        elif self._state in ("THINKING", "PROCESSING"):
-            ws = "thinking"
-        elif self._state in ("ACTING", "EXECUTING", "RUNNING"):
-            ws = "acting"
-        elif self._state == "ERROR":
-            ws = "error"
         else:
-            ws = "idle"
+            ws = self._STATE_TO_WS.get(str(self._state).upper(), "idle")
         self._ws = ws
 
     def show_gesture_feedback(

@@ -93,14 +93,103 @@ def test_lorbe_compose_une_scene_holographique(qapp):
     import inspect
     neural = inspect.getsource(HudCanvas._draw_neural_orb)
     paint = inspect.getsource(HudCanvas.paintEvent)
-    assert "_blit_glow" not in neural
-    # Les filaments ont été retirés : leur tracé par paire mangeait le CPU que
-    # la voix partage avec l'interface. Le nuage seul porte la scène.
+    # Le nuage reste le corps de l'orbe, confiné dans la sphère.
     assert "_draw_particle_cloud" in neural
-    assert "_draw_orbit_rings" not in neural
-    assert "_draw_projector_base" not in paint
-    assert "_draw_light_column" not in paint
-    assert "pmc[\"ring\"]" not in paint
+    assert "setClipPath" in neural
+    # Autour : réticule, spectre, anneaux gyroscopiques (deux moitiés), noyau,
+    # limbe et ondes vocales. Les indicateurs (œil, geste) sont bien dessinés.
+    for layer in ("_draw_reticle", "_draw_spectrum", "_draw_rings", "_draw_nucleus",
+                  "_draw_limb", "_draw_shockwaves", "_draw_neon_eye_indicator",
+                  "_draw_holographic_gesture_badge"):
+        assert layer in paint, layer
+    assert paint.count("_draw_rings") == 2
+    # Le fond et l'aura sont cuits : un seul blit, jamais un dégradé plein cadre.
+    assert 'self._pm["scene"]' in paint
+    assert "QRadialGradient" not in paint
+
+
+def test_la_physique_ne_depend_pas_de_la_cadence(qapp):
+    """Un même laps de temps simulé donne la même position, à 20 ou 50 Hz."""
+    import copy
+    slow = HudCanvas("")
+    fast = HudCanvas("")
+    try:
+        fast._particles = copy.deepcopy(slow._particles)
+        slow.state = fast.state = "LISTENING"
+        for step in range(20):
+            slow._update_particles(0.05, step * 0.05)
+        for step in range(50):
+            fast._update_particles(0.02, step * 0.02)
+        drift = max(
+            abs(a["x"] - b["x"]) + abs(a["y"] - b["y"]) + abs(a["z"] - b["z"])
+            for a, b in zip(slow._particles[:160], fast._particles[:160])
+        )
+        assert drift < 0.08
+    finally:
+        slow.close()
+        fast.close()
+
+
+def test_le_tick_mesure_un_dt_reel_et_borne(qapp):
+    import time
+    orb = HudCanvas("")
+    try:
+        orb.show()
+        qapp.processEvents()
+        orb._last_tick = time.monotonic() - 5.0  # pause longue : pas de saut
+        yaw = orb._yaw
+        orb._tick_frame()
+        assert abs(orb._yaw - yaw) < 0.2
+    finally:
+        orb.close()
+
+
+def test_la_cadence_reste_bornee_et_cede_a_la_voix(qapp):
+    orb = HudCanvas("")
+    try:
+        # Caché, l'orbe ne garde qu'un battement lent pour la bulle compagnon.
+        assert orb._desired_interval() == orb._FRAME_MS_SLEEP
+        orb.show()
+        qapp.processEvents()
+        orb._on_battery = False
+        orb._sim_ms = orb._paint_ms = 1.0
+        assert orb._desired_interval() == orb._FRAME_MS
+        orb.state = "SPEAKING"
+        assert orb._desired_interval() == orb._FRAME_MS_VOICE
+        orb._paint_ms = 60.0
+        assert orb._desired_interval() == orb._FRAME_MS_MAX
+        orb.set_low_power(True)
+        assert orb._desired_interval() == orb._FRAME_MS_SLEEP
+    finally:
+        orb.close()
+
+
+def test_les_bandes_fft_invalides_ne_cassent_pas_lorbe(qapp):
+    orb = HudCanvas("")
+    try:
+        orb.set_audio_bands([float("nan"), "x", 2.0, -1.0])
+        assert orb._audio_bands == [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        orb.state = "SLEEPING"
+        assert orb._ws == "idle"
+        orb.state = "processing"
+        assert orb._ws == "thinking"
+    finally:
+        orb.close()
+
+
+def test_la_photo_de_fond_reste_visible_derriere_lorbe(qapp):
+    orb = HudCanvas("")
+    try:
+        orb.resize(400, 400)
+        orb.set_background_image_active(True)
+        orb._build_cache(400, 400)
+        corner = orb._pm["scene"].toImage().pixelColor(4, 4)
+        assert corner.alpha() < 255
+        orb.set_background_image_active(False)
+        orb._build_cache(400, 400)
+        assert orb._pm["scene"].toImage().pixelColor(4, 4).alpha() == 255
+    finally:
+        orb.close()
 
 
 def test_lorbe_garde_un_fond_sombre_derriere_les_photons(qapp):
