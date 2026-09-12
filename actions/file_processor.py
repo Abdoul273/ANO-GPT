@@ -36,7 +36,6 @@ import re
 import json
 import shutil
 import platform
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -45,7 +44,6 @@ from core import action_kit as kit
 from core.live_model_policy import BALANCED_MODEL, FAST_MODEL
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
-DEVNULL = subprocess.DEVNULL
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -569,14 +567,14 @@ def _process_text_doc(path: Path, file_type: str, action: str,
         return content[:2000]
 
     if action == "to_pdf":
-        soffice = shutil.which("soffice") or shutil.which("libreoffice")
+        soffice = kit.which("soffice") or kit.which("libreoffice")
         if not soffice:
             return "Impossible de convertir en PDF (installez libreoffice)."
         try:
             outdir = path.parent
-            subprocess.run([soffice, "--headless", "--convert-to", "pdf",
+            kit.run([soffice, "--headless", "--convert-to", "pdf",
                             "--outdir", str(outdir), str(path)],
-                           timeout=120, capture_output=True)
+                           timeout=120)
             out = path.with_suffix(".pdf")
             if out.exists():
                 return f"Converti en PDF : {out.name}"
@@ -769,22 +767,20 @@ def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
     if action == "run":
         if ext == "py":
             try:
-                result = subprocess.run(["python", str(path)],
-                                        capture_output=True, text=True, timeout=30)
+                result = kit.run(["python", str(path)], timeout=30)
+                if result.timed_out:
+                    return "Exécution expirée (30s)."
                 out = result.stdout or result.stderr
                 return f"Sortie :\n{out[:2000]}" if out else "Aucune sortie."
-            except subprocess.TimeoutExpired:
-                return "Exécution expirée (30s)."
             except Exception as e:
                 return f"Échec de l'exécution : {e}"
         if ext in ("sh", "bash"):
             try:
-                result = subprocess.run(["bash", str(path)],
-                                        capture_output=True, text=True, timeout=30)
+                result = kit.run(["bash", str(path)], timeout=30)
+                if result.timed_out:
+                    return "Exécution expirée (30s)."
                 out = result.stdout or result.stderr
                 return f"Sortie :\n{out[:2000]}" if out else "Aucune sortie."
-            except subprocess.TimeoutExpired:
-                return "Exécution expirée (30s)."
             except Exception as e:
                 return f"Échec de l'exécution : {e}"
         return f"L'exécution directe n'est pas supportée pour les fichiers .{ext}."
@@ -916,18 +912,13 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "info"
 
     def _ffmpeg_available() -> bool:
-        try:
-            subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=3)
-            return True
-        except Exception:
-            return False
+        return kit.have("ffmpeg")
 
     if action == "info":
         try:
-            result = subprocess.run(
+            result = kit.run(
                 ["ffprobe", "-v", "quiet", "-print_format", "json",
-                 "-show_format", "-show_streams", str(path)],
-                capture_output=True, text=True, timeout=10
+                 "-show_format", "-show_streams", str(path)], timeout=10
             )
             data = json.loads(result.stdout)
             fmt = data.get("format", {})
@@ -948,9 +939,8 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg introuvable. Installez ffmpeg pour extraire l'audio."
         out = _output_path(path, "audio", ".mp3")
         try:
-            subprocess.run(
-                ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a", str(out), "-y"],
-                capture_output=True, timeout=300
+            kit.run(
+                ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a", str(out), "-y"], timeout=300
             )
             return f"Audio extrait. Sauvegardé : {out.name}"
         except Exception as e:
@@ -967,7 +957,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             if end:
                 cmd += ["-to", str(end)]
             cmd += ["-c", "copy", str(out), "-y"]
-            subprocess.run(cmd, capture_output=True, timeout=600)
+            kit.run(cmd, timeout=600)
             return f"Vidéo coupée sauvegardée : {out.name}"
         except Exception as e:
             return f"Échec de la coupe : {e}"
@@ -978,10 +968,9 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg introuvable."
         out = _output_path(path, f"frame_{timestamp.replace(':', '')}", ".jpg")
         try:
-            subprocess.run(
+            kit.run(
                 ["ffmpeg", "-i", str(path), "-ss", timestamp,
-                 "-vframes", "1", str(out), "-y"],
-                capture_output=True, timeout=30
+                 "-vframes", "1", str(out), "-y"], timeout=30
             )
             return f"Image extraite à {timestamp}. Sauvegardée : {out.name}"
         except Exception as e:
@@ -993,12 +982,11 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg introuvable."
         out = _output_path(path, f"compresse_crf{crf}", ".mp4")
         try:
-            subprocess.run(
+            kit.run(
                 ["ffmpeg", "-i", str(path),
                  "-c:v", "libx264", "-crf", str(crf),
                  "-preset", "medium", "-c:a", "copy",
-                 str(out), "-y"],
-                capture_output=True, timeout=1800
+                 str(out), "-y"], timeout=1800
             )
             before = _file_size_str(path)
             after = _file_size_str(out)
@@ -1013,10 +1001,9 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
         tmp_audio = Path(tmp.name)
         tmp.close()
         try:
-            subprocess.run(
+            kit.run(
                 ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a",
-                 str(tmp_audio), "-y"],
-                capture_output=True, timeout=300
+                 str(tmp_audio), "-y"], timeout=300
             )
             result = _process_audio(tmp_audio, "transcribe", params, speak)
             return result
@@ -1032,9 +1019,8 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg introuvable."
         out = _output_path(path, "converted", f".{fmt}")
         try:
-            subprocess.run(
-                ["ffmpeg", "-i", str(path), str(out), "-y"],
-                capture_output=True, timeout=1800
+            kit.run(
+                ["ffmpeg", "-i", str(path), str(out), "-y"], timeout=1800
             )
             return f"Converti en {fmt.upper()}. Sauvegardé : {out.name}"
         except Exception as e:
@@ -1060,9 +1046,8 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
             elif ext in (".tar", ".gz", ".bz2", ".xz"):
                 with tarfile.open(path) as t:
                     names = t.getnames()
-            elif ext == ".7z" and shutil.which("7z"):
-                r = subprocess.run(["7z", "l", str(path)],
-                                   capture_output=True, text=True, timeout=30)
+            elif ext == ".7z" and kit.which("7z"):
+                r = kit.run(["7z", "l", str(path)], timeout=30)
                 return r.stdout[:2000] if r.returncode == 0 else f"Échec du listage 7z : {r.stderr[:200]}"
             else:
                 return f"Format d'archive non supporté : {ext}"
@@ -1076,9 +1061,8 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
         dest = Path(params.get("destination", str(path.parent / path.stem)))
         dest.mkdir(parents=True, exist_ok=True)
         try:
-            if ext == ".7z" and shutil.which("7z"):
-                r = subprocess.run(["7z", "x", str(path), f"-o{dest}", "-y"],
-                                   capture_output=True, timeout=600)
+            if ext == ".7z" and kit.which("7z"):
+                r = kit.run(["7z", "x", str(path), f"-o{dest}", "-y"], timeout=600)
                 if r.returncode == 0:
                     return f"Extrait vers : {dest}"
                 return f"Échec de l'extraction 7z : {r.stderr[:200]}"

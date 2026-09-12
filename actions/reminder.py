@@ -24,7 +24,6 @@ import json
 import platform
 import re
 import shutil
-import subprocess
 import sys
 import threading
 import uuid
@@ -34,11 +33,6 @@ from typing import Optional, Dict, Any, List
 
 from core import action_kit as kit
 from core.live_model_policy import FAST_MODEL
-
-_CNW: dict = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW}
-    if platform.system() == "Windows" else {}
-)
 
 
 def _base_dir() -> Path:
@@ -70,7 +64,7 @@ def _events_dir() -> Path:
 
 def _python_exe() -> str:
     """Interprète Python fiable pour exécuter le script de notification."""
-    return shutil.which("python3") or shutil.which("python") or sys.executable
+    return kit.which("python3") or kit.which("python") or sys.executable
 
 
 def _sanitise(text: str, max_len: int = 200) -> str:
@@ -93,11 +87,7 @@ def _get_api_key() -> str:
 
 
 def _run_quiet(argv: List[str], timeout: float = 5.0) -> bool:
-    try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, **_CNW)
-        return r.returncode == 0
-    except Exception:
-        return False
+    return kit.run(argv, timeout=timeout, quiet=True).ok
 
 
 # ── Registre persistant des rappels ─────────────────────────────────────────
@@ -225,7 +215,7 @@ if not notified:
 if not notified:
     try:
         import subprocess
-        subprocess.run(["msg", "*", "/TIME:30", message], check=False)
+        kit.run(["msg", "*", "/TIME:30", message], timeout=10)
     except Exception:
         pass
 try:
@@ -252,7 +242,7 @@ if not notified:
         script = 'display notification "{{}}" with title "J.A.R.V.I.S Reminder"'.format(
             message.replace('"', '')
         )
-        subprocess.run(["osascript", "-e", script], check=False)
+        kit.run(["osascript", "-e", script], timeout=10)
     except Exception:
         pass
 """
@@ -269,11 +259,10 @@ except Exception:
 if not notified:
     try:
         import subprocess
-        subprocess.run(
+        kit.run(
             ["notify-send", "--urgency=critical", "--expire-time=15000",
-             "J.A.R.V.I.S Reminder", message],
-            check=False
-        )
+             "J.A.R.V.I.S Reminder", message]
+        , timeout=10)
     except Exception:
         pass
 """
@@ -372,9 +361,8 @@ def _schedule_windows(target_dt: datetime, task_name: str,
         '</Task>'
     )
     xml_path.write_text(xml_content, encoding="utf-16")
-    result = subprocess.run(
-        ["schtasks", "/Create", "/TN", task_name, "/XML", str(xml_path), "/F"],
-        capture_output=True, text=True, **_CNW, timeout=15
+    result = kit.run(
+        ["schtasks", "/Create", "/TN", task_name, "/XML", str(xml_path), "/F"], timeout=15
     )
     try:
         xml_path.unlink(missing_ok=True)
@@ -421,9 +409,8 @@ def _schedule_mac(target_dt: datetime, task_name: str,
 """
     plist_path.write_text(plist_content, encoding="utf-8")
     plist_path.chmod(0o644)
-    result = subprocess.run(
-        ["launchctl", "load", str(plist_path)],
-        capture_output=True, text=True, timeout=15
+    result = kit.run(
+        ["launchctl", "load", str(plist_path)], timeout=15
     )
     if result.returncode != 0:
         plist_path.unlink(missing_ok=True)
@@ -436,9 +423,9 @@ def _schedule_mac(target_dt: datetime, task_name: str,
 def _schedule_linux(target_dt: datetime, task_name: str,
                     script_path: Path) -> Optional[Dict[str, str]]:
     py = _python_exe()
-    if shutil.which("systemd-run"):
+    if kit.which("systemd-run"):
         on_calendar = target_dt.strftime("%Y-%m-%d %H:%M:00")
-        result = subprocess.run(
+        result = kit.run(
             [
                 "systemd-run",
                 "--user",
@@ -448,19 +435,18 @@ def _schedule_linux(target_dt: datetime, task_name: str,
                 f"--unit={task_name}",
                 "--",
                 py, str(script_path),
-            ],
-            capture_output=True, text=True, timeout=15
+            ], timeout=15
         )
         if result.returncode == 0:
             return {"scheduler": "systemd", "job_id": task_name}
         print(f"[Reminder] ⚠️ systemd-run failed: {result.stderr.strip()}, trying 'at'")
 
-    if shutil.which("at"):
+    if kit.which("at"):
         at_time = target_dt.strftime("%H:%M %Y-%m-%d")
         cmd_str = f"{py} {script_path}\n"
-        result = subprocess.run(
+        result = kit.run(
             ["at", at_time],
-            input=cmd_str, capture_output=True, text=True, timeout=15
+            stdin=cmd_str, timeout=15
         )
         if result.returncode == 0:
             # at écrit « job N at ... » sur stderr
@@ -727,7 +713,7 @@ def _cancel_reminder(identifier: str) -> str:
         ok = _run_quiet(["schtasks", "/Delete", "/TN", job, "/F"])
     elif os_name == "mac":
         plist = Path.home() / "Library" / "LaunchAgents" / f"{job}.plist"
-        subprocess.run(["launchctl", "unload", str(plist)], capture_output=True, timeout=15)
+        kit.run(["launchctl", "unload", str(plist)], timeout=15)
         try:
             plist.unlink(missing_ok=True)
         except Exception:
@@ -735,10 +721,8 @@ def _cancel_reminder(identifier: str) -> str:
         ok = True
     else:
         if sched == "systemd":
-            subprocess.run(["systemctl", "--user", "stop", f"{job}.service"],
-                           capture_output=True, timeout=15)
-            subprocess.run(["systemctl", "--user", "reset-failed", f"{job}.service"],
-                           capture_output=True, timeout=15)
+            kit.run(["systemctl", "--user", "stop", f"{job}.service"], timeout=15)
+            kit.run(["systemctl", "--user", "reset-failed", f"{job}.service"], timeout=15)
             ok = True
         elif sched == "at":
             ok = _run_quiet(["atrm", job])

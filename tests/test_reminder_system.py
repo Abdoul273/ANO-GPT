@@ -66,14 +66,14 @@ def test_stale_and_malformed_events_are_discarded(tmp_path, monkeypatch):
 
 def test_linux_timer_is_precise_and_persistent(tmp_path, monkeypatch):
     calls: list[list[str]] = []
-    monkeypatch.setattr(reminder_mod.shutil, "which", lambda name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(reminder_mod.kit, "which", lambda name: "/usr/bin/systemd-run")
     monkeypatch.setattr(reminder_mod, "_python_exe", lambda: "/usr/bin/python3")
 
     def fake_run(argv, **kwargs):
         calls.append(argv)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(reminder_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(reminder_mod.kit, "run", fake_run)
     result = reminder_mod._schedule_linux(
         datetime(2030, 5, 4, 12, 30), "JARVISReminder_test", tmp_path / "task.py"
     )

@@ -426,20 +426,18 @@ def search_youtube(query: str, limit: int = 5) -> List[Dict[str, Any]]:
     l'appelant distingue « aucun résultat » de « réseau indisponible » —
     sinon l'assistant annonce à tort que le morceau n'existe pas.
     """
-    if not shutil.which("yt-dlp"):
+    if not kit.which("yt-dlp"):
         raise YoutubeUnavailable(
             "yt-dlp n'est pas installé (sudo pacman -S yt-dlp).")
-    try:
-        r = subprocess.run(
-            ["yt-dlp", f"ytsearch{limit}:{query}", "--flat-playlist",
-             "--dump-json", "--no-warnings", "--no-playlist",
-             "--socket-timeout", "10"],
-            capture_output=True, text=True, timeout=35,
-        )
-    except subprocess.TimeoutExpired:
+    r = kit.run(
+        ["yt-dlp", f"ytsearch{limit}:{query}", "--flat-playlist",
+         "--dump-json", "--no-warnings", "--no-playlist",
+         "--socket-timeout", "10"], timeout=35,
+    )
+    if r.timed_out:
         raise YoutubeUnavailable("la recherche YouTube a expiré.")
-    except Exception as e:
-        raise YoutubeUnavailable(f"la recherche YouTube a échoué ({e}).")
+    if r.not_found:
+        raise YoutubeUnavailable(r.reason())
 
     if r.returncode != 0 and not (r.stdout or "").strip():
         err = (r.stderr or "").strip().splitlines()
@@ -488,16 +486,17 @@ def resolve_stream_url(watch_url: str, timeout: int = 15) -> Optional[str]:
     Résout une URL YouTube en URL de flux direct (audio ou combiné) lisible
     immédiatement par VLC/mpv sans ouvrir de navigateur.
     """
-    if not shutil.which("yt-dlp"):
+    if not kit.which("yt-dlp"):
         return None
     for fmt in ("bestaudio/bv*+ba/b", "bv*+ba/b", "best[ext=mp4]/best", "best"):
         try:
-            r = subprocess.run(
+            r = kit.run(
                 ["yt-dlp", "-f", fmt, "-g", "--no-warnings",
-                 "--no-playlist", "--socket-timeout", "10", watch_url],
-                capture_output=True, text=True, timeout=timeout,
+                 "--no-playlist", "--socket-timeout", "10", watch_url], timeout=timeout,
             )
         except Exception:
+            continue
+        if r.timed_out or r.not_found:
             continue
         if r.returncode == 0:
             lines = [l.strip() for l in (r.stdout or "").splitlines()
@@ -520,7 +519,7 @@ def available_players(for_url: bool = False) -> List[Dict[str, str]]:
             continue
         if spec.get(key) is None:
             continue
-        if not shutil.which(binary):
+        if not kit.which(binary):
             continue
         out.append({"binary": binary, "label": spec["label"]})
     return out
@@ -568,11 +567,10 @@ def _format_player_list(players: List[Dict[str, str]]) -> str:
 
 def _audio_sinks() -> List[Dict[str, str]]:
     """Sorties audio connues de PipeWire/PulseAudio."""
-    if not shutil.which("pactl"):
+    if not kit.which("pactl"):
         return []
     try:
-        r = subprocess.run(["pactl", "list", "sinks", "short"],
-                           capture_output=True, text=True, timeout=5)
+        r = kit.run(["pactl", "list", "sinks", "short"], timeout=5)
     except Exception:
         return []
     sinks: List[Dict[str, str]] = []
@@ -597,11 +595,10 @@ def _is_handsfree(sink: Dict[str, str]) -> bool:
 
 def _sink_inputs_for_pid(pid: int) -> List[Tuple[str, str]]:
     """(index du flux, sink de destination) des flux audio émis par ce process."""
-    if not shutil.which("pactl"):
+    if not kit.which("pactl"):
         return []
     try:
-        r = subprocess.run(["pactl", "list", "sink-inputs"],
-                           capture_output=True, text=True, timeout=5)
+        r = kit.run(["pactl", "list", "sink-inputs"], timeout=5)
     except Exception:
         return []
     found: List[Tuple[str, str]] = []
@@ -635,8 +632,7 @@ def _ensure_audible(streams: List[Tuple[str, str]]) -> None:
         current = by_name.get(sink_name)
         if current and _is_handsfree(current):
             try:
-                subprocess.run(["pactl", "move-sink-input", idx, good["id"]],
-                               capture_output=True, timeout=5)
+                kit.run(["pactl", "move-sink-input", idx, good["id"]], timeout=5)
                 print(f"[music] son basculé du casque en mains-libres "
                       f"vers {good['name']}.")
             except Exception:
@@ -787,7 +783,7 @@ def _launch_one(binary: str, target: str, is_url: bool,
     # bloque définitivement le lecteur dès qu'il a écrit ~64 Ko de logs,
     # et VLC est très bavard (avertissements TagLib, codecs…).
 
-    if not shutil.which("pactl"):
+    if not kit.which("pactl"):
         # Pas de PipeWire/PulseAudio pour vérifier le son : on se rabat
         # sur « le process tient ».
         try:
@@ -831,11 +827,10 @@ def _launch_one(binary: str, target: str, is_url: bool,
         # Processus vivant mais aucun flux audio vu dans le délai.
         # Les lecteurs MPRIS ont une seconde chance de preuve via
         # playerctl ; les autres (navigateurs…) sont laissés en vie.
-        if spec.get("mpris") and shutil.which("playerctl"):
+        if spec.get("mpris") and kit.which("playerctl"):
             for _ in range(6):
                 try:
-                    r = subprocess.run(["playerctl", "list-players"],
-                                       capture_output=True, text=True,
+                    r = kit.run(["playerctl", "list-players"],
                                        timeout=4)
                     if binary in (r.stdout or ""):
                         return True, "lecture confirmée via MPRIS"
@@ -910,12 +905,11 @@ def _launch_with_fallback(target: str, is_url: bool,
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _playerctl(*args: str) -> Tuple[bool, str]:
-    if not shutil.which("playerctl"):
+    if not kit.which("playerctl"):
         return False, ("playerctl n'est pas installé — installe-le : "
                        "sudo pacman -S playerctl")
     try:
-        r = subprocess.run(["playerctl", *args],
-                           capture_output=True, text=True, timeout=5)
+        r = kit.run(["playerctl", *args], timeout=5)
     except Exception as e:
         return False, f"échec du contrôle de lecture : {e}"
     if r.returncode != 0:
@@ -1061,22 +1055,19 @@ def _is_affirmative(text: str) -> bool:
 
 
 def _spotify_binary() -> str:
-    return next((name for name in ("spotify", "spotify-launcher") if shutil.which(name)), "")
+    return next((name for name in ("spotify", "spotify-launcher") if kit.which(name)), "")
 
 
 def _hide_spotify_window() -> None:
     """Déplace Spotify hors de la scène, sans voler le focus utilisateur."""
-    if _OS != "Linux" or not shutil.which("hyprctl"):
+    if _OS != "Linux" or not kit.which("hyprctl"):
         return
     # Spotify/Electron crée sa fenêtre après le processus principal. Attendre
     # brièvement évite de laisser un flash à l'écran sur Hyprland.
     for _ in range(18):
         time.sleep(0.2)
         try:
-            clients = json.loads(subprocess.run(
-                ["hyprctl", "clients", "-j"], capture_output=True,
-                text=True, timeout=0.7,
-            ).stdout or "[]")
+            clients = kit.hypr_clients()
         except Exception:
             continue
         moved = False
@@ -1088,11 +1079,8 @@ def _hide_spotify_window() -> None:
             if "spotify" not in identity or not address:
                 continue
             try:
-                subprocess.run(
-                    ["hyprctl", "dispatch", "movetoworkspacesilent",
-                     f"special:music,address:{address}"],
-                    capture_output=True, text=True, timeout=0.7,
-                )
+                kit.hypr("dispatch", "movetoworkspacesilent",
+                         f"special:music,address:{address}", timeout=1.0)
                 moved = True
             except Exception:
                 pass
@@ -1102,19 +1090,17 @@ def _hide_spotify_window() -> None:
 
 def _resume_spotify_when_ready() -> None:
     """Reprend le morceau Spotify déjà chargé, sans bloquer le flux vocal."""
-    if not shutil.which("playerctl"):
+    if not kit.which("playerctl"):
         return
     for _ in range(30):
         time.sleep(0.2)
         try:
-            state = subprocess.run(
-                ["playerctl", "--player=spotify", "status"], capture_output=True,
-                text=True, timeout=0.7,
+            state = kit.run(
+                ["playerctl", "--player=spotify", "status"], timeout=0.7,
             ).stdout.strip().casefold()
             if state == "paused":
-                subprocess.run(
-                    ["playerctl", "--player=spotify", "play"], capture_output=True,
-                    text=True, timeout=0.7,
+                kit.run(
+                    ["playerctl", "--player=spotify", "play"], timeout=0.7,
                 )
                 return
             if state == "playing":
@@ -1132,15 +1118,15 @@ def _play_spotify(query: str, session_memory, player=None) -> str:
     try:
         # spotify-launcher reçoit l'URI en argument positionnel, contrairement
         # au binaire Spotify historique qui accepte parfois --uri=…
-        subprocess.Popen([binary, uri], stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
+        if kit.spawn([binary, uri]) is None:
+            raise OSError("lancement refusé")
     except OSError as exc:
         return f"Impossible de lancer Spotify : {exc}"
     threading.Thread(target=_hide_spotify_window, daemon=True,
                      name="hide-spotify-window").start()
     threading.Thread(target=_resume_spotify_when_ready, daemon=True,
                      name="resume-spotify-playback").start()
-    card_ready = _HAS_IPC_PLAYER and bool(shutil.which("playerctl"))
+    card_ready = _HAS_IPC_PLAYER and bool(kit.which("playerctl"))
     if card_ready:
         get_player().watch_mpris_player("spotify")
     _sm_set(session_memory, "music_source", "spotify")

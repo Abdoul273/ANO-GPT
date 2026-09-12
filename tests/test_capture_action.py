@@ -16,9 +16,9 @@ def test_full_capture_uses_caelestia_and_preserves_requested_output(monkeypatch,
         assert cmd == ["caelestia", "screenshot"]
         caelestia_dir.mkdir()
         (caelestia_dir / "20260910120000.png").write_bytes(b"png-data")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return capture.kit.ProcResult(cmd=tuple(cmd), code=0)
 
-    monkeypatch.setattr(capture.subprocess, "run", fake_run)
+    monkeypatch.setattr(capture.kit, "run", fake_run)
     result = capture.take_screenshot(output=str(output))
 
     assert result["ok"] is True
@@ -31,8 +31,8 @@ def test_region_uses_caelestia_native_picker(monkeypatch):
     monkeypatch.setattr(capture, "_hypr_env", lambda: {})
     monkeypatch.setattr(capture, "_have", lambda binary: binary == "caelestia")
     monkeypatch.setattr(
-        capture.subprocess, "run",
-        lambda cmd, **kwargs: seen.append(cmd) or SimpleNamespace(returncode=0, stdout="", stderr=""),
+        capture.kit, "run",
+        lambda cmd, **kwargs: seen.append(cmd) or capture.kit.ProcResult(cmd=tuple(cmd), code=0),
     )
 
     result = capture.take_screenshot(mode="region", freeze=True)

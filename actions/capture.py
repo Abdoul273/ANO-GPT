@@ -277,13 +277,9 @@ def _take_screenshot_caelestia(
     env["CAELESTIA_SCREENSHOTS_DIR"] = str(target_dir)
     before = {p.resolve() for p in target_dir.glob("*.png")} if target_dir.exists() else set()
     started = time.time()
-    try:
-        result = subprocess.run(
-            ["caelestia", "screenshot"], capture_output=True, text=True,
-            timeout=30, env=env,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"ok": False, "path": "", "message": f"Échec de Caelestia : {exc}"}
+    result = kit.run(["caelestia", "screenshot"], timeout=30, env=env)
+    if result.timed_out or result.not_found:
+        return {"ok": False, "path": "", "message": f"Échec de Caelestia : {result.reason()}"}
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "commande interrompue").strip()
         return {"ok": False, "path": "", "message": f"Échec de Caelestia : {detail}"}
@@ -317,13 +313,8 @@ def _take_screenshot_caelestia(
     if not copy_clipboard:
         extras.append("Caelestia impose néanmoins la copie dans le presse-papiers")
     if annotate and _have("swappy"):
-        try:
-            subprocess.Popen(["swappy", "-f", str(path)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             env=env, start_new_session=True)
+        if kit.spawn(["swappy", "-f", str(path)], env=env) is not None:
             extras.append("ouverte dans swappy pour annotation")
-        except OSError:
-            pass
     return {
         "ok": True, "path": str(path),
         "message": f"Capture Caelestia enregistrée : {path} — {path.stat().st_size // 1024} Ko "
@@ -340,10 +331,9 @@ def _open_caelestia_region(freeze: bool, env: dict) -> Dict[str, Any]:
     cmd = ["caelestia", "screenshot", "-r"]
     if freeze:
         cmd.append("-f")
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=env)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"ok": False, "path": "", "message": f"Échec de Caelestia : {exc}"}
+    result = kit.run(cmd, timeout=15, env=env)
+    if result.timed_out or result.not_found:
+        return {"ok": False, "path": "", "message": f"Échec de Caelestia : {result.reason()}"}
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "commande interrompue").strip()
         return {"ok": False, "path": "", "message": f"Échec de Caelestia : {detail}"}
@@ -399,10 +389,8 @@ def take_screenshot(
             return {"ok": False, "path": "",
                     "message": "slurp n'est pas installé — impossible de sélectionner "
                                "une région. Installe-le avec : sudo pacman -S slurp"}
-        try:
-            sel = subprocess.run(["slurp"], capture_output=True, text=True,
-                                 timeout=120, env=env)
-        except subprocess.TimeoutExpired:
+        sel = kit.run(["slurp"], timeout=120, env=env)
+        if sel.timed_out:
             return {"ok": False, "path": "",
                     "message": "Sélection de région abandonnée (délai dépassé)."}
         geom = (sel.stdout or "").strip()
@@ -434,7 +422,7 @@ def take_screenshot(
 
     cmd.append(str(path))
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=130, env=env)
+        r = kit.run(cmd, timeout=130, env=env)
     except Exception as e:
         return {"ok": False, "path": "", "message": f"Échec de la capture : {e}"}
     if r.returncode != 0 or not path.exists() or path.stat().st_size == 0:
@@ -451,13 +439,8 @@ def take_screenshot(
         except Exception:
             pass
     if annotate and _have("swappy"):
-        try:
-            subprocess.Popen(["swappy", "-f", str(path)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             env=env, start_new_session=True)
+        if kit.spawn(["swappy", "-f", str(path)], env=env) is not None:
             extras.append("ouverte dans swappy pour annotation")
-        except Exception:
-            pass
 
     size_kb = path.stat().st_size // 1024
     suffix = f" ({', '.join(extras)})" if extras else ""
@@ -517,16 +500,14 @@ def _default_mic_source() -> Optional[str]:
     env = _hypr_env()
     if _have("pactl"):
         try:
-            r = subprocess.run(["pactl", "get-default-source"],
-                               capture_output=True, text=True, timeout=3, env=env)
+            r = kit.run(["pactl", "get-default-source"], timeout=3, env=env)
             src = (r.stdout or "").strip()
             if r.returncode == 0 and src:
                 return src
         except Exception:
             pass
         try:
-            r = subprocess.run(["pactl", "list", "short", "sources"],
-                               capture_output=True, text=True, timeout=3, env=env)
+            r = kit.run(["pactl", "list", "short", "sources"], timeout=3, env=env)
             for line in (r.stdout or "").splitlines():
                 parts = line.split("\t")
                 if len(parts) >= 2 and ".monitor" not in parts[1]:
@@ -798,13 +779,8 @@ def _caelestia_recordings_dir(env: dict) -> Path:
 
 def _caelestia_recording_running(env: dict) -> bool:
     """Détecte un enregistreur externe lancé depuis le panneau Caelestia."""
-    try:
-        return subprocess.run(
-            ["pidof", "gpu-screen-recorder"], stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, timeout=3, env=env,
-        ).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    return kit.run(["pidof", "gpu-screen-recorder"], timeout=3, env=env,
+                   quiet=True).ok
 
 
 def _recording_process_alive(pid: object) -> bool:

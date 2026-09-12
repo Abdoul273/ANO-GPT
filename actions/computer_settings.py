@@ -32,7 +32,6 @@ import os
 import platform
 import re
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -75,11 +74,6 @@ except ImportError:
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 _WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY"))
 _X11 = bool(os.environ.get("DISPLAY") and not _WAYLAND)
-
-if _OS == "Windows":
-    _WIN_HIDE: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
-else:
-    _WIN_HIDE: dict = {}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -265,9 +259,8 @@ def get_current_volume() -> Optional[int]:
             return None
     elif _OS == "Darwin":
         try:
-            result = subprocess.run(["osascript", "-e",
-                                     "output volume of (get volume settings)"],
-                                    capture_output=True, text=True, timeout=3)
+            result = kit.run(["osascript", "-e",
+                                     "output volume of (get volume settings)"], timeout=3)
             return int(result.stdout.strip()) if result.returncode == 0 else None
         except Exception:
             return None
@@ -293,10 +286,9 @@ def get_current_volume() -> Optional[int]:
 def get_current_brightness() -> Optional[int]:
     if _OS == "Windows":
         try:
-            res = subprocess.run(
+            res = kit.run(
                 ["powershell", "-Command",
-                 "(Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightness).CurrentBrightness"],
-                capture_output=True, text=True, timeout=5, **_WIN_HIDE)
+                 "(Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightness).CurrentBrightness"], timeout=5)
             return int(res.stdout.strip()) if res.stdout.strip() else None
         except Exception:
             return None
@@ -345,9 +337,8 @@ def volume_up(amount: int = 10):
             for _ in range(amount // 2):
                 pyautogui.press("volumeup")
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-                        f"set volume output volume ((output volume of (get volume settings)) + {amount})"],
-                       capture_output=True, timeout=15)
+        kit.run(["osascript", "-e",
+                        f"set volume output volume ((output volume of (get volume settings)) + {amount})"], timeout=15)
     else:
         backend = _linux_volume_cmd()
         if backend == "wpctl":
@@ -365,9 +356,8 @@ def volume_down(amount: int = 10):
             for _ in range(amount // 2):
                 pyautogui.press("volumedown")
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-                        f"set volume output volume ((output volume of (get volume settings)) - {amount})"],
-                       capture_output=True, timeout=15)
+        kit.run(["osascript", "-e",
+                        f"set volume output volume ((output volume of (get volume settings)) - {amount})"], timeout=15)
     else:
         backend = _linux_volume_cmd()
         if backend == "wpctl":
@@ -383,9 +373,8 @@ def volume_mute():
         if _PYAUTOGUI:
             pyautogui.press("volumemute")
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-                        "set volume output muted not (output muted of (get volume settings))"],
-                       capture_output=True, timeout=15)
+        kit.run(["osascript", "-e",
+                        "set volume output muted not (output muted of (get volume settings))"], timeout=15)
     else:
         backend = _linux_volume_cmd()
         if backend == "wpctl":
@@ -398,8 +387,7 @@ def volume_mute():
 
 def volume_unmute():
     if _OS == "Darwin":
-        subprocess.run(["osascript", "-e", "set volume output muted false"],
-                       capture_output=True, timeout=15)
+        kit.run(["osascript", "-e", "set volume output muted false"], timeout=15)
     elif _OS == "Linux":
         backend = _linux_volume_cmd()
         if backend == "wpctl":
@@ -428,8 +416,7 @@ def volume_set(value: int):
                 pyautogui.press("volumemute")
                 pyautogui.press("volumemute")
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e", f"set volume output volume {value}"],
-                       capture_output=True, timeout=15)
+        kit.run(["osascript", "-e", f"set volume output volume {value}"], timeout=15)
         return
     else:
         backend = _linux_volume_cmd()
@@ -474,10 +461,9 @@ def brightness_set(value: int):
     print(f"[Settings] brightness_set({value}%)")
     if _OS == "Windows":
         try:
-            subprocess.run(
+            kit.run(
                 ["powershell", "-Command",
-                 f"(Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{value})"],
-                capture_output=True, timeout=5, **_WIN_HIDE)
+                 f"(Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{value})"], timeout=5)
         except Exception:
             print("[Settings] Windows brightness set failed")
     elif _OS == "Darwin":
@@ -512,7 +498,7 @@ def close_app(app_name: str = ""):
     if app_name and _OS == "Linux":
         needle = app_name.lower()
         # 1. Fenêtres Hyprland, fermées une par une avec vérification.
-        if _WAYLAND and shutil.which("hyprctl"):
+        if _WAYLAND and kit.which("hyprctl"):
             clients = _hyprctl_json("clients") or []
             closed = 0
             for c in clients:
@@ -583,11 +569,10 @@ def _find_pids_by_name(name: str) -> List[int]:
     pids = set()
     my_pid = os.getpid()
     low = name.lower().strip()
-    if shutil.which("pgrep"):
+    if kit.which("pgrep"):
         pat = rf"(^|/){re.escape(low)}( |$)"
         try:
-            r = subprocess.run(["pgrep", "-f", pat], capture_output=True,
-                               text=True, timeout=3)
+            r = kit.run(["pgrep", "-f", pat], timeout=3)
             for line in (r.stdout or "").splitlines():
                 if line.strip().isdigit():
                     pids.add(int(line.strip()))
@@ -835,9 +820,9 @@ def press_key(key: str):
 
 def type_text(text: str, press_enter_after: bool = False):
     typed = False
-    if _WAYLAND and shutil.which("wtype"):
+    if _WAYLAND and kit.which("wtype"):
         try:
-            subprocess.run(["wtype", text], timeout=max(2, len(text) // 20 + 2),
+            kit.run(["wtype", text], timeout=max(2, len(text) // 20 + 2),
                            env=_hypr_env())
             typed = True
         except Exception:
@@ -898,12 +883,12 @@ def lock_screen():
 
 def sleep_display():
     if _OS == "Windows":
-        subprocess.run(
+        kit.run(
             ["powershell", "-Command",
              "(Add-Type -MemberDefinition '[DllImport(\"user32.dll\")]public static extern int SendMessage(int hWnd,int hMsg,int wParam,int lParam);' -Name a -Pas)::SendMessage(-1,0x0112,0xF170,2)"],
-            **_WIN_HIDE, timeout=15)
+            timeout=15)
     elif _OS == "Darwin":
-        subprocess.run(["pmset", "displaysleepnow"], timeout=15)
+        kit.run(["pmset", "displaysleepnow"], timeout=15)
     else:
         if _WAYLAND and kit.which("hyprctl"):
             _hypr_dispatch_ok("dpms", "off")

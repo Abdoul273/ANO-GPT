@@ -75,7 +75,21 @@ DEFAULT_TIMEOUT = 8.0
 
 # Sur une machine à deux cœurs, laisser dix `hyprctl` partir en parallèle coûte
 # plus cher que de les sérialiser. Ce sémaphore borne les processus courts.
+# Les travaux longs (ffmpeg, yt-dlp, conversion LibreOffice…) ne prennent pas
+# de place : un encodage de vingt minutes ne doit pas bloquer les `hyprctl`.
 _PROC_SLOTS = threading.BoundedSemaphore(4)
+_SLOT_MAX_TIMEOUT = 30.0
+
+
+class _NoSlot:
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+
+_NO_SLOT = _NoSlot()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -276,7 +290,7 @@ def run(
         started = time.monotonic()
         proc = None
         try:
-            with _PROC_SLOTS:
+            with (_PROC_SLOTS if timeout <= _SLOT_MAX_TIMEOUT else _NO_SLOT):
                 proc = subprocess.Popen(
                     argv if not shell else argv[0],
                     shell=shell,
