@@ -231,10 +231,11 @@ def _close_by_address(address: str, force: bool = False) -> bool:
     ]
     for payload in attempts:
         _dispatch_raw(payload)
-        for _ in range(6):  # jusqu'à ~600 ms pour que la fenêtre disparaisse
-            time.sleep(0.1)
-            if not _window_exists(address):
-                return True
+        # Jusqu'à ~600 ms pour que la fenêtre disparaisse, mais on rend la
+        # main dès qu'elle n'est plus là : la plupart ferment en 50 ms.
+        if kit.wait_until(lambda: not _window_exists(address),
+                          timeout=0.6, interval=0.04, max_interval=0.15):
+            return True
     # Dernier recours : signal au processus, mais uniquement s'il ne possède
     # que cette fenêtre (sinon on fermerait les autres fenêtres de la même
     # application, ce qu'on cherche justement à éviter).
@@ -290,11 +291,8 @@ def _kill_owning_process(address: str, force: bool = False) -> bool:
         _os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
     except Exception:
         return False
-    for _ in range(10):
-        time.sleep(0.1)
-        if not _window_exists(address):
-            return True
-    return False
+    return kit.wait_until(lambda: not _window_exists(address),
+                          timeout=1.0, interval=0.05, max_interval=0.2)
 
 def focus_window(selector: str) -> bool:
     legacy_cmd = "focuswindow"
