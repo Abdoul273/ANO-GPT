@@ -1062,8 +1062,11 @@ TOOL_DECLARATIONS = [
                         "scroll_up | scroll_down | scroll_top | scroll_bottom | page_up | page_down | "
                         "copy | paste | cut | undo | redo | select_all | save | enter | escape | "
                         "screenshot | lock_screen | open_settings | file_explorer | open_run | "
-                        "dark_mode | toggle_wifi | restart | shutdown | type_text | press_key | "
-                        "reload_n. For volume_set, pass value as an integer 0-100 (e.g. 10 for 10%)."
+                        "dark_mode | toggle_wifi | wifi_status | toggle_bluetooth | bluetooth_status | "
+                        "airplane_mode | mic_toggle | power_profile | restart | shutdown | suspend | "
+                        "type_text | press_key | reload_n. For volume_set, pass value as an integer "
+                        "0-100 (e.g. 10 for 10%). For power_profile, value is performance | balanced | "
+                        "power-saver (omit value to read the current profile)."
                     )
                 },
                 "description": {"type": "STRING", "description": "Natural language description of what to do"},
@@ -2034,7 +2037,8 @@ _DESTRUCTIVE_TOOLS = frozenset({
 # Ces deux-là ne sont dangereux que sur certaines actions : refuser à un invité
 # de baisser le volume n'aurait aucun sens.
 _DESTRUCTIVE_SETTINGS = frozenset({
-    "shutdown", "restart", "lock_screen", "toggle_wifi", "close_window",
+    "shutdown", "restart", "suspend", "lock_screen", "toggle_wifi",
+    "toggle_bluetooth", "airplane_mode", "close_window",
 })
 
 

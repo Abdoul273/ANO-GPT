@@ -966,6 +966,133 @@ def toggle_wifi():
             run(["nmcli", "radio", "wifi", "toggle"], timeout=10, retries=1)
 
 
+_C_LOCALE = {"LC_ALL": "C", "LANG": "C"}
+
+
+def _rfkill_state(kind: str) -> Optional[bool]:
+    """True si la radio `kind` (wlan/bluetooth) est active, None si inconnue."""
+    if not kit.which("rfkill"):
+        return None
+    # Sortie en anglais : rfkill traduit « unblocked » selon la locale.
+    data = kit.run(["rfkill", "-J"], timeout=3, env=_C_LOCALE).json({}) or {}
+    devices = data.get("rfkilldevices") or data.get("") or []
+    for dev in devices:
+        if str(dev.get("type", "")).lower() == kind:
+            return str(dev.get("soft", "")).lower() == "unblocked" and \
+                   str(dev.get("hard", "")).lower() == "unblocked"
+    return None
+
+
+def wifi_status() -> str:
+    if _OS != "Linux":
+        return "État Wi-Fi non disponible sur ce système."
+    if kit.which("nmcli"):
+        radio = run(["nmcli", "-t", "radio", "wifi"], timeout=5,
+                    env=_C_LOCALE).out.strip().lower()
+        if radio:
+            state = "activé" if radio.startswith("enabled") else "désactivé"
+            if radio.startswith("enabled"):
+                conn = run(["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi"],
+                           timeout=6, env=_C_LOCALE).out
+                for line in conn.splitlines():
+                    parts = line.split(":")
+                    if parts and parts[0] == "yes" and len(parts) >= 3:
+                        return f"Wi-Fi {state}, connecté à « {parts[1]} » (signal {parts[2]} %)."
+                return f"Wi-Fi {state}, aucun réseau connecté."
+            return f"Wi-Fi {state}."
+    state = _rfkill_state("wlan")
+    if state is None:
+        return "Impossible de lire l'état du Wi-Fi."
+    return "Wi-Fi activé." if state else "Wi-Fi désactivé."
+
+
+def toggle_bluetooth():
+    if _OS != "Linux":
+        return "Bluetooth non pilotable sur ce système."
+    if kit.which("bluetoothctl"):
+        res = run(["bluetoothctl", "show"], timeout=5)
+        powered = "Powered: yes" in res.out
+        if run(["bluetoothctl", "power", "off" if powered else "on"], timeout=8):
+            return "Bluetooth désactivé." if powered else "Bluetooth activé."
+    if kit.which("rfkill"):
+        state = _rfkill_state("bluetooth")
+        if state is not None and run(["rfkill", "unblock" if not state else "block",
+                                      "bluetooth"], timeout=5):
+            return "Bluetooth désactivé." if state else "Bluetooth activé."
+    return "Impossible de basculer le Bluetooth (bluetoothctl ou rfkill requis)."
+
+
+def bluetooth_status() -> str:
+    if _OS != "Linux" or not kit.which("bluetoothctl"):
+        return "État Bluetooth non disponible."
+    res = run(["bluetoothctl", "show"], timeout=5)
+    if not res.ok:
+        return "Impossible de lire l'état du Bluetooth."
+    if "Powered: yes" not in res.out:
+        return "Bluetooth désactivé."
+    devices = run(["bluetoothctl", "devices", "Connected"], timeout=5).out
+    names = [ln.split(" ", 2)[2] for ln in devices.splitlines()
+             if ln.startswith("Device ") and len(ln.split(" ", 2)) == 3]
+    if names:
+        return "Bluetooth activé, connecté à : " + ", ".join(names) + "."
+    return "Bluetooth activé, aucun appareil connecté."
+
+
+def airplane_mode():
+    """Coupe (ou rallume) toutes les radios d'un coup."""
+    if _OS != "Linux" or not kit.which("rfkill"):
+        return "Mode avion non disponible sur ce système."
+    wifi = _rfkill_state("wlan")
+    any_on = bool(wifi) or bool(_rfkill_state("bluetooth"))
+    if run(["rfkill", "block" if any_on else "unblock", "all"], timeout=5):
+        return "Mode avion activé : toutes les radios coupées." if any_on \
+            else "Mode avion désactivé : radios rallumées."
+    return "Impossible de basculer le mode avion."
+
+
+_POWER_PROFILES = {
+    "performance": "performance", "perf": "performance", "performances": "performance",
+    "balanced": "balanced", "equilibre": "balanced", "équilibré": "balanced",
+    "normal": "balanced", "power-saver": "power-saver", "eco": "power-saver",
+    "economie": "power-saver", "économie": "power-saver", "saver": "power-saver",
+    "batterie": "power-saver",
+}
+
+
+def power_profile(value: Optional[str] = None) -> str:
+    if not kit.which("powerprofilesctl"):
+        return "Profils d'énergie indisponibles (power-profiles-daemon absent)."
+    current = run(["powerprofilesctl", "get"], timeout=4).out.strip()
+    if not value:
+        return f"Profil d'énergie actuel : {current or 'inconnu'}."
+    target = _POWER_PROFILES.get(str(value).strip().lower())
+    if not target:
+        return f"Profil inconnu : {value} (performance, équilibré ou économie)."
+    if target == current:
+        return f"Profil d'énergie déjà sur {target}."
+    if run(["powerprofilesctl", "set", target], timeout=6):
+        push_undo(f"profil d'énergie {target}",
+                  lambda: (run(["powerprofilesctl", "set", current], timeout=6),
+                           f"Profil {current} restauré.")[1])
+        return f"Profil d'énergie réglé sur {target}."
+    return f"Impossible de passer au profil {target}."
+
+
+def mic_toggle():
+    """Coupe ou rétablit le micro système (source par défaut)."""
+    if _OS != "Linux":
+        return "Micro non pilotable sur ce système."
+    if kit.which("wpctl"):
+        if run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"], timeout=3):
+            state = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"], timeout=3).out
+            return "Micro coupé." if "MUTED" in state else "Micro rétabli."
+    if kit.which("pactl"):
+        if run(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "toggle"], timeout=3):
+            state = run(["pactl", "get-source-mute", "@DEFAULT_SOURCE@"], timeout=3).out
+            return "Micro coupé." if "yes" in state.lower() else "Micro rétabli."
+    return "Impossible de basculer le micro."
+
+
 def pause_video():
     _press("space")
 
@@ -1241,6 +1368,11 @@ ACTION_MAP: Dict[str, Callable] = {
     "open_run": open_run,
     "dark_mode": dark_mode,
     "toggle_wifi": toggle_wifi,
+    "wifi_status": wifi_status,
+    "toggle_bluetooth": toggle_bluetooth,
+    "bluetooth_status": bluetooth_status,
+    "airplane_mode": airplane_mode,
+    "mic_toggle": mic_toggle,
     "restart": restart_computer,
     "shutdown": shutdown_computer,
 }
@@ -1258,6 +1390,14 @@ _ACTION_ALIASES: Dict[str, str] = {
     "close_current_window": "close_window",
     "quit_app": "close_app", "kill_app": "close_app",
     "wifi": "toggle_wifi", "toggle_wi_fi": "toggle_wifi",
+    "bluetooth": "toggle_bluetooth", "toggle_bt": "toggle_bluetooth",
+    "bt_status": "bluetooth_status", "wifi_state": "wifi_status",
+    "airplane": "airplane_mode", "mode_avion": "airplane_mode",
+    "flight_mode": "airplane_mode",
+    "mute_mic": "mic_toggle", "toggle_mic": "mic_toggle", "micro": "mic_toggle",
+    "microphone": "mic_toggle", "mic_mute": "mic_toggle",
+    "power_mode": "power_profile", "energy_profile": "power_profile",
+    "performance_mode": "power_profile", "eco_mode": "power_profile",
     "power_off": "shutdown", "turn_off": "shutdown", "reboot": "restart",
     "dark_theme": "dark_mode", "night_mode": "dark_mode",
     "luminosity": "brightness_set", "brightness": "brightness_set",
@@ -1267,7 +1407,8 @@ _ACTION_ALIASES: Dict[str, str] = {
     "veille": "suspend", "suspendre": "suspend",
 }
 
-_DANGEROUS_ACTIONS = {"restart", "shutdown", "suspend", "toggle_wifi"}
+_DANGEROUS_ACTIONS = {"restart", "shutdown", "suspend", "toggle_wifi",
+                      "toggle_bluetooth", "airplane_mode"}
 _TRUTHY = {"yes", "true", "1", "confirm", "oui", "confirme", "ok"}
 
 
@@ -1335,6 +1476,8 @@ def computer_settings(parameters: dict = None, response=None, player=None,
             "shutdown": "Éteindre l'ordinateur",
             "suspend": "Mettre l'ordinateur en veille",
             "toggle_wifi": "Modifier l'état du Wi-Fi",
+            "toggle_bluetooth": "Modifier l'état du Bluetooth",
+            "airplane_mode": "Basculer le mode avion",
         }
         return human_confirmation.request(
             f"computer:{action}", titles[action],
@@ -1419,6 +1562,14 @@ def computer_settings(parameters: dict = None, response=None, player=None,
         if action == "screenshot":
             res = take_screenshot()
             return res or "Capture d'écran lancée."
+        if action == "power_profile":
+            profile = value or params.get("profile") or params.get("mode")
+            if not profile and description:
+                m = re.search(r"(performance|perf|équilibré|equilibre|balanced|"
+                              r"économie|economie|eco|batterie|power-saver)",
+                              description.lower())
+                profile = m.group(1) if m else None
+            return power_profile(profile)
 
         # Cas spécial close_app : délégation à la fermeture intelligente.
         if action in ("close_app", "quit_app", "kill_app"):
