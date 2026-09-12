@@ -258,11 +258,17 @@ def _download_image(candidate: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
+_RESULT_CACHE = kit.TTLCache(maxsize=32)
+
+
 def search_images(query: str, limit: int = 6) -> list[dict[str, Any]]:
     query = " ".join(str(query or "").split())
     if not query:
         return []
     limit = max(1, min(int(limit or 6), 8))
+    cached = _RESULT_CACHE.get((query.casefold(), limit))
+    if cached:
+        return list(cached)
     candidate_count = min(18, max(10, limit * 2))
 
     candidates: list[dict[str, Any]] = []
@@ -291,19 +297,24 @@ def search_images(query: str, limit: int = 6) -> list[dict[str, Any]]:
             print(f"[ImageSearch] Image ignorée ({error})")
             return None
 
-    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="image-fetch") as pool:
-        downloaded = list(pool.map(safe_download, ranked))
-
+    # Téléchargement par vagues dans l'ordre de pertinence : on s'arrête dès
+    # que la galerie est pleine au lieu de rapatrier les dix-huit candidats.
     selected: list[dict[str, Any]] = []
     digests: set[str] = set()
-    for item in downloaded:
-        if not item or item["digest"] in digests:
-            continue
-        digests.add(item["digest"])
-        item["score"] = float(item.pop("_score", 0.0))
-        selected.append(item)
-        if len(selected) >= limit:
-            break
+    wave = max(limit + 2, 4)
+    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="image-fetch") as pool:
+        for offset in range(0, len(ranked), wave):
+            for item in pool.map(safe_download, ranked[offset:offset + wave]):
+                if not item or item["digest"] in digests:
+                    continue
+                digests.add(item["digest"])
+                item["score"] = float(item.pop("_score", 0.0))
+                selected.append(item)
+                if len(selected) >= limit:
+                    break
+            if len(selected) >= limit:
+                break
+    _RESULT_CACHE.set((query.casefold(), limit), selected, 300.0)
     return selected
 
 
