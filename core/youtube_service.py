@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from core.action_kit import TTLCache
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, List
 
@@ -198,6 +200,11 @@ def _search_youtube_scraping(query: str, limit: int = 6) -> List[YouTubeResult]:
     return results
 
 
+_HEDGE_AFTER_S = 2.5
+_SEARCH_TTL = 120.0
+_SEARCH_CACHE = TTLCache(maxsize=64)
+
+
 def search_youtube(
     query: str,
     limit: int = 6,
@@ -208,6 +215,11 @@ def search_youtube(
         return []
     limit = max(1, min(int(limit), 20))
 
+    cache_key = (query.casefold(), limit)
+    cached = _SEARCH_CACHE.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
     results: List[YouTubeResult] = []
     ytdlp_available = bool(shutil.which("yt-dlp"))
 
@@ -217,8 +229,31 @@ def search_youtube(
             "--dump-json", "--no-warnings", "--no-playlist",
             "--socket-timeout", "12",
         ]
+        # yt-dlp est le plus fiable mais met souvent 4 à 8 s ; le scraping de
+        # la page de résultats répond en une seconde. On lance yt-dlp, et si
+        # il traîne au-delà de _HEDGE_AFTER_S le scraping part en parallèle :
+        # le premier lot exploitable gagne.
+        pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="yt-search")
+        ytdlp_future = pool.submit(runner, command, capture_output=True, text=True, timeout=35)
+        scrape_future = None
         try:
-            process = runner(command, capture_output=True, text=True, timeout=35)
+            try:
+                process = ytdlp_future.result(timeout=_HEDGE_AFTER_S)
+            except FutureTimeout:
+                scrape_future = pool.submit(_search_youtube_scraping, query, limit)
+                while True:
+                    try:
+                        process = ytdlp_future.result(timeout=0.1)
+                        break
+                    except FutureTimeout:
+                        pass
+                    if scrape_future.done() and not scrape_future.exception():
+                        scraped = scrape_future.result()
+                        if scraped:
+                            pool.shutdown(wait=False, cancel_futures=True)
+                            _SEARCH_CACHE.set(cache_key, scraped[:limit], _SEARCH_TTL)
+                            return scraped[:limit]
+                        scrape_future = None
             if process.returncode == 0 or (process.stdout or "").strip():
                 seen: set[str] = set()
                 for line in (process.stdout or "").splitlines():
@@ -248,17 +283,21 @@ def search_youtube(
                         live=str(data.get("live_status") or "").lower() in {"is_live", "is_upcoming"},
                     ))
                 if results:
+                    _SEARCH_CACHE.set(cache_key, results[:limit], _SEARCH_TTL)
                     return results[:limit]
         except subprocess.TimeoutExpired as exc:
             raise YouTubeUnavailable("la recherche YouTube a expiré.") from exc
         except Exception:
             # yt-dlp a échoué (SubprocessError, etc.) -> fallback au scraping
             pass
+        finally:
+            pool.shutdown(wait=False)
 
     # Fallback au scraping direct
     try:
         results = _search_youtube_scraping(query, limit)
         if results:
+            _SEARCH_CACHE.set(cache_key, results[:limit], _SEARCH_TTL)
             return results[:limit]
     except Exception:
         pass
