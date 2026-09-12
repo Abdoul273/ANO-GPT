@@ -2,7 +2,6 @@
 # Parsing local avancé, planification intelligente, itérations de correction.
 # Interprète le langage naturel avant de lancer le moteur de génération.
 
-import subprocess
 import sys
 import json
 import re
@@ -284,9 +283,8 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
     to_install = []
     for dep in dependencies:
         pkg_name = re.split(r"[>=<!]", dep)[0].strip()
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "show", pkg_name],
-            capture_output=True, text=True, timeout=15
+        result = kit.run(
+            [sys.executable, "-m", "pip", "show", pkg_name], timeout=15
         )
         if result.returncode != 0:
             to_install.append(dep)
@@ -296,17 +294,15 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
         return f"Toutes les dépendances déjà installées : {', '.join(dependencies)}"
     print(f"[DevAgent] 📦 Installation : {to_install}")
     try:
-        result = subprocess.run(
+        result = kit.run(
             [sys.executable, "-m", "pip", "install"] + to_install,
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
             timeout=120, cwd=str(project_dir)
         )
+        if result.timed_out:
+            return "Installation des dépendances expirée (non bloquant)."
         if result.returncode == 0:
             return f"Installé : {', '.join(to_install)}"
         return f"Avertissement installation (non bloquant) : {result.stderr[:200]}"
-    except subprocess.TimeoutExpired:
-        return "Installation des dépendances expirée (non bloquant)."
     except Exception as e:
         return f"Erreur d'installation (non bloquant) : {e}"
 
@@ -338,13 +334,15 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
         parts = run_command.split()
         if parts[0].lower() == "python":
             parts[0] = sys.executable
-        result = subprocess.run(
+        result = kit.run(
             parts,
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
             timeout=timeout,
             cwd=str(project_dir)
         )
+        if result.timed_out:
+            return f"Expiré après {timeout}s — l'application (serveur/GUI) fonctionne probablement."
+        if result.not_found:
+            return f"Commande introuvable : {parts[0]}"
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
         parts_out = []
@@ -353,10 +351,6 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
         if stderr:
             parts_out.append(f"ERREUR:\n{stderr}")
         return "\n\n".join(parts_out) if parts_out else "Exécuté sans sortie."
-    except subprocess.TimeoutExpired:
-        return f"Expiré après {timeout}s — l'application (serveur/GUI) fonctionne probablement."
-    except FileNotFoundError as e:
-        return f"Commande introuvable : {e}"
     except Exception as e:
         return f"Erreur d'exécution : {e}"
 
@@ -402,10 +396,8 @@ def _try_auto_install(error_output: str, project_dir: Path) -> bool:
     pkg = match.group(1).replace("_", "-").split(".")[0]
     print(f"[DevAgent] 🔧 Installation automatique du module manquant : {pkg}")
     try:
-        result = subprocess.run(
+        result = kit.run(
             [sys.executable, "-m", "pip", "install", pkg],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
             timeout=60, cwd=str(project_dir)
         )
         return result.returncode == 0

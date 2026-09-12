@@ -250,7 +250,7 @@ def _move_new_window_to_workspace(app_name: str, workspace: int,
     Préfère une fenêtre dont classe/titre correspond au nom demandé, puis
     se rabat sur la première nouvelle fenêtre (les classes ne collent pas
     toujours au nom d'usage, ex: alias ou apps Electron)."""
-    if _SYSTEM != "Linux" or not shutil.which("hyprctl"):
+    if _SYSTEM != "Linux" or not kit.which("hyprctl"):
         return False
     needle = (app_name or "").lower()
     deadline = time.monotonic() + timeout
@@ -279,7 +279,7 @@ def _move_new_window_to_workspace(app_name: str, workspace: int,
 def _wait_for_new_window(app_name: str, before_addrs: Set[str], timeout: float = 6.0) -> Optional[dict]:
     """Interroge _hyprctl_json("clients"), extrait les clients apparus depuis before_addrs,
     sélectionne en priorité le client correspondant à l'application ou le premier nouveau client."""
-    if _SYSTEM != "Linux" or not shutil.which("hyprctl"):
+    if _SYSTEM != "Linux" or not kit.which("hyprctl"):
         return None
     needle = (app_name or "").lower().strip()
     deadline = time.monotonic() + timeout
@@ -313,7 +313,7 @@ def _verify_hidden(before_addrs: set, timeout: float = 1.5) -> bool:
     """Relit l'état réel Hyprland : une fenêtre apparue depuis `before_addrs`
     est-elle vraiment sur le bureau spécial caché ? Un dispatch hyprctl
     répondant « ok » ne garantit pas que la fenêtre y a atterri."""
-    if _SYSTEM != "Linux" or not shutil.which("hyprctl"):
+    if _SYSTEM != "Linux" or not kit.which("hyprctl"):
         return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -552,7 +552,7 @@ def _command_argv(name: str) -> Optional[List[str]]:
     argv = _split_command(name)
     if not argv:
         return None
-    exe = shutil.which(argv[0]) or shutil.which(argv[0].lower())
+    exe = kit.which(argv[0]) or kit.which(argv[0].lower())
     if not exe:
         return None
     return [exe] + argv[1:]
@@ -706,14 +706,14 @@ def _launch_with_target(app_name: str, target: Path) -> bool:
         if not app_name or not normalized:
             if _SYSTEM == "Linux" and target.suffix.lower() in _MEDIA_EXTS:
                 for player in ("vlc", "mpv"):
-                    if shutil.which(player):
-                        _popen_detached([shutil.which(player), target.name],
+                    if kit.which(player):
+                        _popen_detached([kit.which(player), target.name],
                                         cwd=str(target.parent))
                         return _wait_for_launch(player, before, timeout=5.0)
             return _open_path_default(target)
 
         if _SYSTEM == "Windows":
-            binary = shutil.which(normalized) or shutil.which(app_name) or normalized
+            binary = kit.which(normalized) or kit.which(app_name) or normalized
             kit.spawn([binary, str(target)])
         elif _SYSTEM == "Darwin":
             kit.spawn(['open', '-a', normalized, str(target)])
@@ -947,7 +947,7 @@ def _normalize(raw: str) -> str:
 
 def _launch_windows(app_name: str, instance_name: Optional[str] = None) -> bool:
     before = _snapshot_pids()
-    if shutil.which(app_name) or shutil.which(app_name.split(".")[0]):
+    if kit.which(app_name) or kit.which(app_name.split(".")[0]):
         try:
             proc = subprocess.Popen(app_name, shell=True,
                                     stdout=DEVNULL, stderr=DEVNULL)
@@ -980,21 +980,10 @@ def _launch_windows(app_name: str, instance_name: Optional[str] = None) -> bool:
 
 def _launch_macos(app_name: str, instance_name: Optional[str] = None) -> bool:
     before = _snapshot_pids()
-    try:
-        result = subprocess.run(["open", "-a", app_name],
-                                capture_output=True, timeout=8)
-        if result.returncode == 0:
+    for candidate in (app_name, f"{app_name}.app"):
+        if kit.run(["open", "-a", candidate], timeout=8):
             return _wait_for_launch(app_name, before)
-    except Exception:
-        pass
-    try:
-        result = subprocess.run(["open", "-a", f"{app_name}.app"],
-                                capture_output=True, timeout=8)
-        if result.returncode == 0:
-            return _wait_for_launch(app_name, before)
-    except Exception:
-        pass
-    binary = shutil.which(app_name) or shutil.which(app_name.lower())
+    binary = kit.which(app_name) or kit.which(app_name.lower())
     if binary:
         try:
             kit.spawn([binary])
@@ -1025,9 +1014,9 @@ def _launch_linux(app_name: str, instance_name: Optional[str] = None) -> bool:
     # ── 1. Instance nommée (terminaux avec flag de titre) ────────────────
     if instance_name and _HAS_WINDOW_INSTANCES:
         binary_candidate = (
-            shutil.which(app_name) or
-            shutil.which(app_name.lower()) or
-            shutil.which(app_name.lower().replace(" ", "-"))
+            kit.which(app_name) or
+            kit.which(app_name.lower()) or
+            kit.which(app_name.lower().replace(" ", "-"))
         )
         flag = (_title_flag_for(app_name) or
                 (binary_candidate and _title_flag_for(binary_candidate)))
@@ -1044,7 +1033,7 @@ def _launch_linux(app_name: str, instance_name: Optional[str] = None) -> bool:
     # ── 2. Demande générique « terminal » ────────────────────────────────
     if app_name in ("x-terminal-emulator", "gnome-terminal", "terminal"):
         for term in _LINUX_TERMINAL_FALLBACKS:
-            if shutil.which(term):
+            if kit.which(term):
                 try:
                     if instance_name and _HAS_WINDOW_INSTANCES and _title_flag_for(term):
                         flag = _title_flag_for(term)
@@ -1071,7 +1060,7 @@ def _launch_linux(app_name: str, instance_name: Optional[str] = None) -> bool:
             if argv:
                 if entry.terminal:
                     term = next((t for t in _LINUX_TERMINAL_FALLBACKS
-                                 if shutil.which(t)), None)
+                                 if kit.which(t)), None)
                     if term:
                         argv = [term, "-e"] + argv
                 try:
@@ -1096,13 +1085,10 @@ def _launch_linux(app_name: str, instance_name: Optional[str] = None) -> bool:
             pass
 
     # ── 5. Dernier recours : xdg-open ────────────────────────────────────
-    try:
-        result = subprocess.run(["xdg-open", app_name], stdin=DEVNULL,
-                                capture_output=True, timeout=5, env=_linux_env())
-        return result.returncode == 0
-    except Exception:
-        pass
-    return False
+    # xdg-open peut rester attaché au programme qu'il ouvre : on ne lit pas sa
+    # sortie, on veut seulement savoir qu'il a accepté la demande.
+    return kit.run(["xdg-open", app_name], timeout=5, env=_linux_env(),
+                   capture=False).ok
 
 
 _OS_LAUNCHERS = {
@@ -1384,7 +1370,7 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
             # Snapshot des adresses AVANT chaque lancement, pour le
             # déplacement de la bonne fenêtre et le journal de lancement.
             before_addrs: Set[str] = set()
-            if _SYSTEM == "Linux" and shutil.which("hyprctl"):
+            if _SYSTEM == "Linux" and kit.which("hyprctl"):
                 before_addrs = {c.get("address", "") for c in
                                 (_hyprctl_json("clients") or [])}
 

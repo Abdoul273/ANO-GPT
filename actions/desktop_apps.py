@@ -144,7 +144,7 @@ def _parse_desktop_file(fp: Path) -> Optional[AppEntry]:
     try_exec = fields.get("TryExec", "")
     if try_exec:
         bin_name = try_exec.split()[0] if try_exec.split() else ""
-        if bin_name and not shutil.which(bin_name):
+        if bin_name and not kit.which(bin_name):
             return None
 
     keywords = [k for k in fields.get("Keywords", "").split(";") if k]
@@ -382,8 +382,7 @@ def _get_running_app_binaries() -> Set[str]:
     running: Set[str] = set()
     if _OS in ("Linux", "Darwin"):
         try:
-            out = subprocess.run(["ps", "-eo", "comm"], capture_output=True,
-                                 text=True, timeout=2)
+            out = kit.run(["ps", "-eo", "comm"], timeout=2)
             for line in out.stdout.splitlines()[1:]:
                 comm = line.strip().lower()
                 if comm:
@@ -392,8 +391,7 @@ def _get_running_app_binaries() -> Set[str]:
             pass
     elif _OS == "Windows":
         try:
-            out = subprocess.run(["tasklist", "/NH", "/FO", "CSV"],
-                                 capture_output=True, text=True, timeout=4)
+            out = kit.run(["tasklist", "/NH", "/FO", "CSV"], timeout=4)
             for line in out.stdout.splitlines():
                 parts = line.strip().strip('"').split('","')
                 if parts:
@@ -449,16 +447,12 @@ _TERMINAL_CANDIDATES: List[Tuple[str, Optional[str]]] = [
 
 def _run_in_terminal(argv: List[str], env: dict) -> bool:
     for term, flag in _TERMINAL_CANDIDATES:
-        path = shutil.which(term)
+        path = kit.which(term)
         if not path:
             continue
         cmd = [path] + ([flag] if flag else []) + argv
-        try:
-            subprocess.Popen(cmd, stdin=DEVNULL, stdout=DEVNULL,
-                             stderr=DEVNULL, start_new_session=True, env=env)
+        if kit.spawn(cmd, env=env) is not None:
             return True
-        except Exception:
-            continue
     return False
 
 
@@ -490,7 +484,9 @@ def _launch_entry(entry: AppEntry, no_wait: bool = True) -> str:
                                     stdout=DEVNULL, stderr=DEVNULL,
                                     start_new_session=True, env=env)
         else:
-            subprocess.run(argv, cwd=str(Path.home()), env=env, check=True, timeout=15)
+            res = kit.run(argv, cwd=str(Path.home()), env=env, timeout=15)
+            if not res:
+                raise RuntimeError(res.reason())
             return f"Lancement de {entry.name}."
     except Exception as e:
         return f"Erreur au lancement de {entry.name} : {e}"
@@ -510,7 +506,9 @@ def _launch_binary(binary: str, name: str, no_wait: bool = True) -> str:
                                     stderr=DEVNULL, start_new_session=True,
                                     env=env)
         else:
-            subprocess.run([binary], cwd=str(Path.home()), env=env, check=True, timeout=15)
+            res = kit.run([binary], cwd=str(Path.home()), env=env, timeout=15)
+            if not res:
+                raise RuntimeError(res.reason())
             return f"Lancement de {name}."
     except Exception as e:
         return f"Erreur au lancement de {name} : {e}"
@@ -536,7 +534,7 @@ def launch_app(app_name: str, no_wait: bool = True) -> str:
         if entry:
             return _launch_entry(entry, no_wait=no_wait)
         # 2. Binaire directement dans le PATH (apps sans .desktop : btop…)
-        binary = shutil.which(name) or shutil.which(name.lower())
+        binary = kit.which(name) or kit.which(name.lower())
         if binary:
             return _launch_binary(binary, name, no_wait=no_wait)
 
@@ -548,7 +546,7 @@ def launch_app(app_name: str, no_wait: bool = True) -> str:
             pass
     elif _OS == "Windows":
         for name in resolved_names:
-            exe = shutil.which(name) or shutil.which(name + ".exe")
+            exe = kit.which(name) or kit.which(name + ".exe")
             if exe:
                 flags = getattr(subprocess, "DETACHED_PROCESS", 0)
                 subprocess.Popen([exe], creationflags=flags)
@@ -687,7 +685,7 @@ def app_control(parameters: dict = None, response=None, player=None,
             if entry:
                 return (f"Application trouvée : {entry.name} ({entry.id}) "
                         f"— {entry.exec_raw}")
-            binary = shutil.which(app_name) or shutil.which(app_name.lower())
+            binary = kit.which(app_name) or kit.which(app_name.lower())
             if binary:
                 return f"Application trouvée dans le PATH : {binary}"
             return f"Aucune application trouvée pour '{app_name}'."

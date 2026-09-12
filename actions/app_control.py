@@ -16,7 +16,6 @@ l'assistant lui-même). La fermeture passe désormais par :
 import functools
 import os
 import re
-import shutil
 import subprocess
 from core import action_kit as kit
 import time
@@ -79,20 +78,16 @@ except Exception:
     class CommandExecutor:
         @staticmethod
         def run(cmd: str, timeout: float = 5):
-            try:
-                p = subprocess.run(cmd, shell=True, capture_output=True,
-                                   text=True, timeout=timeout)
-                return p.returncode == 0, p.stdout or "", p.stderr or ""
-            except subprocess.TimeoutExpired:
+            p = kit.run(cmd, shell=True, timeout=timeout)
+            if p.timed_out:
                 return False, "", "timeout"
-            except Exception as e:
-                return False, "", str(e)
+            return p.ok, p.out, p.err
 
     def handle_tool_error(e: Exception, ctx: str) -> str:
         return f"❌ Erreur ({ctx}) : {e}"
 
     def check_command_exists(cmd: str) -> bool:
-        return shutil.which(cmd) is not None
+        return kit.which(cmd) is not None
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -324,7 +319,7 @@ def _alive(pid: int) -> bool:
 def _pids_from_pgrep(tokens: set) -> List[int]:
     """pgrep -f avec pattern BORNÉ (^|/)nom( |$) : « kitty » ne matche plus
     une ligne de commande qui contiendrait le mot par hasard."""
-    if not shutil.which("pgrep"):
+    if not kit.which("pgrep"):
         return []
     pids = set()
     my_pid = os.getpid()
@@ -334,8 +329,7 @@ def _pids_from_pgrep(tokens: set) -> List[int]:
             continue
         pat = re.escape(t) if " " in t else rf"(^|/){re.escape(t)}( |$)"
         try:
-            r = subprocess.run(["pgrep", "-f", pat], capture_output=True,
-                               text=True, timeout=3)
+            r = kit.run(["pgrep", "-f", pat], timeout=3)
             for line in (r.stdout or "").splitlines():
                 if line.strip().isdigit():
                     pids.add(int(line.strip()))
@@ -437,11 +431,10 @@ def _wait_process_or_window(binary: str, before: set, timeout: float = 4.0) -> b
         for c in _hyprctl_json("clients"):
             if c.get("address") and c["address"] not in before:
                 return True
-        if shutil.which("pgrep"):
+        if kit.which("pgrep"):
             try:
-                r = subprocess.run(
-                    ["pgrep", "-f", rf"(^|/){re.escape(base)}( |$)"],
-                    capture_output=True, text=True, timeout=2)
+                r = kit.run(
+                    ["pgrep", "-f", rf"(^|/){re.escape(base)}( |$)"], timeout=2)
                 for line in (r.stdout or "").splitlines():
                     if line.strip().isdigit() and int(line.strip()) != os.getpid():
                         return True
@@ -461,7 +454,7 @@ def _move_new_window(binary: str, workspace: int, before: set,
     """Déplace silencieusement la fenêtre apparue après lancement vers le
     bureau demandé. Préfère une fenêtre dont classe/titre correspond au
     binaire, se rabat sur la première nouvelle fenêtre après 2,4 s."""
-    if not shutil.which("hyprctl"):
+    if not kit.which("hyprctl"):
         return False
     needle = os.path.basename(binary).lower()
     deadline = time.monotonic() + timeout
@@ -559,7 +552,12 @@ def close_app(app_name: str) -> str:
             closed_windows += 1
         time.sleep(0.05)
     if closed_windows:
-        time.sleep(0.5)  # laisse les processus propriétaires se terminer
+        # Laisse les processus propriétaires se terminer, sans attendre plus
+        # longtemps que nécessaire : on relit la liste des fenêtres.
+        addrs = {c.get("address") for c in targets}
+        kit.wait_until(
+            lambda: not any(c.get("address") in addrs for c in kit.hypr_clients()),
+            timeout=1.0, interval=0.08)
 
     # 2. Processus restants (têteless/tray, ou apps sans fenêtre)
     killed = 0
@@ -597,7 +595,7 @@ def focus_app(app_name: str) -> str:
     if _ok(_hypr_dispatch("focuswindow", f"class:(?i){app_name}")):
         return f"✅ Focus sur {app_name}."
     # Dernier recours (X11/Xwayland uniquement)
-    if shutil.which("xdotool"):
+    if kit.which("xdotool"):
         ok, _, _ = CommandExecutor.run(
             f"xdotool search --class {app_name} windowactivate", timeout=2)
         if ok:

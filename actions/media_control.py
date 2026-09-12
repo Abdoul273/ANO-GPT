@@ -24,8 +24,6 @@ volume_up/down avec pas réglable, recherche navigateur via wtype.
 import os
 import platform
 import re
-import shutil
-import subprocess
 from core import action_kit as kit
 import time
 from typing import Optional, List, Tuple
@@ -49,24 +47,17 @@ _BROWSER_TOKENS = (
 # ════════════════════════════════════════════════════════════════════════════
 
 def _have(cmd: str) -> bool:
-    return shutil.which(cmd) is not None
+    return kit.have(cmd)
 
 
 def _run_list(argv: List[str], timeout: float = 3.0) -> bool:
     """Exécute une commande en liste (pas de shell) et retourne le succès."""
-    try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-        return r.returncode == 0
-    except Exception:
-        return False
+    return kit.run(argv, timeout=timeout).ok
 
 
 def _run_out(argv: List[str], timeout: float = 3.0) -> Tuple[bool, str]:
-    try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-        return r.returncode == 0, (r.stdout or "").strip()
-    except Exception:
-        return False, ""
+    r = kit.run(argv, timeout=timeout)
+    return r.ok, r.out.strip()
 
 
 def _hypr_env() -> dict:
@@ -133,29 +124,26 @@ def _focus_browser() -> bool:
         cls = c.get("class") or c.get("initialClass") or ""
         addr = c.get("address")
         if addr and any(t in cls.lower() for t in _CHROME_TOKENS):
-            try:
-                subprocess.run(["hyprctl", "dispatch", "focuswindow",
-                                f"address:{addr}"],
-                               capture_output=True, timeout=2, env=_hypr_env())
-                time.sleep(0.2)
+            if _focus_address(addr):
                 return True
-            except Exception:
-                continue
 
     # Passe 2 : autres navigateurs (ex. Firefox, Brave)
     for c in clients:
         cls = c.get("class") or c.get("initialClass") or ""
         addr = c.get("address")
         if _is_browser_class(cls) and addr:
-            try:
-                subprocess.run(["hyprctl", "dispatch", "focuswindow",
-                                f"address:{addr}"],
-                               capture_output=True, timeout=2, env=_hypr_env())
-                time.sleep(0.2)
+            if _focus_address(addr):
                 return True
-            except Exception:
-                continue
     return False
+
+
+def _focus_address(addr: str) -> bool:
+    """Focus par adresse, puis relecture : hyprctl répond « ok » même sans effet."""
+    if not kit.hypr("dispatch", "focuswindow", f"address:{addr}", timeout=2.0):
+        return False
+    return kit.wait_until(
+        lambda: kit.hypr_activewindow().get("address") == addr,
+        timeout=0.6, interval=0.05)
 
 
 def _ensure_browser() -> Optional[str]:

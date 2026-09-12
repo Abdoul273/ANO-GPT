@@ -41,14 +41,11 @@ def test_focus_browser_prioritizes_chrome_over_firefox(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(media_control, "_hyprctl_json", lambda cmd: mock_clients if cmd == "clients" else None)
 
-    def mock_subprocess_run(cmd: list[str], *args, **kwargs):
-        if "focuswindow" in cmd:
-            focused_windows.append(cmd[-1])
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        return mock_proc
+    def mock_focus(addr: str) -> bool:
+        focused_windows.append(f"address:{addr}")
+        return True
 
-    monkeypatch.setattr(media_control.subprocess, "run", mock_subprocess_run)
+    monkeypatch.setattr(media_control, "_focus_address", mock_focus)
 
     success = media_control._focus_browser()
     assert success is True
@@ -68,14 +65,11 @@ def test_focus_browser_falls_back_to_firefox_when_no_chrome(monkeypatch: pytest.
 
     monkeypatch.setattr(media_control, "_hyprctl_json", lambda cmd: mock_clients if cmd == "clients" else None)
 
-    def mock_subprocess_run(cmd: list[str], *args, **kwargs):
-        if "focuswindow" in cmd:
-            focused_windows.append(cmd[-1])
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        return mock_proc
+    def mock_focus(addr: str) -> bool:
+        focused_windows.append(f"address:{addr}")
+        return True
 
-    monkeypatch.setattr(media_control.subprocess, "run", mock_subprocess_run)
+    monkeypatch.setattr(media_control, "_focus_address", mock_focus)
 
     success = media_control._focus_browser()
     assert success is True

@@ -369,37 +369,20 @@ def _prepare_vlc(command: str) -> str:
 def _run_normal(command: str, cwd: str, timeout: float) -> str:
     """Exécution classique en groupe de processus : au timeout, TOUT le
     groupe est tué (l'ancienne version laissait les enfants orphelins)."""
-    start = time.time()
-    try:
-        proc = subprocess.Popen(
-            command, shell=True, cwd=cwd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=_hypr_env(), start_new_session=True,
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, 9)
-            except Exception:
-                proc.kill()
-            try:
-                proc.communicate(timeout=2)
-            except Exception:
-                pass
-            return (f"La commande a dépassé le délai de {timeout:.0f}s et a été "
-                    f"interrompue (processus enfants inclus) : {command}")
-    except Exception as e:
-        return f"Échec d'exécution de la commande : {e}"
+    res = kit.run(command, shell=True, cwd=cwd, timeout=timeout, env=_hypr_env())
+    if res.timed_out:
+        return (f"La commande a dépassé le délai de {timeout:.0f}s et a été "
+                f"interrompue (processus enfants inclus) : {command}")
+    if res.code == -1 and not res.out:
+        return f"Échec d'exécution de la commande : {res.err}"
 
-    duration = time.time() - start
-    stdout = (stdout or "").strip()
-    stderr = (stderr or "").strip()
+    stdout = res.out.strip()
+    stderr = res.err.strip()
     _log({
         "ts": time.time(), "command": command, "cwd": cwd,
-        "returncode": proc.returncode, "duration_s": round(duration, 2),
+        "returncode": res.code, "duration_s": round(res.duration, 2),
     })
-    parts = [f"[exit {proc.returncode}]"]
+    parts = [f"[exit {res.code}]"]
     if stdout:
         if len(stdout) > 6000:
             parts.append(stdout[:6000] + f"\n… (tronqué, {len(stdout)} caractères au total)")
@@ -407,7 +390,7 @@ def _run_normal(command: str, cwd: str, timeout: float) -> str:
             parts.append(stdout)
     if stderr:
         parts.append(f"stderr: {stderr[:2000]}")
-    return "\n".join(parts) if len(parts) > 1 else f"[exit {proc.returncode}] (aucune sortie)"
+    return "\n".join(parts) if len(parts) > 1 else f"[exit {res.code}] (aucune sortie)"
 
 
 def _run_detached(command: str, cwd: str) -> str:
@@ -451,7 +434,9 @@ def _run_interactive(command: str, cwd: str) -> str:
         )
     except Exception as e:
         return f"Échec de l'ouverture du terminal d'installation : {e}"
-    time.sleep(0.6)
+    # Même logique que le détaché : on ne paie l'attente que si le terminal
+    # tombe tout de suite.
+    kit.wait_until(lambda: proc.poll() is not None, timeout=0.6, interval=0.03)
     if proc.poll() is not None and proc.returncode not in (0, None):
         return f"Le terminal d'installation n'a pas pu démarrer (code {proc.returncode})."
     _log({
