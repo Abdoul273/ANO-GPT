@@ -481,6 +481,9 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
     _reset_speech_sync = AudioEngine._reset_speech_sync
     _clear_interrupted = AudioEngine._clear_interrupted
     interrupt = AudioEngine.interrupt
+    discard_model_audio = AudioEngine.discard_model_audio
+    _end_discarded_turn = AudioEngine._end_discarded_turn
+    _DISCARD_TURN_MAX_S = AudioEngine._DISCARD_TURN_MAX_S
     _on_mic_device_change = AudioEngine._on_mic_device_change
     _on_mic_sensitivity_change = AudioEngine._on_mic_sensitivity_change
     _on_output_device_change = AudioEngine._on_output_device_change
@@ -690,6 +693,8 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
+        self._discard_turn_audio   = False   # audio du tour coupé jeté jusqu'à son turn_complete
+        self._discard_turn_audio_since = 0.0
         self._is_thinking          = False   # True while executing tools / reasoning
         self._active_turn_task     = None    # Current in-flight turn submit task
         # Ces tâches sont les actions enfant du tour Live, et non la tâche qui
@@ -1660,6 +1665,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     self._vision_busy          = False
                     self._vision_last_time     = 0.0
                     self._interrupted          = False
+                    self._discard_turn_audio   = False
                     self._model_turn_active    = False
                     self._speech_display_open  = False
                     self._speech_next_text_at  = 0.0

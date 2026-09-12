@@ -86,8 +86,43 @@ class _StubJarvis:
 
     # Les méthodes réelles, liées à ce stub.
     interrupt = JarvisLive.interrupt
+    discard_model_audio = JarvisLive.discard_model_audio
+    _end_discarded_turn = JarvisLive._end_discarded_turn
+    _clear_interrupted = JarvisLive._clear_interrupted
+    _DISCARD_TURN_MAX_S = JarvisLive._DISCARD_TURN_MAX_S
     _drain_spoken_text_queue = JarvisLive._drain_spoken_text_queue
     _reset_speech_sync = JarvisLive._reset_speech_sync
+
+
+def test_reparler_apres_stop_ne_fait_pas_reprendre_la_reponse_coupee():
+    """Symptôme vécu : clic Arrêter, puis un mot ou un bruit rouvre la porte
+    micro (`_clear_interrupted`) et la réponse coupée repart en plein milieu,
+    bouton Arrêter réaffiché. Le rejet de l'audio du tour coupé doit survivre
+    à la réouverture de la porte, jusqu'au turn_complete de CE tour."""
+    j = _StubJarvis(model_turn_active=True)
+    j.interrupt()
+    assert j._interrupted is True and j.discard_model_audio() is True
+
+    j._clear_interrupted()          # l'utilisateur reparle
+    assert j._interrupted is False
+    assert j.discard_model_audio() is True, "la suite du tour coupé doit rester muette"
+
+    j._end_discarded_turn()         # turn_complete du tour coupé
+    assert j.discard_model_audio() is False
+
+
+def test_le_rejet_du_tour_coupe_expire_sans_turn_complete():
+    j = _StubJarvis(model_turn_active=True)
+    j.interrupt()
+    j._clear_interrupted()
+    j._discard_turn_audio_since -= j._DISCARD_TURN_MAX_S + 1.0
+    assert j.discard_model_audio() is False, "un tour sans fin explicite ne doit pas rendre le suivant muet"
+
+
+def test_stop_hors_tour_narme_pas_le_rejet_du_tour():
+    j = _StubJarvis(model_turn_active=False)
+    j.interrupt()
+    assert j.discard_model_audio() is False
 
 
 def test_barge_in_pendant_un_tour_arme_le_rejet():

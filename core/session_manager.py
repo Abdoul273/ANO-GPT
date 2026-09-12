@@ -189,6 +189,8 @@ class SessionHost(Protocol):
     _plugins: Any
 
     def interrupt(self) -> None: ...
+    def discard_model_audio(self) -> bool: ...
+    def _end_discarded_turn(self) -> None: ...
     def _clear_interrupted(self) -> None: ...
     def _execute_tool_batch(self, function_calls) -> Any: ...
     def _reset_speech_sync(self) -> None: ...
@@ -1088,8 +1090,8 @@ class SessionManager:
                         # le tour du modèle n'avait pas encore commencé.
                         if self._noise_turn:
                             self._interrupted = True
-                        if self._interrupted:
-                            pass  # discard: interrupted
+                        if self.discard_model_audio():
+                            pass  # discard: tour interrompu
                         else:
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
@@ -1131,10 +1133,14 @@ class SessionManager:
                         # stop / arrête-toi / écoute) ont le droit d'interrompre.
                         # Un « interrupted » serveur issu d'un bruit ou d'une
                         # hallucination STT est ignoré.
-                        if getattr(sc, "interrupted", False) and not self._interrupted:
-                            print("[STT] activité serveur ignorée — mot-clé d'arrêt requis")
+                        if getattr(sc, "interrupted", False):
+                            # Le serveur a lui-même coupé le tour précédent :
+                            # ce qui suit appartient à un nouveau tour.
+                            self._end_discarded_turn()
+                            if not self._interrupted:
+                                print("[STT] activité serveur ignorée — mot-clé d'arrêt requis")
 
-                        if (not self._interrupted) and sc.output_transcription and sc.output_transcription.text:
+                        if (not self.discard_model_audio()) and sc.output_transcription and sc.output_transcription.text:
                             self.thought_streamer.on_speaking_start()
                             if not self._model_turn_active:
                                 self._clear_interrupted()
@@ -1350,6 +1356,7 @@ class SessionManager:
                             self._last_turn_complete_at = time.monotonic()
                             self._model_turn_active = False
                             self._audio_turn_pending = False
+                            self._end_discarded_turn()
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 

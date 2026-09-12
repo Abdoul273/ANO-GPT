@@ -228,6 +228,8 @@ class AudioHost(Protocol):
     _phone_active: bool
 
     def interrupt(self) -> None: ...
+    def discard_model_audio(self) -> bool: ...
+    def _end_discarded_turn(self) -> None: ...
     def set_speaking(self, value: bool) -> None: ...
     def reset_audio_and_turn_state(self, source: str = "unknown") -> None: ...
     def check_audio_watchdog(self, now: float | None = None) -> bool: ...
@@ -421,6 +423,31 @@ class AudioEngine:
             self._speech_display_open = False
         self._speech_next_text_at = 0.0
 
+    # Un tour coupé côté client continue d'arriver du serveur jusqu'à son
+    # propre `turn_complete`. Ce plafond évite qu'un tour sans fin explicite
+    # ne rende le tour suivant muet.
+    _DISCARD_TURN_MAX_S = 30.0
+
+    def discard_model_audio(self) -> bool:
+        """True tant que l'audio du tour coupé doit être jeté.
+
+        Distinct de `_interrupted` : ce dernier sert de porte micro et se
+        referme dès que l'utilisateur reparle. Sans cette séparation, un
+        simple bruit après « Stop » rouvrait la porte et la réponse coupée
+        reprenait en plein milieu, bouton Arrêter réaffiché.
+        """
+        if getattr(self, "_interrupted", False):
+            return True
+        if not getattr(self, "_discard_turn_audio", False):
+            return False
+        if time.monotonic() - getattr(self, "_discard_turn_audio_since", 0.0) > self._DISCARD_TURN_MAX_S:
+            self._discard_turn_audio = False
+            return False
+        return True
+
+    def _end_discarded_turn(self) -> None:
+        self._discard_turn_audio = False
+
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech / mid-thinking: drain queued audio and open mic immediately."""
         self._speech_output_epoch = getattr(self, "_speech_output_epoch", 0) + 1
@@ -429,6 +456,11 @@ class AudioEngine:
         # que la file de lecture locale se vide, donc bien après le turn_complete du modèle.
         if self._model_turn_active:
             self._interrupted = True
+            # L'audio de CE tour est jeté jusqu'à son turn_complete, même si
+            # la porte micro (`_interrupted`) est refermée entre-temps parce
+            # que l'utilisateur a repris la parole.
+            self._discard_turn_audio = True
+            self._discard_turn_audio_since = time.monotonic()
         elif (
             getattr(self, "_is_thinking", False)
             or getattr(self, "_is_speaking", False)
@@ -530,6 +562,7 @@ class AudioEngine:
         self._audio_turn_active = False
         self._audio_turn_pending = False
         self._interrupted = False
+        self._discard_turn_audio = False
         self._noise_turn = False
         self._activity_open = False
         self._last_model_turn_data_at = 0.0
