@@ -247,6 +247,11 @@ class JarvisUI:
         sig = getattr(self._win, "_thought_sig", None)
         if sig is not None:
             sig.emit(str(text or ""), bool(is_active))
+        elif hasattr(self._win, "_thought_overlay") and self._win._thought_overlay:
+            if is_active:
+                self._win._thought_overlay.show_thought(text)
+            else:
+                self._win._thought_overlay.fade_out()
 
     def set_accent_color(self, hex_color: str, palette: dict | None = None) -> None:
         """Ajuste dynamiquement l'accent de couleur et l'orbe de l'interface (support modes métiers / personas)."""
@@ -255,11 +260,6 @@ class JarvisUI:
             sig.emit(str(hex_color or ""), palette)
         elif hasattr(self._win, "_on_accent_changed"):
             self._win._on_accent_changed(hex_color, palette)
-        elif hasattr(self._win, "_thought_overlay") and self._win._thought_overlay:
-            if is_active:
-                self._win._thought_overlay.show_thought(text)
-            else:
-                self._win._thought_overlay.fade_out()
 
     def hide_thought(self) -> None:
         """Masque la bulle de pensée en cours sous l'orbe."""

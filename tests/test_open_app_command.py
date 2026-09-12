@@ -157,6 +157,13 @@ def test_open_app_targets_newly_opened_window(monkeypatch):
 
     sleep_calls = []
     monkeypatch.setattr(oa.time, "sleep", lambda s: sleep_calls.append(s))
+    # L'attente fixe a été remplacée par une sonde de fenêtre prête, bornée
+    # par le même délai : c'est cette borne que l'on vérifie.
+    ready_timeouts = []
+    monkeypatch.setattr(
+        oa, "_window_ready",
+        lambda target, timeout=3.5: ready_timeouts.append(timeout) or True,
+    )
 
     cc_calls = []
     mock_cc = lambda payload: cc_calls.append(payload) or f"Texte tapé : {payload.get('text')}"
@@ -184,12 +191,15 @@ def test_open_app_targets_newly_opened_window(monkeypatch):
         f"La nouvelle fenêtre 0x55aabbcc aurait dû être focalisée. Fenêtres focalisées : {focused_windows}"
     )
 
-    # d) Temporisation fonctionnelle de 3.5s appliquée
-    assert 3.5 in sleep_calls, f"Une temporisation de 3.5s aurait dû être appliquée. Sommeils : {sleep_calls}"
+    # d) Temporisation fonctionnelle bornée à 3.5s appliquée
+    assert 3.5 in ready_timeouts, (
+        f"Une attente de fenêtre prête bornée à 3.5s aurait dû être appliquée. Bornes : {ready_timeouts}"
+    )
 
     # f) Prise en compte de target_window personnalisé et wait_functional
     cc_calls.clear()
     sleep_calls.clear()
+    ready_timeouts.clear()
     focused_windows.clear()
     switched_workspaces.clear()
 
@@ -202,5 +212,5 @@ def test_open_app_targets_newly_opened_window(monkeypatch):
 
     assert len(cc_calls) == 1
     assert cc_calls[0].get("window") == "address:0x999999"
-    assert 4.5 in sleep_calls
+    assert 4.5 in ready_timeouts
     assert any("0x999999" in str(win) for win in focused_windows)

@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
 )
 
+from ui.core.qtflags import _OS
 from ui.panels.file_chip import _FILE_ICONS, _file_category, _fmt_size
 from ui.styles.theme import C, qcol
 

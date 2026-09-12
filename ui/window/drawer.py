@@ -285,7 +285,6 @@ class DrawerMixin:
         # reste utile et la prochaine session le prendra en compte.
         from core.personality_modes import set_active_mode
         set_active_mode(mode)
-        return w
 
     def _toggle_drawer(self, checked: bool):
         if checked:

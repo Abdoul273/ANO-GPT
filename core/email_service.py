@@ -164,7 +164,7 @@ def _search_tokens(value: str) -> tuple[str, ...]:
         "a", "au", "aux", "avec", "dans", "de", "des", "du", "email",
         "emails", "e-mail", "e-mails", "et", "la", "le", "les", "mail",
         "mails", "message", "messages", "mon", "mes", "qui", "sur", "un",
-        "une", "the", "a", "an", "and", "email", "emails", "mail", "from",
+        "une", "the", "an", "and", "from",
     }
     tokens = re.findall(r"[\w@.+-]{2,}", _fold(value), re.UNICODE)
     return tuple(dict.fromkeys(token for token in tokens if token not in ignored))

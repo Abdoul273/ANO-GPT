@@ -119,7 +119,7 @@ _BUILTIN_FALLBACK_PERSONAS: Dict[str, Dict[str, Any]] = {
         "voice_name": "Charon",
         "prosody_preset": "flegmatique",
         "temperature": 0.25,
-        "block_interruptions": false if False else False,
+        "block_interruptions": False,
         "voice_triggers": ["majordome", "mode majordome", "passe en mode majordome", "jarvis", "mode jarvis", "ironman", "butler"],
         "system_prompt": (
             "Tu es ANO-GPT, le majordome britannique personnel et l'intelligence artificielle de Monsieur.\n"

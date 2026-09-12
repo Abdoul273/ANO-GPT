@@ -289,7 +289,9 @@ async def run_scribe(host, settings, turn_factory=ScribeTurn):
                     drop_count = msg.get("_audio_drop_count", 0)
                     if not input_allowed(host, epoch, source) or time.monotonic() < retry_after:
                         continue
-                    def partial(text):
+                    # Liaison explicite : le rappel d'un tour garde son époque
+                    # et sa source même après qu'un nouveau tour les a changées.
+                    def partial(text, epoch=epoch, source=source):
                         if text and input_allowed(host, epoch, source):
                             host.ui.set_user_transcript(text)
                     turn = turn_factory(settings, partial)

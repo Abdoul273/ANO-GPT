@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 import json
 import math
 import os
@@ -39,6 +40,9 @@ from ui.core.fade_widget import FadeInWidget
 from ui.paths import _read_full_config
 from ui.styles.cyber import CyberHeader, micro_label
 from ui.styles.theme import C
+
+if TYPE_CHECKING:
+    from ui.main_window import MainWindow
 
 class AudioSettingsOverlay(FadeInWidget):
     """Panneau « Audio » : choix explicite et persistant du micro et de la

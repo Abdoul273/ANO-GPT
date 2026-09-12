@@ -257,7 +257,7 @@ def _parse_weather_request_locally(text: str) -> Optional[Dict[str, str]]:
     city = None
     stop = {"demain", "aujourd'hui", "ce soir", "cette semaine", "semaine prochaine",
             "le", "la", "un", "une", "mon", "ma", "ville", "temps", "météo", "weather",
-            "quel", "quelle", "fait", "il", "météo", "donne", "montre"}
+            "quel", "quelle", "fait", "il", "donne", "montre"}
 
     # Motifs avec préposition
     patterns = [

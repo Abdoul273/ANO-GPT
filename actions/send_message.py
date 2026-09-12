@@ -384,7 +384,7 @@ _PLATFORM_KEYWORDS = {
 
 _STOP_WORDS = {
     "le", "la", "les", "un", "une", "des", "mon", "ma", "ton", "ta",
-    "son", "sa", "ses", "à", "au", "aux", "pour", "de", "des", "sur",
+    "son", "sa", "ses", "à", "au", "aux", "pour", "de", "sur",
     "via", "par", "contact", "message", "sms", "envoie", "envoyer",
     "dis", "disant", "dit", "que", "a", "et",
 }

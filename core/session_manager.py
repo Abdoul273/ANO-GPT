@@ -19,7 +19,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 from core.ai_stt_corrector import STTCorrector, TranscriptAssembler, TranscriptGuard
 from core.audio_engine import (

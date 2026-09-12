@@ -2263,8 +2263,8 @@ class ToolDispatcher:
                         str(getattr(self, "_live_user_text", "") or ""),
                         "aucun outil correspondant dans le répartiteur central",
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"[Dispatcher] Besoin non couvert non enregistré : {exc}")
             duration_ms = (time.perf_counter() - started) * 1000.0
             tool_stats.record(name or "unknown", ok=False, duration_ms=duration_ms, error=message)
             self._action_runtime.remember(
@@ -2476,13 +2476,8 @@ class ToolDispatcher:
 
     async def _deliver_deep_research(self, question: str, context: str = "") -> None:
         """Calcule puis livre le résultat sans retenir un tool call Live."""
-        try:
-            self.ui.show_card(
-                "task", "Réflexion approfondie",
-                f"Recherche en cours…\n\n{question[:500]}",
-            )
-        except Exception:
-            pass
+        self._ui_card("show_card", "task", "Réflexion approfondie",
+                      f"Recherche en cours…\n\n{question[:500]}")
 
         try:
             if hasattr(self, "thought_streamer"):
@@ -2501,11 +2496,8 @@ class ToolDispatcher:
         # Une sortie anormalement énorme peut elle aussi faire refuser le tour
         # Live. La réponse vocale reste dense ; la carte conserve l'essentiel.
         result = result[:12000]
-        try:
-            self.ui.dismiss_cards("task", "Réflexion approfondie")
-            self.ui.show_card("result", "Réflexion approfondie", result)
-        except Exception:
-            pass
+        self._ui_card("dismiss_cards", "task", "Réflexion approfondie")
+        self._ui_card("show_card", "result", "Réflexion approfondie", result)
 
         # La session peut être brièvement en reprise pour une autre raison.
         # Attendre son retour évite de perdre un calcul déjà terminé.
@@ -2558,10 +2550,7 @@ class ToolDispatcher:
         from actions.image_generation import generate_image
 
         prompt = str(args.get("prompt") or "")
-        try:
-            self.ui.show_card("task", "Création d'image", "Génération Azure en cours…")
-        except Exception:
-            pass
+        self._ui_card("show_card", "task", "Création d'image", "Génération Azure en cours…")
         worker = asyncio.create_task(
             asyncio.to_thread(generate_image, args, self.ui),
             name="azure-image-worker",
@@ -2587,11 +2576,8 @@ class ToolDispatcher:
             result = f"Génération Azure échouée : {exc}"
 
         result = str(result or "La génération d'image n'a rien renvoyé.").strip()
-        try:
-            self.ui.dismiss_cards("task", "Création d'image")
-            self.ui.show_card("result", "Création d'image", result)
-        except Exception:
-            pass
+        self._ui_card("dismiss_cards", "task", "Création d'image")
+        self._ui_card("show_card", "result", "Création d'image", result)
         if self.session is not None:
             await self._submit_text_turn(
                 "[RÉSULTAT DE GÉNÉRATION D'IMAGE]\n"
@@ -2623,10 +2609,7 @@ class ToolDispatcher:
 
         prompt = str(args.get("prompt") or "")
         title = "Création vidéo"
-        try:
-            self.ui.show_card("task", title, "Génération Azure Sora en cours…")
-        except Exception:
-            pass
+        self._ui_card("show_card", "task", title, "Génération Azure Sora en cours…")
 
         loop = asyncio.get_running_loop()
 
@@ -2658,11 +2641,8 @@ class ToolDispatcher:
             result = f"Génération vidéo Azure échouée : {exc}"
 
         result = str(result or "La génération vidéo n'a rien renvoyé.").strip()
-        try:
-            self.ui.dismiss_cards("task", title)
-            self.ui.show_card("result", title, result)
-        except Exception:
-            pass
+        self._ui_card("dismiss_cards", "task", title)
+        self._ui_card("show_card", "result", title, result)
         if self.session is not None:
             await self._submit_text_turn(
                 "[RÉSULTAT DE GÉNÉRATION VIDÉO]\n"
@@ -2673,11 +2653,17 @@ class ToolDispatcher:
                 timeout_s=35.0,
             )
 
-    def _safe_update_card(self, card_type: str, title: str, body: str) -> None:
+    def _ui_card(self, method: str, *args) -> None:
+        """Appelle `show_card` / `update_card` / `dismiss_cards` sans jamais
+        interrompre l'outil : une carte est décorative, mais son échec doit
+        laisser une trace lisible plutôt que disparaître en silence."""
         try:
-            self.ui.update_card(card_type, title, body)
-        except Exception:
-            pass
+            getattr(self.ui, method)(*args)
+        except Exception as exc:
+            print(f"[Dispatcher] Carte UI ignorée ({method}) : {type(exc).__name__}: {exc}")
+
+    def _safe_update_card(self, card_type: str, title: str, body: str) -> None:
+        self._ui_card("update_card", card_type, title, body)
 
     def _start_video_generation(self, args: dict) -> bool:
         """Une vidéo Azure à la fois : Sora est lent et coûteux."""
@@ -3157,8 +3143,8 @@ class ToolDispatcher:
                 if hasattr(self, "stop_continuous_vision"):
                     try:
                         self.stop_continuous_vision()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print(f"[Dispatcher] Arrêt de la vision continue : {exc}")
                 result = "Camera closed."
 
             elif name == "show_map":
@@ -3657,10 +3643,7 @@ class ToolDispatcher:
             # que l'outil rend la main — succès, erreur ou annulation — elle
             # doit quitter l'interface. Les cartes de résultat/confirmation
             # restent, elles, disponibles pour être lues ou actionnées.
-            try:
-                self.ui.dismiss_cards("task")
-            except Exception:
-                pass
+            self._ui_card("dismiss_cards", "task")
 
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
@@ -4030,7 +4013,6 @@ class ToolDispatcher:
         }, player=self.ui, session_memory=self._tool_session_memory)
 
     def _agent_inspect_screen(self, args: dict) -> str:
-        from core.multimodal_vision import inspect_screen_live
         query = self._arg(args, "query") or "Analyse ce qui est affiché à l'écran."
         domain = self._arg(args, "domain", "auto") or "auto"
         target = self._arg(args, "target", "active_window") or "active_window"

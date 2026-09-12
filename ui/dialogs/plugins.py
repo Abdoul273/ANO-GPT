@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 import math
 import os
 import platform
@@ -35,6 +36,9 @@ from PyQt6.QtWidgets import (
 from ui.core.fade_widget import FadeInWidget
 from ui.styles.cyber import CyberHeader, cyber_section
 from ui.styles.theme import C
+
+if TYPE_CHECKING:
+    from ui.main_window import MainWindow
 
 class PluginOverlay(FadeInWidget):
     _OW, _OH = 520, 520

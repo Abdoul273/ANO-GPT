@@ -1105,7 +1105,7 @@ def probe_azure_deployment(endpoint: str, api_key: str, deployment: str,
 
 
 def ensure_ollama_running(timeout: int = 15) -> bool:
-    url, _   = get_llm_settings()
+    url, model = get_llm_settings()
     provider = get_effective_llm_provider()
     family   = get_provider_info(provider)["family"]
 

@@ -30,7 +30,7 @@ import sys
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Optional, Sequence
 
 
 def _base_dir() -> Path:

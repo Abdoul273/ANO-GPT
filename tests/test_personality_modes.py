@@ -104,7 +104,7 @@ def test_normal_ne_change_pas_la_voix_choisie_et_astro_prend_sa_voix_gemini(tmp_
     assert voice_settings_for_mode(settings)["live_voice"] == "Sulafat"
 
     set_active_mode("majeur")
-    assert voice_settings_for_mode(settings)["live_voice"] == "Kore"
+    assert voice_settings_for_mode(settings)["live_voice"] == "Charon"
 
 
 def test_elevenlabs_proposals_are_distinct_when_catalogue_le_permet():

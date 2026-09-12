@@ -20,9 +20,11 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from actions.screen_processor import _capture_camera
 from core.audio_engine import _END_SILENCE_S
 from core.camera_studio import CameraStudio
 from core import context_probe, human_confirmation
+from ui.paths import BASE_DIR
 
 
 class PhoneHost(Protocol):

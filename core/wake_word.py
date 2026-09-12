@@ -28,7 +28,7 @@ import sys
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 import numpy as np
 

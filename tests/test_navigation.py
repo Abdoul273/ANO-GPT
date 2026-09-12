@@ -404,7 +404,6 @@ def test_decode_valhalla_polyline():
 
 
 def test_parse_valhalla_response():
-    from core.navigation import parse_valhalla_response
 
     data = {
         "trip": {
