@@ -36,7 +36,9 @@ Ajouts :
 from __future__ import annotations
 
 import os
+import difflib
 import re
+import unicodedata
 import shlex
 import shutil
 import subprocess
@@ -216,15 +218,30 @@ def all_apps(force: bool = False) -> List[AppEntry]:
     return _index.get(force=force)
 
 
+def _fold(s: str) -> str:
+    """Minuscules sans accents : « visual studio » ≈ « Visual Studio »,
+    « éditeur » ≈ « editeur » — la voix ne dicte pas les accents."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s.lower())
+                   if not unicodedata.combining(c))
+
+
 def _tokens(s: str) -> Set[str]:
-    return set(re.findall(r"[a-z0-9]+", s.lower()))
+    return set(re.findall(r"[a-z0-9]+", _fold(s)))
+
+
+def _fuzzy(a: str, b: str) -> float:
+    """Ressemblance 0-1 tolérante aux fautes de transcription (« pie charm »)."""
+    a2, b2 = a.replace(" ", ""), b.replace(" ", "")
+    if not a2 or not b2:
+        return 0.0
+    return difflib.SequenceMatcher(None, a2, b2).ratio()
 
 
 def find_app(query: str, min_score: float = 0.35) -> Optional[AppEntry]:
     """Recherche floue dans l'index des .desktop.
     Signature conservée : ce point d'entrée est importé par d'autres modules
     (open_app) qui attendent un AppEntry ou None."""
-    q = (query or "").strip().lower()
+    q = _fold((query or "").strip())
     if not q:
         return None
     q_tokens = _tokens(q)
@@ -239,10 +256,10 @@ def find_app(query: str, min_score: float = 0.35) -> Optional[AppEntry]:
         haystacks = [h for h in haystacks if h]
         score = 0.0
         for h in haystacks:
-            hl = h.lower()
+            hl = _fold(h)
             if hl == q:
                 score = max(score, 1.0)
-            elif q == app.id or q == app.binary.lower():
+            elif q == _fold(app.id) or q == _fold(app.binary):
                 score = max(score, 0.98)
             elif hl.startswith(q) or q.startswith(hl):
                 score = max(score, 0.85)
@@ -253,6 +270,13 @@ def find_app(query: str, min_score: float = 0.35) -> Optional[AppEntry]:
                 if q_tokens and h_tokens:
                     overlap = len(q_tokens & h_tokens) / len(q_tokens | h_tokens)
                     score = max(score, overlap * 0.6)
+                # Faute de transcription : « pie charm » → pycharm, « vs code ».
+                sim = _fuzzy(q, hl)
+                if sim >= 0.78:
+                    score = max(score, 0.4 + sim * 0.4)
+        # Une entrée de désinstallation ou d'aide n'est jamais ce qu'on veut.
+        if score and re.search(r"uninstall|désinstall|readme|help", _fold(app.name)):
+            score *= 0.5
         if score > best_score:
             best_score, best = score, app
     return best if best_score >= min_score else None
