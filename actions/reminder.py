@@ -461,6 +461,22 @@ def _schedule_linux(target_dt: datetime, task_name: str,
 
 
 # ── Parsing local intelligent ─────────────────────────────────────────────
+_SPELLED_NUMBERS = {
+    "une": 1, "un": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5, "six": 6,
+    "sept": 7, "huit": 8, "neuf": 9, "dix": 10, "quinze": 15, "vingt": 20,
+    "trente": 30, "quarante-cinq": 45, "quarante cinq": 45, "soixante": 60,
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10,
+    "fifteen": 15, "twenty": 20, "thirty": 30,
+}
+
+_WEEKDAYS = {
+    "lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4,
+    "samedi": 5, "dimanche": 6,
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4,
+    "saturday": 5, "sunday": 6,
+}
+
+
 def _parse_reminder_text(text: str) -> Optional[Dict[str, Any]]:
     """
     Analyse une phrase naturelle et retourne un dict avec :
@@ -480,32 +496,25 @@ def _parse_reminder_text(text: str) -> Optional[Dict[str, Any]]:
     message = "Rappel"
     used_delta = False
 
-    # 1. Extraire une heure (HH:MM, HhMM, etc.)
-    time_patterns = [
-        r"(\d{1,2})[h:](\d{2})",
-        r"(\d{1,2})\s*(?:heures?|h)\s*(\d{2})?",
-    ]
-    for pat in time_patterns:
-        m = re.search(pat, text)
-        if m:
-            hour = int(m.group(1))
-            minute = int(m.group(2)) if m.lastindex >= 2 and m.group(2) else 0
-            if 0 <= hour <= 23 and 0 <= minute <= 59:
-                time_str = f"{hour:02d}:{minute:02d}"
-                text = text[:m.start()] + text[m.end():]
-                break
+    # Nombres dictés : « dans deux heures », « dans une demi-heure ».
+    for word, digit in _SPELLED_NUMBERS.items():
+        text = re.sub(rf"\b{word}\b", str(digit), text)
 
-    if not time_str:
-        named_times = {
-            "midi": "12:00", "noon": "12:00",
-            "minuit": "00:00", "midnight": "00:00",
-        }
-        for label, value in named_times.items():
-            match = re.search(rf"\b{label}\b", text)
-            if match:
-                time_str = value
-                text = text[:match.start()] + text[match.end():]
-                break
+    # Moment de la journée dit à la voix : « 8h du soir », « 7 heures du matin », « 3 pm ».
+    pm_hint = bool(re.search(r"\b(du soir|de l'après-midi|de l'apres-midi|pm|p\.m\.|"
+                             r"ce soir|tonight|cet après-midi|cet apres-midi|this afternoon)\b", text))
+    am_hint = bool(re.search(r"\b(du matin|am|a\.m\.)\b", text))
+    text = re.sub(r"\b(du soir|de l'après-midi|de l'apres-midi|du matin|pm|am|p\.m\.|a\.m\.)\b",
+                  " ", text)
+
+    # « et demie », « et quart », « moins le quart » après l'heure.
+    quarter_shift = 0
+    for pat, shift in ((r"\s*et\s+demie?\b", 30), (r"\s*et\s+quart\b", 15),
+                       (r"\s*moins\s+(?:le\s+)?quart\b", -15)):
+        if re.search(pat, text):
+            quarter_shift = shift
+            text = re.sub(pat, " ", text)
+            break
 
     # 2. Délais relatifs (dans X minutes/heures/jours/semaines)
     unit_map = {
@@ -530,8 +539,8 @@ def _parse_reminder_text(text: str) -> Optional[Dict[str, Any]]:
 
     if not used_delta:
         word_deltas = (
-            (r"dans\s+(?:une\s+)?demi[- ]heure", timedelta(minutes=30)),
-            (r"dans\s+(?:un\s+)?quart\s+d['’]heure", timedelta(minutes=15)),
+            (r"dans\s+(?:1\s+)?demi[- ]heure", timedelta(minutes=30)),
+            (r"dans\s+(?:1\s+)?quart\s+d['’]heure", timedelta(minutes=15)),
             (r"dans\s+trois\s+quarts?\s+d['’]heure", timedelta(minutes=45)),
         )
         for pattern, delta in word_deltas:
@@ -540,6 +549,41 @@ def _parse_reminder_text(text: str) -> Optional[Dict[str, Any]]:
                 target_dt = now + delta
                 text = text[:match.start()] + text[match.end():]
                 used_delta = True
+                break
+
+    # 1. Extraire une heure (HH:MM, HhMM, etc.)
+    time_patterns = [
+        r"(\d{1,2})[h:](\d{2})",
+        r"(\d{1,2})\s*(?:heures?|h)\s*(\d{2})?",
+        r"\b(?:à|a|at)\s+(\d{1,2})\b",
+    ]
+    for pat in time_patterns:
+        m = re.search(pat, text)
+        if m:
+            hour = int(m.group(1))
+            minute = int(m.group(2)) if m.lastindex >= 2 and m.group(2) else 0
+            if pm_hint and hour < 12:
+                hour += 12
+            elif am_hint and hour == 12:
+                hour = 0
+            if quarter_shift:
+                total = hour * 60 + minute + quarter_shift
+                hour, minute = (total // 60) % 24, total % 60
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                time_str = f"{hour:02d}:{minute:02d}"
+                text = text[:m.start()] + text[m.end():]
+                break
+
+    if not time_str:
+        named_times = {
+            "midi": "12:00", "noon": "12:00",
+            "minuit": "00:00", "midnight": "00:00",
+        }
+        for label, value in named_times.items():
+            match = re.search(rf"\b{label}\b", text)
+            if match:
+                time_str = value
+                text = text[:match.start()] + text[match.end():]
                 break
 
     # 3. Dates relatives
@@ -566,6 +610,21 @@ def _parse_reminder_text(text: str) -> Optional[Dict[str, Any]]:
                     time_str = dt.strftime("%H:%M")
                 text = text.replace(key, "").strip()
                 break
+
+    # 3 bis. Jour de la semaine : « vendredi », « lundi prochain », « on monday ».
+    if not target_dt:
+        m = re.search(r"\b(" + "|".join(_WEEKDAYS.keys()) + r")\b(\s+prochain[e]?|\s+next)?", text)
+        if m:
+            wanted = _WEEKDAYS[m.group(1)]
+            ahead = (wanted - now.weekday()) % 7
+            if ahead == 0 and (m.group(2) or time_str is None or
+                               now.replace(hour=int(time_str[:2]), minute=int(time_str[3:]),
+                                           second=0, microsecond=0) <= now):
+                ahead = 7
+            target_dt = (now + timedelta(days=ahead)).replace(second=0, microsecond=0)
+            if not time_str:
+                time_str = "09:00"
+            text = re.sub(r"\b(?:le\s+|on\s+)?" + re.escape(m.group(0)) + r"\b", " ", text, count=1)
 
     # 4. Dates absolues (mois + jour, ex: "15 mars", "le 15 mars", "march 12")
     if not target_dt:
@@ -612,11 +671,13 @@ def _parse_reminder_text(text: str) -> Optional[Dict[str, Any]]:
         target_dt = target_dt.replace(hour=h, minute=m, second=0, microsecond=0)
 
     # Nettoyer le message
-    message = re.sub(r"\b(rappelle\s*-?\s*moi|rappel\s*:\s*|reminder\s*:\s*)", "", text).strip()
-    message = re.sub(
-        r"^\s*(de|à|sur|pour|d'|que|qu'il|qu'elle|le|la|les|l'|un|une|des)\s+",
-        "", message
-    ).strip()
+    message = re.sub(r"\b(rappelle\s*-?\s*moi|remind\s+me|rappel\s*:?\s*|reminder\s*:?\s*)", "", text).strip()
+    message = re.sub(r"\s{2,}", " ", message)
+    for _ in range(3):  # « à de sortir » → « sortir »
+        message = re.sub(
+            r"^\s*(de|à|a|at|to|dans|in|sur|pour|d'|d|que|qu'il|qu'elle|le|la|les|l'|un|une|des)\s+",
+            "", message
+        ).strip()
     if not message:
         message = "Rappel"
     message = message.capitalize()
