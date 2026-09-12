@@ -106,9 +106,9 @@ def test_move_cursor_ydotool_fallback(monkeypatch):
 
     def mock_run(cmd, *args, **kwargs):
         run_cmds.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+        return cc.kit.ProcResult(cmd=tuple(cmd), code=0)
 
-    monkeypatch.setattr(subprocess, 'run', mock_run)
+    monkeypatch.setattr(cc.kit, 'run', mock_run)
 
     res = computer_control({'action': 'move', 'x': 200, 'y': 150})
     assert '200' in res and '150' in res
@@ -235,9 +235,9 @@ def test_press_key_linux_keycodes(monkeypatch):
 
     def mock_run(cmd, *args, **kwargs):
         run_cmds.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+        return cc.kit.ProcResult(cmd=tuple(cmd), code=0)
 
-    monkeypatch.setattr(subprocess, 'run', mock_run)
+    monkeypatch.setattr(cc.kit, 'run', mock_run)
 
     # Touche Enter (28)
     computer_control({'action': 'press', 'keys': 'enter'})
@@ -257,9 +257,9 @@ def test_hotkey_linux_keycodes(monkeypatch):
 
     def mock_run(cmd, *args, **kwargs):
         run_cmds.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+        return cc.kit.ProcResult(cmd=tuple(cmd), code=0)
 
-    monkeypatch.setattr(subprocess, 'run', mock_run)
+    monkeypatch.setattr(cc.kit, 'run', mock_run)
 
     computer_control({'action': 'hotkey', 'keys': 'ctrl+c'})
     # Doit émettre 29:1 (ctrl down), 46:1 (c down), 46:0 (c up), 29:0 (ctrl up)
@@ -283,9 +283,9 @@ def test_type_text_ydotool_priority(monkeypatch):
 
     def mock_run(cmd, *args, **kwargs):
         run_cmds.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+        return cc.kit.ProcResult(cmd=tuple(cmd), code=0)
 
-    monkeypatch.setattr(subprocess, 'run', mock_run)
+    monkeypatch.setattr(cc.kit, 'run', mock_run)
 
     res = cc._type_text('bonjour')
     assert 'bonjour' in res
@@ -301,9 +301,9 @@ def test_type_text_wtype_fallback(monkeypatch):
 
     def mock_run(cmd, *args, **kwargs):
         run_cmds.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+        return cc.kit.ProcResult(cmd=tuple(cmd), code=0)
 
-    monkeypatch.setattr(subprocess, 'run', mock_run)
+    monkeypatch.setattr(cc.kit, 'run', mock_run)
 
     res = cc._type_text('bonjour')
     assert 'bonjour' in res
@@ -403,9 +403,9 @@ def test_existing_click_actions(monkeypatch):
 
     def mock_run(cmd, *args, **kwargs):
         run_cmds.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+        return cc.kit.ProcResult(cmd=tuple(cmd), code=0)
 
-    monkeypatch.setattr(subprocess, 'run', mock_run)
+    monkeypatch.setattr(cc.kit, 'run', mock_run)
 
     # Clic gauche
     res_left = computer_control({'action': 'click', 'x': 100, 'y': 200, 'button': 'left'})
@@ -423,9 +423,9 @@ def test_existing_scroll(monkeypatch):
 
     def mock_run(cmd, *args, **kwargs):
         run_cmds.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+        return cc.kit.ProcResult(cmd=tuple(cmd), code=0)
 
-    monkeypatch.setattr(subprocess, 'run', mock_run)
+    monkeypatch.setattr(cc.kit, 'run', mock_run)
 
     res = computer_control({'action': 'scroll', 'direction': 'down', 'amount': 5})
     assert 'Défilement down x5' in res

@@ -101,6 +101,20 @@ class ProcResult:
     def __bool__(self) -> bool:  # `if run(...):` se lit naturellement
         return self.ok
 
+    # Alias `CompletedProcess` : les actions migrées depuis `subprocess.run`
+    # gardent leurs lectures `.returncode` / `.stdout` / `.stderr` intactes.
+    @property
+    def returncode(self) -> int:
+        return self.code
+
+    @property
+    def stdout(self) -> str:
+        return self.out
+
+    @property
+    def stderr(self) -> str:
+        return self.err
+
     @property
     def text(self) -> str:
         """Sortie utile : stdout si succès, sinon stderr — jamais None."""

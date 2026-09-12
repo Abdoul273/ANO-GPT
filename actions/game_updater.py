@@ -4,7 +4,6 @@ import re
 import sys
 import json
 import time
-import subprocess
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -12,11 +11,6 @@ from datetime import datetime
 from config import is_windows, is_mac, is_linux
 
 from core import action_kit as kit
-
-_CNW: dict = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW}
-    if platform.system() == "Windows" else {}
-)
 
 _KNOWN_APPIDS: dict[str, tuple[str, str]] = {
     "pubg":                ("578080",  "PUBG: Battlegrounds"),
@@ -175,12 +169,10 @@ def _get_steam_games(steam_path: Path) -> list[dict]:
 def _is_steam_running() -> bool:
     try:
         if is_windows():
-            out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq steam.exe"],
-                                 capture_output=True, text=True, **_CNW, timeout=15).stdout
+            out = kit.run(["tasklist", "/FI", "IMAGENAME eq steam.exe"], timeout=15).stdout
             return "steam.exe" in out.lower()
         proc = "steam_osx" if is_mac() else "steam"
-        return bool(subprocess.run(["pgrep", "-x", proc],
-                                   capture_output=True, text=True, timeout=15).stdout.strip())
+        return bool(kit.run(["pgrep", "-x", proc], timeout=3).stdout.strip())
     except Exception:
         return False
 
@@ -460,15 +452,14 @@ def _ensure_steam_running(steam_path: Path) -> bool:
     else:
         kit.spawn([str(exe)])
 
-    for _ in range(20):
-        time.sleep(1)
-        if _is_steam_running():
-            print("[GameUpdater] ✅ Steam çalışıyor")
-            time.sleep(4)
-            if is_windows():
-                _handle_steam_profile_selection()
-                time.sleep(2)
-            return True
+    if kit.wait_until(_is_steam_running, timeout=20.0, interval=0.25, max_interval=1.0):
+        print("[GameUpdater] ✅ Steam çalışıyor")
+        # Laisser le client finir son démarrage avant de lui parler.
+        time.sleep(3)
+        if is_windows():
+            _handle_steam_profile_selection()
+            time.sleep(2)
+        return True
 
     print("[GameUpdater] ⚠️ Steam başlatılamadı")
     return False
@@ -629,11 +620,11 @@ def _get_download_status(steam_path: Path) -> str:
 
 def _system_shutdown() -> None:
     if is_windows():
-        subprocess.run(["shutdown", "/s", "/t", "10"], **_CNW, timeout=15)
+        kit.run(["shutdown", "/s", "/t", "10"], timeout=15)
     elif is_mac():
-        subprocess.run(["osascript", "-e", 'tell app "System Events" to shut down'], timeout=15)
+        kit.run(["osascript", "-e", 'tell app "System Events" to shut down'], timeout=15)
     else:
-        subprocess.run(["systemctl", "poweroff"], timeout=15)
+        kit.run(["systemctl", "poweroff"], timeout=15)
 
 
 def _watch_and_shutdown(steam_path: Path, speak=None,
@@ -743,14 +734,12 @@ def _get_epic_games() -> list[dict]:
 def _is_epic_running() -> bool:
     try:
         if is_windows():
-            out = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq EpicGamesLauncher.exe"],
-                capture_output=True, text=True, **_CNW, timeout=15
+            out = kit.run(
+                ["tasklist", "/FI", "IMAGENAME eq EpicGamesLauncher.exe"], timeout=15
             ).stdout
             return "epicgameslauncher.exe" in out.lower()
         proc = "EpicGamesLauncher" if is_mac() else "heroic"
-        return bool(subprocess.run(["pgrep", "-x", proc],
-                                   capture_output=True, text=True, timeout=15).stdout.strip())
+        return bool(kit.run(["pgrep", "-x", proc], timeout=3).stdout.strip())
     except Exception:
         return False
 
@@ -809,12 +798,12 @@ def _schedule_daily_update(hour: int = 3, minute: int = 0) -> str:
 def _schedule_windows(hour: int, minute: int) -> str:
     task_name   = "JARVIS_GameUpdater"
     script_path = Path(__file__).resolve()
-    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"], capture_output=True, **_CNW, timeout=15)
+    kit.run(["schtasks", "/Delete", "/TN", task_name, "/F"], timeout=15)
     for extra in (["/RL", "HIGHEST", "/RU", "SYSTEM"], []):
         cmd    = ["schtasks", "/Create", "/TN", task_name,
                   "/TR", f'"{sys.executable}" "{script_path}" --scheduled',
                   "/SC", "DAILY", "/ST", f"{hour:02d}:{minute:02d}", "/F", *extra]
-        result = subprocess.run(cmd, capture_output=True, text=True, **_CNW, timeout=15)
+        result = kit.run(cmd, timeout=15)
         if result.returncode == 0:
             return f"Daily game update scheduled at {hour:02d}:{minute:02d}."
     return f"Scheduling failed: {result.stderr.strip()}"
@@ -845,9 +834,8 @@ def _schedule_mac(hour: int, minute: int) -> str:
 </dict></plist>"""
     try:
         plist_path.write_text(plist_content, encoding="utf-8")
-        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, timeout=15)
-        result = subprocess.run(["launchctl", "load", str(plist_path)],
-                                capture_output=True, text=True, timeout=15)
+        kit.run(["launchctl", "unload", str(plist_path)], timeout=15)
+        result = kit.run(["launchctl", "load", str(plist_path)], timeout=15)
         if result.returncode == 0:
             return f"Daily game update scheduled at {hour:02d}:{minute:02d} via launchd."
         return f"Scheduling failed: {result.stderr.strip()}"
@@ -860,13 +848,12 @@ def _schedule_linux(hour: int, minute: int) -> str:
     marker      = "# JARVIS_GameUpdater"
     cron_entry  = f"{minute} {hour} * * * {sys.executable} {script_path} --scheduled  {marker}"
     try:
-        existing = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=15)
+        existing = kit.run(["crontab", "-l"], timeout=15)
         lines    = [l for l in existing.stdout.splitlines()
                     if marker not in l and str(script_path) not in l]
         lines.append(cron_entry)
-        proc = subprocess.run(["crontab", "-"],
-                              input="\n".join(lines) + "\n",
-                              text=True, capture_output=True, timeout=15)
+        proc = kit.run(["crontab", "-"],
+                              stdin="\n".join(lines) + "\n", timeout=15)
         if proc.returncode == 0:
             return f"Daily game update scheduled at {hour:02d}:{minute:02d} via cron."
         return f"Scheduling failed: {proc.stderr.strip()}"
@@ -876,26 +863,25 @@ def _schedule_linux(hour: int, minute: int) -> str:
 
 def _cancel_scheduled_update() -> str:
     if is_windows():
-        result = subprocess.run(
-            ["schtasks", "/Delete", "/TN", "JARVIS_GameUpdater", "/F"],
-            capture_output=True, text=True, **_CNW, timeout=15
+        result = kit.run(
+            ["schtasks", "/Delete", "/TN", "JARVIS_GameUpdater", "/F"], timeout=15
         )
         return ("Scheduled update cancelled."
                 if result.returncode == 0 else "No scheduled update found.")
     if is_mac():
         plist_path = Path.home() / "Library" / "LaunchAgents" / "com.jarvis.gameupdater.plist"
         if plist_path.exists():
-            subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, timeout=15)
+            kit.run(["launchctl", "unload", str(plist_path)], timeout=15)
             plist_path.unlink()
             return "Scheduled update cancelled."
         return "No scheduled update found."
 
     try:
-        existing = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=15)
+        existing = kit.run(["crontab", "-l"], timeout=15)
         lines    = [l for l in existing.stdout.splitlines()
                     if "JARVIS_GameUpdater" not in l]
-        subprocess.run(["crontab", "-"],
-                       input="\n".join(lines) + "\n", text=True, timeout=15)
+        kit.run(["crontab", "-"],
+                       stdin="\n".join(lines) + "\n", timeout=15)
         return "Scheduled update cancelled."
     except Exception as e:
         return f"Cancel failed: {e}"
@@ -903,9 +889,8 @@ def _cancel_scheduled_update() -> str:
 
 def _get_schedule_status() -> str:
     if is_windows():
-        result = subprocess.run(
-            ["schtasks", "/Query", "/TN", "JARVIS_GameUpdater", "/FO", "LIST"],
-            capture_output=True, text=True, **_CNW, timeout=15
+        result = kit.run(
+            ["schtasks", "/Query", "/TN", "JARVIS_GameUpdater", "/FO", "LIST"], timeout=15
         )
         if result.returncode != 0:
             return "No scheduled game update found."
@@ -921,7 +906,7 @@ def _get_schedule_status() -> str:
                 if plist_path.exists() else "No scheduled game update found.")
 
     try:
-        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=15)
+        result = kit.run(["crontab", "-l"], timeout=15)
         if "JARVIS_GameUpdater" in result.stdout:
             for line in result.stdout.splitlines():
                 if "JARVIS_GameUpdater" in line:

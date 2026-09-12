@@ -9,8 +9,6 @@ import importlib.util
 import os
 import platform
 import re
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -73,7 +71,7 @@ def _is_wayland() -> bool:
            os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
 
 def _have(cmd: str) -> bool:
-    return shutil.which(cmd) is not None
+    return kit.have(cmd)
 
 def _input_available() -> bool:
     if _is_wayland() and _have("wtype"):
@@ -93,15 +91,16 @@ _KEY_MAP = {
 def _copy_text(text: str) -> bool:
     if _is_wayland() and _have("wl-copy"):
         try:
-            subprocess.run(["wl-copy"], input=text, text=True, timeout=3)
-            return True
+            # wl-copy se démonise en gardant ses tubes : ne pas attendre sa sortie.
+            if kit.run(["wl-copy"], stdin=text, timeout=3, capture=False):
+                return True
         except Exception:
             pass
     if _have("xclip"):
         try:
-            subprocess.run(["xclip", "-selection", "clipboard"],
-                           input=text, text=True, timeout=3)
-            return True
+            if kit.run(["xclip", "-selection", "clipboard"], stdin=text, timeout=3,
+                       capture=False):
+                return True
         except Exception:
             pass
     if _PYPERCLIP:
@@ -116,14 +115,14 @@ def _press(key: str) -> bool:
     k = _KEY_MAP.get(key.lower(), key)
     if _is_wayland() and _have("wtype"):
         try:
-            subprocess.run(["wtype", "-k", k], timeout=2)
-            return True
+            if kit.run(["wtype", "-k", k], timeout=2):
+                return True
         except Exception:
             pass
     if _have("xdotool"):
         try:
-            subprocess.run(["xdotool", "key", k], timeout=2)
-            return True
+            if kit.run(["xdotool", "key", k], timeout=2):
+                return True
         except Exception:
             pass
     if _PYAUTOGUI:
@@ -147,14 +146,14 @@ def _hotkey(*keys: str) -> bool:
         for m in reversed(mods):
             cmd += ["-m", "ctrl" if m in ("ctrl", "meta") else m]
         try:
-            subprocess.run(cmd, timeout=2)
-            return True
+            if kit.run(cmd, timeout=2):
+                return True
         except Exception:
             pass
     if _have("xdotool"):
         try:
-            subprocess.run(["xdotool", "key", "+".join(keys)], timeout=2)
-            return True
+            if kit.run(["xdotool", "key", "+".join(keys)], timeout=2):
+                return True
         except Exception:
             pass
     if _PYAUTOGUI:
@@ -168,15 +167,15 @@ def _hotkey(*keys: str) -> bool:
 def _type_text(text: str) -> bool:
     if _is_wayland() and _have("wtype"):
         try:
-            subprocess.run(["wtype", text], timeout=max(2, len(text) // 20 + 2))
-            return True
+            if kit.run(["wtype", text], timeout=max(2, len(text) // 20 + 2)):
+                return True
         except Exception:
             pass
     if _have("xdotool"):
         try:
-            subprocess.run(["xdotool", "type", "--clearmodifiers", text],
-                           timeout=max(2, len(text) // 20 + 2))
-            return True
+            if kit.run(["xdotool", "type", "--clearmodifiers", text],
+                       timeout=max(2, len(text) // 20 + 2)):
+                return True
         except Exception:
             pass
     if _PYAUTOGUI:
@@ -196,14 +195,14 @@ def _clear_field() -> None:
 def _paste_hotkey() -> bool:
     if _is_wayland() and _have("wtype"):
         try:
-            subprocess.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"], timeout=2)
-            return True
+            if kit.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"], timeout=2):
+                return True
         except Exception:
             pass
     if _have("xdotool"):
         try:
-            subprocess.run(["xdotool", "key", "ctrl+v"], timeout=2)
-            return True
+            if kit.run(["xdotool", "key", "ctrl+v"], timeout=2):
+                return True
         except Exception:
             pass
     if _PYAUTOGUI:
@@ -257,34 +256,52 @@ def _find_desktop_by_name(name: str) -> Optional[Path]:
                     return fp
     return None
 
+def _find_app_window(app_name: str) -> Optional[dict]:
+    """Fenêtre Hyprland dont la classe ou le titre contient le nom demandé."""
+    needle = app_name.lower().strip()
+    for c in kit.hypr_clients():
+        blob = (str(c.get("class", "")) + " " + str(c.get("title", ""))).lower()
+        if needle and needle in blob and c.get("address"):
+            return c
+    return None
+
+
+def _wait_app_window(app_name: str, timeout: float) -> bool:
+    """Attend l'apparition de la fenêtre au lieu d'une pause fixe : on rend la
+    main dès qu'elle existe, et on n'attend pas pour rien si elle n'arrive pas."""
+    if not (_is_wayland() and _have("hyprctl")):
+        time.sleep(min(timeout, 2.5))
+        return True
+    if kit.wait_until(lambda: _find_app_window(app_name) is not None,
+                      timeout=timeout, interval=0.15):
+        time.sleep(0.4)  # laisser l'application peindre son premier cadre
+        return True
+    return False
+
+
 def _open_app(app_name: str) -> bool:
     name_l = app_name.lower().strip()
     info = _APP_LAUNCH_MAP.get(name_l, {"ids": [name_l], "web": None})
+    if _find_app_window(app_name) is not None:
+        return True  # déjà ouverte : inutile de relancer
     if _have("gtk-launch"):
         for app_id in info.get("ids", []):
-            try:
-                r = subprocess.run(["gtk-launch", app_id],
-                                   capture_output=True, timeout=5)
-                if r.returncode == 0:
-                    time.sleep(2.5)
-                    return True
-            except Exception:
-                continue
+            # gtk-launch ne rend la main qu'à la fermeture de certaines apps :
+            # lancement détaché, puis attente de la fenêtre.
+            if kit.spawn(["gtk-launch", app_id]) is not None \
+                    and _wait_app_window(app_name, timeout=8.0):
+                return True
     found = _find_desktop_by_name(app_name)
     if found and _have("gtk-launch"):
-        try:
-            subprocess.run(["gtk-launch", found.stem],
-                           capture_output=True, timeout=5)
-            time.sleep(2.5)
+        if kit.spawn(["gtk-launch", found.stem]) is not None \
+                and _wait_app_window(app_name, timeout=8.0):
             return True
-        except Exception:
-            pass
     if info.get("web"):
         try:
             from core.browser_policy import open_chrome
             if not open_chrome(info["web"]):
                 return False
-            time.sleep(4.0)
+            _wait_app_window(app_name, timeout=10.0)
             return True
         except Exception:
             pass
@@ -292,22 +309,13 @@ def _open_app(app_name: str) -> bool:
 
 def _focus_app_window(app_name: str) -> bool:
     if _is_wayland() and _have("hyprctl"):
-        try:
-            clients = json.loads(subprocess.check_output(
-                ["hyprctl", "-j", "clients"], text=True, timeout=3
-            ))
-            needle = app_name.lower()
-            for c in clients:
-                blob = (c.get("class", "") + " " + c.get("title", "")).lower()
-                if needle in blob:
-                    subprocess.run(
-                        ["hyprctl", "dispatch", "focuswindow", f"address:{c['address']}"],
-                        timeout=2,
-                    )
-                    time.sleep(0.3)
-                    return True
-        except Exception:
-            pass
+        c = _find_app_window(app_name)
+        if c is not None:
+            kit.hypr("dispatch", "focuswindow", f"address:{c['address']}")
+            # hyprctl répond « ok » même sans effet : on relit l'état réel.
+            return kit.wait_until(
+                lambda: kit.hypr_activewindow().get("address") == c["address"],
+                timeout=1.0, interval=0.08)
     return False
 
 # ── Recherche dans l'app + envoi ────────────────────────────────────────────

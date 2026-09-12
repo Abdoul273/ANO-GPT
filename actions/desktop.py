@@ -33,7 +33,6 @@ import platform
 import random
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -57,7 +56,6 @@ _PYAUTOGUI = importlib.util.find_spec("pyautogui") is not None
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 _WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY"))
-DEVNULL = subprocess.DEVNULL
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -110,10 +108,9 @@ def _get_desktop() -> Path:
         xdg = os.environ.get("XDG_DESKTOP_DIR", "")
         if xdg and Path(xdg).expanduser().is_dir():
             return Path(xdg).expanduser()
-        if shutil.which("xdg-user-dir"):
+        if kit.which("xdg-user-dir"):
             try:
-                r = subprocess.run(["xdg-user-dir", "DESKTOP"],
-                                   capture_output=True, text=True, timeout=2)
+                r = kit.run(["xdg-user-dir", "DESKTOP"], timeout=2)
                 p = Path(r.stdout.strip()).expanduser()
                 if r.returncode == 0 and p.is_dir():
                     return p
@@ -133,10 +130,9 @@ def _get_user_downloads() -> Path:
         xdg = os.environ.get("XDG_DOWNLOAD_DIR", "")
         if xdg and Path(xdg).expanduser().is_dir():
             return Path(xdg).expanduser()
-        if shutil.which("xdg-user-dir"):
+        if kit.which("xdg-user-dir"):
             try:
-                r = subprocess.run(["xdg-user-dir", "DOWNLOAD"],
-                                   capture_output=True, text=True, timeout=2)
+                r = kit.run(["xdg-user-dir", "DOWNLOAD"], timeout=2)
                 p = Path(r.stdout.strip()).expanduser()
                 if r.returncode == 0 and p.is_dir():
                     return p
@@ -152,16 +148,15 @@ def _get_user_downloads() -> Path:
 def _swww_set(path: Path, env: dict) -> bool:
     """swww img ; si le daemon n'est pas lancé, on le démarre et on retente."""
     try:
-        r = subprocess.run(["swww", "img", str(path)], capture_output=True,
-                           text=True, timeout=8, env=env)
+        r = kit.run(["swww", "img", str(path)], timeout=8, env=env)
         if r.returncode == 0:
             return True
-        subprocess.Popen(["swww-daemon"], env=env, stdout=DEVNULL,
-                         stderr=DEVNULL, start_new_session=True)
-        import time
-        time.sleep(1.2)
-        r = subprocess.run(["swww", "img", str(path)], capture_output=True,
-                           text=True, timeout=8, env=env)
+        if kit.spawn(["swww-daemon"], env=env) is None:
+            return False
+        # On rend la main dès que le démon répond, sans attendre une seconde fixe.
+        kit.wait_until(lambda: kit.run(["swww", "query"], timeout=1, env=env,
+                                       quiet=True).ok, timeout=3.0)
+        r = kit.run(["swww", "img", str(path)], timeout=8, env=env)
         return r.returncode == 0
     except Exception:
         return False
@@ -169,11 +164,10 @@ def _swww_set(path: Path, env: dict) -> bool:
 
 def _hyprpaper_set(path: Path, env: dict) -> bool:
     """hyprctl hyprpaper : preload puis wallpaper sur tous les moniteurs."""
-    if not shutil.which("hyprctl"):
+    if not kit.which("hyprctl"):
         return False
     try:
-        mons = json.loads(subprocess.check_output(
-            ["hyprctl", "-j", "monitors"], text=True, timeout=3, env=env))
+        mons = kit.run(["hyprctl", "-j", "monitors"], timeout=3, env=env).json([])
         names = [m.get("name") for m in mons
                  if isinstance(m, dict) and m.get("name")]
     except Exception:
@@ -181,15 +175,13 @@ def _hyprpaper_set(path: Path, env: dict) -> bool:
     if not names:
         return False
     try:
-        pre = subprocess.run(["hyprctl", "hyprpaper", "preload", str(path)],
-                             capture_output=True, timeout=8, env=env)
+        pre = kit.run(["hyprctl", "hyprpaper", "preload", str(path)], timeout=8, env=env)
         if pre.returncode != 0:
             return False
         ok = True
         for name in names:
-            r = subprocess.run(["hyprctl", "hyprpaper", "wallpaper",
-                                f"{name},{path}"],
-                               capture_output=True, timeout=8, env=env)
+            r = kit.run(["hyprctl", "hyprpaper", "wallpaper",
+                                f"{name},{path}"], timeout=8, env=env)
             if r.returncode != 0:
                 ok = False
         return ok
@@ -198,17 +190,14 @@ def _hyprpaper_set(path: Path, env: dict) -> bool:
 
 
 def _swaybg_set(path: Path, env: dict) -> bool:
-    if not shutil.which("swaybg"):
+    if not kit.which("swaybg"):
         return False
     try:
-        subprocess.run(["pkill", "-x", "swaybg"], timeout=2)
+        kit.run(["pkill", "-x", "swaybg"], timeout=2)
     except Exception:
         pass
     try:
-        subprocess.Popen(["swaybg", "-i", str(path), "-m", "fill"],
-                         env=env, stdout=DEVNULL, stderr=DEVNULL,
-                         start_new_session=True)
-        return True
+        return kit.spawn(["swaybg", "-i", str(path), "-m", "fill"], env=env) is not None
     except Exception:
         return False
 
@@ -238,16 +227,16 @@ def set_wallpaper(image_path: str) -> str:
                 f'tell application "System Events" to tell every desktop to '
                 f'set picture to POSIX file "{path}"'
             )
-            subprocess.run(["osascript", "-e", script], capture_output=True, timeout=15)
+            kit.run(["osascript", "-e", script], timeout=15)
             return f"Fond d'écran changé : {path.name}"
         else:  # Linux
             desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
             uri = f"file://{path}"
             if "gnome" in desktop_env or "unity" in desktop_env:
-                subprocess.run(["gsettings", "set", "org.gnome.desktop.background",
-                                "picture-uri", uri], capture_output=True, timeout=15)
-                subprocess.run(["gsettings", "set", "org.gnome.desktop.background",
-                                "picture-uri-dark", uri], capture_output=True, timeout=15)
+                kit.run(["gsettings", "set", "org.gnome.desktop.background",
+                                "picture-uri", uri], timeout=15)
+                kit.run(["gsettings", "set", "org.gnome.desktop.background",
+                                "picture-uri-dark", uri], timeout=15)
                 return f"Fond d'écran changé : {path.name}"
             elif "kde" in desktop_env:
                 script = f"""
@@ -259,26 +248,24 @@ for (var i = 0; i < allDesktops.length; i++) {{
     d.writeConfig("Image", "file://{path}");
 }}
 """
-                subprocess.run(["qdbus", "org.kde.plasmashell", "/PlasmaShell",
-                                "org.kde.PlasmaShell.evaluateScript", script],
-                               capture_output=True, timeout=15)
+                kit.run(["qdbus", "org.kde.plasmashell", "/PlasmaShell",
+                                "org.kde.PlasmaShell.evaluateScript", script], timeout=15)
                 return f"Fond d'écran changé : {path.name}"
             elif "xfce" in desktop_env:
-                subprocess.run(["xfconf-query", "-c", "xfce4-desktop",
+                kit.run(["xfconf-query", "-c", "xfce4-desktop",
                                 "-p", "/backdrop/screen0/monitor0/workspace0/last-image",
-                                "-s", str(path)], capture_output=True, timeout=15)
+                                "-s", str(path)], timeout=15)
                 return f"Fond d'écran changé : {path.name}"
             # ── Wayland/Hyprland : chaîne moderne ─────────────────────────
             env = _hypr_env()
-            if _WAYLAND and shutil.which("swww") and _swww_set(path, env):
+            if _WAYLAND and kit.which("swww") and _swww_set(path, env):
                 return f"Fond d'écran changé (swww) : {path.name}"
             if _hyprpaper_set(path, env):
                 return f"Fond d'écran changé (hyprpaper) : {path.name}"
             if _WAYLAND and _swaybg_set(path, env):
                 return f"Fond d'écran changé (swaybg) : {path.name}"
             # ── Dernier recours : feh (X11/Xwayland) ─────────────────────
-            r = subprocess.run(["feh", "--bg-scale", str(path)],
-                               capture_output=True, env=env, timeout=15)
+            r = kit.run(["feh", "--bg-scale", str(path)], env=env, timeout=15)
             if r.returncode == 0:
                 return f"Fond d'écran changé (feh) : {path.name}"
             return ("Impossible de changer le fond d'écran automatiquement. "
@@ -346,20 +333,17 @@ def get_current_wallpaper() -> str:
             return f"Fond d'écran actuel : {val}"
         elif _OS == "Darwin":
             script = 'tell application "System Events" to get picture of desktop 1'
-            result = subprocess.run(["osascript", "-e", script],
-                                    capture_output=True, text=True, timeout=15)
+            result = kit.run(["osascript", "-e", script], timeout=15)
             return f"Fond d'écran actuel : {result.stdout.strip()}"
         else:
             desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
             if "gnome" in desktop_env or "unity" in desktop_env:
-                result = subprocess.run(
-                    ["gsettings", "get", "org.gnome.desktop.background", "picture-uri"],
-                    capture_output=True, text=True, timeout=15)
+                result = kit.run(
+                    ["gsettings", "get", "org.gnome.desktop.background", "picture-uri"], timeout=15)
                 return f"Fond d'écran actuel : {result.stdout.strip()}"
-            if shutil.which("swww"):
+            if kit.which("swww"):
                 try:
-                    r = subprocess.run(["swww", "query"], capture_output=True,
-                                       text=True, timeout=3, env=_hypr_env())
+                    r = kit.run(["swww", "query"], timeout=3, env=_hypr_env())
                     m = re.search(r"image:\s*(\S+)", r.stdout or "")
                     if m:
                         return f"Fond d'écran actuel : {m.group(1).rstrip(',')}"

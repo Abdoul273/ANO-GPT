@@ -31,9 +31,7 @@ import os
 import platform
 import random
 import re
-import shutil
 import string
-import subprocess
 from core import action_kit as kit
 import sys
 import time
@@ -89,18 +87,21 @@ _MAX_VOLUME_PERCENT = 100
 
 
 def _which(cmd: str) -> Optional[str]:
-    if cmd not in _TOOLS:
-        _TOOLS[cmd] = shutil.which(cmd)
-    return _TOOLS[cmd]
+    return kit.which(cmd)
 
 
 def _have(cmd: str) -> bool:
-    return _which(cmd) is not None
+    return kit.have(cmd)
 
 
-def _run(cmd: list, timeout: float = 5.0, check: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True,
-                          timeout=timeout, check=check)
+def _run(cmd: list, timeout: float = 5.0, check: bool = False,
+         env: Optional[dict] = None) -> kit.ProcResult:
+    """Appel externe borné : le groupe de processus est tué au délai, rien ne
+    lève sauf `check=True` (comportement `subprocess.run` conservé)."""
+    res = kit.run(cmd, timeout=timeout, env=env)
+    if check and not res.ok:
+        raise RuntimeError(res.reason())
+    return res
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -339,16 +340,17 @@ def take_screenshot(save_path: Optional[str] = None) -> Path:
 def _clipboard_copy(text: str) -> bool:
     if _WAYLAND and _have("wl-copy"):
         try:
-            subprocess.run(["wl-copy", "--trim-newline"], input=text,
-                           text=True, timeout=2, env=_hypr_env())
-            return True
+            # wl-copy se démonise en gardant ses tubes : ne pas attendre sa sortie.
+            if kit.run(["wl-copy", "--trim-newline"], stdin=text, timeout=2,
+                       env=_hypr_env(), capture=False):
+                return True
         except Exception:
             pass
     if _X11 and _have("xclip"):
         try:
-            subprocess.run(["xclip", "-selection", "c"], input=text,
-                           text=True, timeout=2)
-            return True
+            if kit.run(["xclip", "-selection", "c"], stdin=text, timeout=2,
+                       capture=False):
+                return True
         except Exception:
             pass
     try:
@@ -362,12 +364,12 @@ def _clipboard_copy(text: str) -> bool:
 
 def _clipboard_paste() -> str:
     if _WAYLAND and _have("wtype"):
-        subprocess.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"],
-                       timeout=1, env=_hypr_env())
-        return "Collé (wtype)"
+        if _run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"],
+                timeout=1.5, env=_hypr_env()):
+            return "Collé (wtype)"
     if _X11 and _have("xdotool"):
-        subprocess.run(["xdotool", "key", "ctrl+v"], timeout=1)
-        return "Collé (xdotool)"
+        if _run(["xdotool", "key", "ctrl+v"], timeout=1.5):
+            return "Collé (xdotool)"
     try:
         import pyautogui
         pyautogui.hotkey("ctrl", "v")
@@ -411,17 +413,16 @@ def _type_text(text: str, interval: float = 0.03) -> str:
         if _have("ydotool"):
             try:
                 delay_ms = max(5, int(interval * 1000))
-                r = subprocess.run(["ydotool", "type", "-d", str(delay_ms), "--", text],
-                                   capture_output=True, text=True,
-                                   timeout=max(3.0, len(text) * 0.05 + 2.0))
+                r = _run(["ydotool", "type", "-d", str(delay_ms), "--", text],
+                         timeout=max(3.0, len(text) * 0.05 + 2.0))
                 if r.returncode == 0:
                     return f"Texte tapé : «{text[:60]}{'…' if len(text) > 60 else ''}»"
             except Exception:
                 pass
         if _have("wtype"):
             try:
-                r = subprocess.run(["wtype", text], timeout=max(2.0, len(text) // 20 + 2.0),
-                                   env=_hypr_env())
+                r = _run(["wtype", text], timeout=max(2.0, len(text) // 20 + 2.0),
+                         env=_hypr_env())
                 if r.returncode == 0:
                     return f"Texte tapé : «{text[:60]}{'…' if len(text) > 60 else ''}»"
             except Exception:
@@ -436,9 +437,9 @@ def _type_text(text: str, interval: float = 0.03) -> str:
 
     if _X11 and _have("xdotool"):
         try:
-            subprocess.run(["xdotool", "type", "--delay", str(int(interval * 1000)),
-                            text], timeout=max(2.0, len(text) // 10 + 2.0))
-            return f"Texte tapé : «{text[:60]}{'…' if len(text) > 60 else ''}»"
+            if _run(["xdotool", "type", "--delay", str(int(interval * 1000)),
+                     text], timeout=max(2.0, len(text) // 10 + 2.0)):
+                return f"Texte tapé : «{text[:60]}{'…' if len(text) > 60 else ''}»"
         except Exception:
             pass
     try:
@@ -460,21 +461,21 @@ def _press_key(key: str) -> str:
         if _have("ydotool") and k_clean in _LINUX_KEYCODES:
             code = _LINUX_KEYCODES[k_clean]
             try:
-                r = subprocess.run(["ydotool", "key", f"{code}:1", f"{code}:0"], timeout=2)
+                r = _run(["ydotool", "key", f"{code}:1", f"{code}:0"], timeout=2)
                 if r.returncode == 0:
                     return f"Touche pressée : {key}"
             except Exception:
                 pass
         if _have("wtype"):
             try:
-                r = subprocess.run(["wtype", "-k", key], timeout=1, env=_hypr_env())
+                r = _run(["wtype", "-k", key], timeout=1.5, env=_hypr_env())
                 if r.returncode == 0:
                     return f"Touche pressée : {key}"
             except Exception:
                 pass
     if _X11 and _have("xdotool"):
         try:
-            r = subprocess.run(["xdotool", "key", key], timeout=1)
+            r = _run(["xdotool", "key", key], timeout=1.5)
             if r.returncode == 0:
                 return f"Touche pressée : {key}"
         except Exception:
@@ -498,7 +499,7 @@ def _hotkey(*keys: str) -> str:
         if _have("ydotool") and all(k in _LINUX_KEYCODES for k in keys):
             events = [f"{_LINUX_KEYCODES[k]}:1" for k in keys] + [f"{_LINUX_KEYCODES[k]}:0" for k in reversed(keys)]
             try:
-                r = subprocess.run(["ydotool", "key", *events], timeout=2)
+                r = _run(["ydotool", "key", *events], timeout=2)
                 if r.returncode == 0:
                     return f"Combinaison envoyée : {combo}"
             except Exception:
@@ -514,14 +515,14 @@ def _hotkey(*keys: str) -> str:
             for m in reversed(mods):
                 cmd += ["-m", _WTYPE_MODS[m]]
             try:
-                r = subprocess.run(cmd, timeout=2, env=_hypr_env())
+                r = _run(cmd, timeout=2, env=_hypr_env())
                 if r.returncode == 0:
                     return f"Combinaison envoyée : {combo}"
             except Exception:
                 pass
     if _X11 and _have("xdotool"):
         try:
-            r = subprocess.run(["xdotool", "key", combo], timeout=2)
+            r = _run(["xdotool", "key", combo], timeout=2)
             if r.returncode == 0:
                 return f"Combinaison envoyée : {combo}"
         except Exception:
@@ -547,11 +548,15 @@ def _click(x=None, y=None, button="left", clicks=1) -> str:
     if _WAYLAND and _have("ydotool"):
         try:
             if x is not None and y is not None:
-                subprocess.run(["ydotool", "mousemove", "-a",
-                                str(int(x)), str(int(y))], timeout=2)
+                mv = _run(["ydotool", "mousemove", "-a",
+                           str(int(x)), str(int(y))], timeout=2)
+                if not mv:
+                    raise RuntimeError(mv.reason())
             mask = _YDOTOOL_BTN.get(button, "0xC0")
             for _ in range(clicks):
-                subprocess.run(["ydotool", "click", mask], timeout=2)
+                ck = _run(["ydotool", "click", mask], timeout=2)
+                if not ck:
+                    raise RuntimeError(ck.reason())
             return (f"Clic {button} à ({x},{y})" if x is not None
                     else f"Clic {button} à la position actuelle")
         except Exception as e:
@@ -582,8 +587,7 @@ def _move(x: int, y: int) -> str:
                 return f"Souris → ({ix},{iy})"
         if _have("ydotool"):
             try:
-                r = subprocess.run(["ydotool", "mousemove", "-a",
-                                str(ix), str(iy)], timeout=2)
+                r = _run(["ydotool", "mousemove", "-a", str(ix), str(iy)], timeout=2)
                 if r.returncode == 0:
                     return f"Souris → ({ix},{iy})"
             except Exception as e:
@@ -603,8 +607,7 @@ def _scroll(direction: str, amount: int = 3) -> str:
         dy = amount if direction == "up" else -amount if direction == "down" else 0
         dx = amount if direction == "right" else -amount if direction == "left" else 0
         try:
-            r = subprocess.run(["ydotool", "scroll", "--", str(dx), str(dy)],
-                               capture_output=True, timeout=2)
+            r = _run(["ydotool", "scroll", "--", str(dx), str(dy)], timeout=2)
             if r.returncode == 0:
                 return f"Défilement {direction} x{amount}"
         except Exception:
@@ -748,8 +751,8 @@ def _move_to_workspace(title: str, workspace) -> str:
     if _have("wmctrl"):
         try:
             ws_int = int(ws)
-            subprocess.run(["wmctrl", "-r", title or ":ACTIVE:", "-t",
-                            str(ws_int - 1)], timeout=2, check=True)
+            _run(["wmctrl", "-r", title or ":ACTIVE:", "-t",
+                  str(ws_int - 1)], timeout=2, check=True)
             return f"Fenêtre déplacée vers le bureau {ws} (wmctrl)."
         except Exception as e:
             return f"Échec du déplacement : {e}"
@@ -777,8 +780,8 @@ def _switch_workspace(workspace) -> str:
     if _have("wmctrl"):
         try:
             ws_int = int(ws)
-            subprocess.run(["wmctrl", "-s", str(ws_int - 1)], timeout=2)
-            return f"Basculé vers le bureau {ws}."
+            if _run(["wmctrl", "-s", str(ws_int - 1)], timeout=2):
+                return f"Basculé vers le bureau {ws}."
         except ValueError:
             pass
     return "Changement de bureau non supporté sur ce système (hyprctl ou wmctrl requis)."
