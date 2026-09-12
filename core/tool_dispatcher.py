@@ -989,13 +989,16 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "status | setup | connect | unread (default) | recent | search | advanced_search | read | summary"},
+                "action": {"type": "STRING", "description": "status | setup | connect | unread (default) | recent | search | advanced_search | read | summary | send | reply | mark_read | mark_unread | archive | star | unstar | trash. send/reply/trash always show a preview the user must confirm with a click."},
+                "to": {"type": "STRING", "description": "send: recipient address or a saved contact name"},
+                "body": {"type": "STRING", "description": "send/reply: the message text to send, written out in full"},
+                "cc": {"type": "STRING", "description": "send: optional carbon-copy addresses"},
                 "query": {"type": "STRING", "description": "Natural-language request, native Gmail query (e.g. 'from:alice newer_than:30d'), or displayed number for read"},
                 "id": {"type": "STRING", "description": "Gmail message ID or displayed result number for read"},
                 "max_results": {"type": "INTEGER", "description": "Number of messages, from 1 to 100 (default 10)"},
                 "from": {"type": "STRING", "description": "Exact sender name, address, or domain filter"},
                 "to": {"type": "STRING", "description": "Exact recipient name or address filter"},
-                "subject": {"type": "STRING", "description": "Words that must occur in the subject"},
+                "subject": {"type": "STRING", "description": "search: words that must occur in the subject; send/reply: the subject line (reply defaults to 'Re: …')"},
                 "after": {"type": "STRING", "description": "Minimum date: YYYY-MM-DD or DD/MM/YYYY"},
                 "before": {"type": "STRING", "description": "Maximum date: YYYY-MM-DD or DD/MM/YYYY"},
                 "filename": {"type": "STRING", "description": "Attachment name or extension, e.g. pdf"},

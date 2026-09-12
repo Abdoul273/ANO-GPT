@@ -9,6 +9,9 @@ from typing import Any, Dict, List
 from core.contacts import ContactError, get_contacts_book
 
 from core import action_kit as kit
+from core import human_confirmation
+
+_HUMAN_APPROVED = object()
 
 try:
     from core.email_service import GmailError, GmailSetupRequired, get_gmail_service
@@ -236,6 +239,54 @@ def email_control(parameters: dict = None, session_memory=None, ui=None) -> str:
                 f"{message['body']}{attachment_text}"
             )
 
+        if action in {"send", "reply", "envoyer", "repondre", "répondre"}:
+            return _send_or_reply(service, action, params, session_memory, ui)
+
+        if action in {"mark_read", "lu", "read_done"}:
+            target = _resolve_message_id(msg_id or query, session_memory)
+            if not target:
+                return "Précisez quel message marquer comme lu (numéro affiché ou identifiant)."
+            service.mark_read(target, read=True)
+            return "Message marqué comme lu."
+
+        if action in {"mark_unread", "non_lu"}:
+            target = _resolve_message_id(msg_id or query, session_memory)
+            if not target:
+                return "Précisez quel message marquer comme non lu."
+            service.mark_read(target, read=False)
+            return "Message marqué comme non lu."
+
+        if action in {"archive", "archiver"}:
+            target = _resolve_message_id(msg_id or query, session_memory)
+            if not target:
+                return "Précisez quel message archiver."
+            service.archive(target)
+            return "Message archivé (retiré de la boîte de réception)."
+
+        if action in {"star", "unstar", "favori"}:
+            target = _resolve_message_id(msg_id or query, session_memory)
+            if not target:
+                return "Précisez quel message marquer d'une étoile."
+            starred = action != "unstar"
+            service.star(target, starred=starred)
+            return "Étoile ajoutée." if starred else "Étoile retirée."
+
+        if action in {"trash", "delete", "supprimer", "corbeille"}:
+            target = _resolve_message_id(msg_id or query, session_memory)
+            if not target:
+                return "Précisez quel message mettre à la corbeille."
+            if params.get("_human_approval") is not _HUMAN_APPROVED:
+                header = service.get_email_header(target) or {}
+                approved = dict(params)
+                approved.update({"action": "trash", "id": target, "_human_approval": _HUMAN_APPROVED})
+                return human_confirmation.request(
+                    "email:trash", "Mettre un e-mail à la corbeille",
+                    f"De : {header.get('sender', '?')}\nObjet : {header.get('subject', '?')}",
+                    lambda p=approved: email_control(p, session_memory=session_memory, ui=ui),
+                )
+            service.trash(target)
+            return "Message mis à la corbeille (récupérable 30 jours dans Gmail)."
+
         if action == "summary":
             emails = service.get_unread(max_results=max_results)
             if not emails:
@@ -247,7 +298,8 @@ def email_control(parameters: dict = None, session_memory=None, ui=None) -> str:
 
         return (
             "Action Gmail inconnue. Actions valides : status, setup, connect, "
-            "unread, recent, search, advanced_search, read, summary."
+            "unread, recent, search, advanced_search, read, summary, send, reply, "
+            "mark_read, mark_unread, archive, star, unstar, trash."
         )
     except ContactError as exc:
         return f"Erreur contact : {exc}"
@@ -257,6 +309,62 @@ def email_control(parameters: dict = None, session_memory=None, ui=None) -> str:
         return f"Erreur Gmail : {exc}"
     except Exception as exc:
         return f"Erreur Gmail inattendue : {exc}"
+
+
+def _send_or_reply(service, action: str, params: dict, session_memory, ui) -> str:
+    """Envoi ou réponse : toujours prévisualisé et confirmé par un clic."""
+    reply = action in {"reply", "repondre", "répondre"}
+    to = str(params.get("to", "") or "").strip()
+    subject = str(params.get("subject", "") or "").strip()
+    body = str(params.get("body", "") or params.get("message", "") or "").strip()
+    cc = str(params.get("cc", "") or "").strip()
+    reply_to = ""
+    if reply:
+        reply_to = _resolve_message_id(
+            str(params.get("id", "") or params.get("query", "") or ""), session_memory)
+        if not reply_to:
+            return "Précisez à quel message répondre (numéro affiché ou identifiant)."
+        original = service.read_email(reply_to)
+        if not to:
+            to = str(original.get("reply_to") or original.get("sender") or "")
+        if not subject:
+            subject = str(original.get("subject") or "")
+            if subject and not subject.lower().startswith("re:"):
+                subject = f"Re: {subject}"
+    if to and "@" not in to:
+        try:
+            resolved = get_contacts_book().resolve(to, "email")
+            if resolved:
+                to = resolved.value
+        except ImportError:
+            pass
+    # Un nom affiché « Alice <alice@x.org> » : on ne garde que l'adresse.
+    if "<" in to and ">" in to:
+        to = to[to.index("<") + 1:to.index(">")].strip()
+    if not to or "@" not in to:
+        return "Destinataire manquant ou sans adresse e-mail valide."
+    if not body:
+        return "Le corps du message est vide : dictez ce qu'il faut écrire."
+    if not service.can_write:
+        return ("Le compte Gmail est relié en lecture seule. Dites « connecte Gmail » "
+                "pour autoriser l'envoi, puis redemandez l'envoi.")
+
+    if params.get("_human_approval") is not _HUMAN_APPROVED:
+        approved = dict(params)
+        approved.update({"action": "reply" if reply else "send", "to": to,
+                         "subject": subject, "body": body, "cc": cc,
+                         "id": reply_to, "_human_approval": _HUMAN_APPROVED})
+        approved.pop("query", None)
+        return human_confirmation.request(
+            "email:send",
+            "Répondre par e-mail" if reply else "Envoyer un e-mail",
+            f"À : {to}\nObjet : {subject or '(sans objet)'}\n\n{body}",
+            lambda p=approved: email_control(p, session_memory=session_memory, ui=ui),
+        )
+
+    service.send_email(to, subject, body, cc=cc, reply_to_id=reply_to)
+    label = "Réponse envoyée" if reply else "E-mail envoyé"
+    return f"{label} à {to}" + (f" (objet : {subject})." if subject else ".")
 
 
 if __name__ == "__main__":

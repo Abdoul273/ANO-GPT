@@ -33,7 +33,15 @@ _CREDENTIALS_DIR = _BASE_DIR / "memory" / "credentials"
 _TOKEN_FILE = _BASE_DIR / "memory" / "gmail_token.json"
 _CLIENT_SECRET_FILE = _CREDENTIALS_DIR / "gmail_client_secret.json"
 
-_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# Lecture seule historiquement ; `gmail.modify` couvre la lecture, le marquage,
+# l'archivage et la corbeille, `gmail.send` l'envoi. Un jeton ancien (lecture
+# seule) reste utilisable pour lire : seules les écritures demandent de
+# reconnecter le compte.
+_SCOPE_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
+_SCOPE_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
+_SCOPE_SEND = "https://www.googleapis.com/auth/gmail.send"
+_SCOPES = [_SCOPE_MODIFY, _SCOPE_SEND]
+_WRITE_SCOPES = {_SCOPE_MODIFY, _SCOPE_SEND}
 
 # Veille : Gmail n'autorise pas de notification poussée sans Pub/Sub et une
 # adresse publique. On interroge donc l'historique, qui ne renvoie que le delta
@@ -729,7 +737,10 @@ class GmailService:
         if not self.token_file.is_file():
             return None
         try:
-            return Credentials.from_authorized_user_file(str(self.token_file), _SCOPES)
+            # Sans `scopes` : les portées réellement accordées sont relues du
+            # jeton, sinon google-auth refuse le rafraîchissement d'un ancien
+            # jeton lecture seule (« not all requested scopes were granted »).
+            return Credentials.from_authorized_user_file(str(self.token_file))
         except Exception as exc:
             raise GmailSetupRequired(
                 f"Le jeton Gmail est illisible ou incompatible ({exc}). "
@@ -768,6 +779,10 @@ class GmailService:
                                 "Demandez « connecte Gmail » pour la renouveler."
                             ) from exc
                         creds = None
+                if creds and creds.valid and interactive and not self._creds_can_write(creds):
+                    # Reconnexion explicite : on en profite pour obtenir les
+                    # portées d'écriture (envoi, classement).
+                    creds = None
                 if not creds or not creds.valid:
                     if not interactive:
                         raise GmailSetupRequired(self._setup_message())
@@ -813,6 +828,114 @@ class GmailService:
                 return self._service
         self.connect(interactive=False)
         return self._service
+
+    @staticmethod
+    def _creds_can_write(creds: Any) -> bool:
+        granted = set(getattr(creds, "granted_scopes", None) or getattr(creds, "scopes", None) or [])
+        return _WRITE_SCOPES.issubset(granted)
+
+    @property
+    def can_write(self) -> bool:
+        """Vrai si le jeton autorise l'envoi et le classement."""
+        try:
+            data = json.loads(self.token_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        scopes = data.get("scopes") or []
+        if isinstance(scopes, str):
+            scopes = scopes.split()
+        return _WRITE_SCOPES.issubset(set(scopes))
+
+    def _writable_service(self):
+        service = self._get_service()
+        if not self.can_write:
+            raise GmailSetupRequired(
+                "Le compte Gmail est relié en lecture seule. Dites « connecte "
+                "Gmail » pour autoriser l'envoi et le classement des messages."
+            )
+        return service
+
+    # ── écritures ────────────────────────────────────────────────────────
+
+    def send_email(self, to: str, subject: str, body: str, *,
+                   cc: str = "", reply_to_id: str = "") -> Dict[str, Any]:
+        """Envoie un message (ou répond dans le fil si `reply_to_id`)."""
+        import base64
+        from email.message import EmailMessage
+
+        service = self._writable_service()
+        if not to or "@" not in to:
+            raise GmailError("Destinataire invalide.")
+        msg = EmailMessage()
+        msg["To"] = to
+        msg["Subject"] = subject or "(sans objet)"
+        if cc:
+            msg["Cc"] = cc
+        thread_id = ""
+        if reply_to_id:
+            try:
+                original = _execute(service.users().messages().get(
+                    userId="me", id=reply_to_id, format="metadata",
+                    metadataHeaders=["Message-ID", "Subject"],
+                ))
+                headers = {h["name"].lower(): h["value"]
+                           for h in original.get("payload", {}).get("headers", [])}
+                if headers.get("message-id"):
+                    msg["In-Reply-To"] = headers["message-id"]
+                    msg["References"] = headers["message-id"]
+                if not subject and headers.get("subject"):
+                    original_subject = headers["subject"]
+                    msg.replace_header("Subject", original_subject if original_subject.lower().startswith("re:")
+                                       else f"Re: {original_subject}")
+                thread_id = original.get("threadId", "")
+            except Exception as exc:
+                raise GmailError(f"Message d'origine introuvable : {exc}") from exc
+        msg.set_content(body or "")
+        payload: Dict[str, Any] = {
+            "raw": base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii"),
+        }
+        if thread_id:
+            payload["threadId"] = thread_id
+        try:
+            return _execute(service.users().messages().send(userId="me", body=payload))
+        except Exception as exc:
+            raise GmailError(f"Envoi impossible : {exc}") from exc
+
+    def modify_labels(self, msg_id: str, *, add: List[str] | None = None,
+                      remove: List[str] | None = None) -> Dict[str, Any]:
+        service = self._writable_service()
+        if not msg_id:
+            raise GmailError("Identifiant de message manquant.")
+        body = {"addLabelIds": list(add or []), "removeLabelIds": list(remove or [])}
+        try:
+            return _execute(service.users().messages().modify(userId="me", id=msg_id, body=body))
+        except Exception as exc:
+            raise GmailError(f"Modification impossible : {exc}") from exc
+
+    def mark_read(self, msg_id: str, read: bool = True) -> Dict[str, Any]:
+        return self.modify_labels(msg_id, remove=["UNREAD"] if read else None,
+                                  add=None if read else ["UNREAD"])
+
+    def archive(self, msg_id: str) -> Dict[str, Any]:
+        return self.modify_labels(msg_id, remove=["INBOX"])
+
+    def star(self, msg_id: str, starred: bool = True) -> Dict[str, Any]:
+        return self.modify_labels(msg_id, add=["STARRED"] if starred else None,
+                                  remove=None if starred else ["STARRED"])
+
+    def trash(self, msg_id: str) -> Dict[str, Any]:
+        service = self._writable_service()
+        try:
+            return _execute(service.users().messages().trash(userId="me", id=msg_id))
+        except Exception as exc:
+            raise GmailError(f"Mise à la corbeille impossible : {exc}") from exc
+
+    def untrash(self, msg_id: str) -> Dict[str, Any]:
+        service = self._writable_service()
+        try:
+            return _execute(service.users().messages().untrash(userId="me", id=msg_id))
+        except Exception as exc:
+            raise GmailError(f"Restauration impossible : {exc}") from exc
 
     def status(self, verify: bool = False) -> GmailStatus:
         if not self.dependencies_available():
@@ -865,6 +988,7 @@ class GmailService:
             "id": message.get("id", ""),
             "thread_id": message.get("threadId", ""),
             "sender": headers.get("from") or "Inconnu",
+            "reply_to": headers.get("reply-to") or "",
             "to": headers.get("to") or "",
             "subject": headers.get("subject") or "Sans objet",
             "date": headers.get("date") or "",
