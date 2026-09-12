@@ -800,10 +800,32 @@ class BrowserSession:
         await page.keyboard.press(key)
         return f"Touche pressée : {key}"
 
-    async def get_text(self, selector: str = "body") -> str:
+    async def get_text(self, selector: str = "body", max_chars: int = 6000) -> str:
+        """Texte lisible de la page : contenu principal d'abord, blanc replié,
+        longueur bornée — une page entière ferait déborder le tour de parole."""
         page = await self.get_page()
         try:
-            return await page.inner_text(selector)
+            text = ""
+            if selector in ("", "body"):
+                # Le contenu principal sans menus ni pieds de page, quand la
+                # page le balise ; sinon le corps entier.
+                for candidate in ("main", "article", "[role=main]", "body"):
+                    try:
+                        loc = page.locator(candidate).first
+                        if await loc.count() == 0:
+                            continue
+                        text = await loc.inner_text(timeout=4000)
+                        if len(text.strip()) > 200 or candidate == "body":
+                            break
+                    except Exception:
+                        continue
+            else:
+                text = await page.inner_text(selector)
+            text = re.sub(r"[ \t\r\f\v]+", " ", text)
+            text = re.sub(r"\n\s*\n+", "\n", text).strip()
+            if len(text) > max_chars:
+                text = text[:max_chars] + f"\n… (tronqué, {len(text)} caractères au total)"
+            return text or "La page ne contient aucun texte lisible."
         except Exception as e:
             return f"Erreur de lecture texte : {e}"
 
@@ -826,19 +848,33 @@ class BrowserSession:
 
     async def smart_click(self, description: str) -> str:
         page = await self.get_page()
-        for role in ("button", "link", "searchbox", "textbox", "menuitem", "tab"):
+        # Nom accessible insensible à la casse et aux accents approximatifs :
+        # « Se connecter » doit trouver le bouton « SE CONNECTER ».
+        pattern = re.compile(re.escape(description.strip()), re.I)
+        for role in ("button", "link", "searchbox", "textbox", "menuitem", "tab",
+                     "checkbox", "radio", "option"):
             try:
-                loc = page.get_by_role(role, name=description)
+                loc = page.get_by_role(role, name=pattern)
                 if await loc.count() > 0:
+                    await loc.first.scroll_into_view_if_needed(timeout=3000)
                     await loc.first.click(timeout=5000)
                     return f"Cliqué sur le {role} : '{description}'"
             except Exception:
                 pass
-        try:
-            await page.get_by_text(description, exact=False).first.click(timeout=5000)
-            return f"Cliqué sur le texte : '{description}'"
-        except Exception:
-            return f"Élément introuvable : '{description}'"
+        for finder in (lambda: page.get_by_label(pattern),
+                       lambda: page.get_by_placeholder(pattern),
+                       lambda: page.get_by_title(pattern),
+                       lambda: page.get_by_alt_text(pattern),
+                       lambda: page.get_by_text(pattern)):
+            try:
+                loc = finder()
+                if await loc.count() > 0:
+                    await loc.first.scroll_into_view_if_needed(timeout=3000)
+                    await loc.first.click(timeout=5000)
+                    return f"Cliqué sur : '{description}'"
+            except Exception:
+                continue
+        return f"Élément introuvable : '{description}'"
 
     async def smart_type(self, description: str, text: str) -> str:
         page = await self.get_page()
