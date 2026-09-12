@@ -13,7 +13,7 @@ import time
 import numpy as np
 
 from core.live_speech_config import FRENCH_MAIL_PHRASES, FRENCH_TECH_PHRASES
-from core.precision_stt import MAX_AUDIO_SECONDS, PrecisionTranscriber
+from core.precision_stt import DEFAULT_MODEL, MAX_AUDIO_SECONDS, PrecisionTranscriber
 from core.stt_audio import signal_metrics
 from core.azure_speech_stt import AzureSpeechVerifier, agree as azure_agrees
 # Ces garde-fous sont communs au STT historique et à Gemini Transcribe. Ils
@@ -32,6 +32,13 @@ _FINALIZE_TIMEOUT_S = 4.0
 # vient de dire. Refuser le tour est toujours préférable à une commande ou une
 # réponse décalée (file réseau ou boucle événementielle momentanément chargée).
 _MAX_QUEUED_AUDIO_AGE_S = 2.0
+# La session Transcribe est ouverte AVANT la première phrase et renouvelée en
+# arrière-plan : le handshake WebSocket (1 à 3 s) ne se paie jamais pendant
+# que l'utilisateur parle. Le serveur ferme les sessions vers dix minutes ;
+# on tourne avant, entre deux phrases.
+_STREAM_MAX_AGE_S = 8 * 60
+_WARM_RETRY_MIN_S = 1.0
+_WARM_RETRY_MAX_S = 30.0
 
 
 def _set_transcript(ui, text: str, *, final: bool = False, turn_id: str = "") -> None:
@@ -133,7 +140,7 @@ class GeminiTranscribeTurn:
             )
             self.client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
             self._connection = self.client.aio.live.connect(
-                model=str(getattr(self.host, "_precision_stt_model", "") or ""),
+                model=str(getattr(self.host, "_precision_stt_model", "") or DEFAULT_MODEL),
                 config=config,
             )
             self.session = await self._connection.__aenter__()
@@ -308,6 +315,124 @@ def _engine(host) -> PrecisionTranscriber:
     return engine
 
 
+
+class _StreamPool:
+    """Garde UNE session Transcribe prête à l'emploi.
+
+    - ``warm()`` ouvre la session en tâche de fond (au démarrage, après une
+      erreur, après une rotation) avec un repli exponentiel borné.
+    - ``acquire()`` rend la session prête, ou attend le chauffage en cours ;
+      jamais deux connexions concurrentes.
+    - ``rotate_if_stale()`` remplace, entre deux phrases, une session proche
+      de la limite serveur.
+    """
+
+    def __init__(self, host, turn_factory):
+        self._host = host
+        self._factory = turn_factory
+        self.stream = None
+        self.opened_at = 0.0
+        self._warm_task: asyncio.Task | None = None
+        self._retry_delay = _WARM_RETRY_MIN_S
+        self._closing: list[asyncio.Task] = []
+
+    async def _connect(self):
+        last_error = None
+        for _ in range(3):
+            candidate = self._factory(self._host, None)
+            try:
+                await asyncio.wait_for(candidate.start(), timeout=6.0)
+                return candidate
+            except asyncio.CancelledError:
+                await candidate.close()
+                raise
+            except Exception as exc:
+                last_error = exc
+                await candidate.close()
+        raise GeminiTranscribeError(
+            f"Connexion Gemini Transcribe impossible : {last_error}"
+        )
+
+    async def _warm(self, delay: float) -> None:
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if self.stream is not None:
+            return
+        try:
+            self.stream = await self._connect()
+            self.opened_at = time.monotonic()
+            self._retry_delay = _WARM_RETRY_MIN_S
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[Gemini Transcribe] pré-chauffage : {exc} ; nouvel essai dans {self._retry_delay:.0f} s")
+            delay = self._retry_delay
+            self._retry_delay = min(_WARM_RETRY_MAX_S, self._retry_delay * 2.0)
+            self._warm_task = asyncio.create_task(self._warm(delay), name="gemini-transcribe-warm")
+
+    def warm(self, delay: float = 0.0) -> None:
+        if self.stream is not None:
+            return
+        if self._warm_task is not None and not self._warm_task.done():
+            return
+        self._warm_task = asyncio.create_task(self._warm(delay), name="gemini-transcribe-warm")
+
+    async def acquire(self, fresh: bool = False):
+        if fresh and self.stream is not None:
+            await self.discard(self.stream)
+        if self.stream is None and self._warm_task is not None and not self._warm_task.done():
+            try:
+                await asyncio.shield(self._warm_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"[Gemini Transcribe] chauffage en échec, ouverture directe : {exc}")
+        if self.stream is None:
+            self.stream = await self._connect()
+            self.opened_at = time.monotonic()
+        return self.stream
+
+    async def discard(self, stream) -> None:
+        if stream is self.stream:
+            self.stream = None
+        try:
+            await stream.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[Gemini Transcribe] fermeture ignorée : {exc}")
+        self.warm(delay=self._retry_delay if stream is not None else 0.0)
+
+    def rotate_if_stale(self) -> None:
+        stream = self.stream
+        if stream is None or (time.monotonic() - self.opened_at) < _STREAM_MAX_AGE_S:
+            return
+        self.stream = None
+        self._closing.append(asyncio.create_task(self._close_quietly(stream)))
+        self.warm()
+
+    @staticmethod
+    async def _close_quietly(stream) -> None:
+        try:
+            await stream.close()
+        except Exception as exc:
+            print(f"[Gemini Transcribe] fermeture ignorée : {exc}")
+
+    async def close(self) -> None:
+        if self._warm_task is not None and not self._warm_task.done():
+            self._warm_task.cancel()
+            try:
+                await self._warm_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        for task in self._closing:
+            if not task.done():
+                task.cancel()
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            await self._close_quietly(stream)
+
+
 async def run_gemini_transcribe(host, settings=None, turn_factory=GeminiTranscribeTurn):
     """Consomme les tours VAD locaux et soumet uniquement du texte confirmé.
 
@@ -330,6 +455,9 @@ async def run_gemini_transcribe(host, settings=None, turn_factory=GeminiTranscri
     ui = getattr(host, "ui", None)
     if ui is not None:
         ui.write_log("SYS : écoute Gemini Transcribe — français, transcription littérale.")
+    host._stt_live_preview = ("", 0.0, "")
+    pool = _StreamPool(host, turn_factory)
+    pool.warm()
 
     try:
         while True:
@@ -376,39 +504,28 @@ async def run_gemini_transcribe(host, settings=None, turn_factory=GeminiTranscri
                     if not capture_allowed:
                         continue
                     def partial(text, turn_epoch=epoch, turn_source=source, current_turn_id=turn_id):
+                        # L'aperçu et son horodatage servent au callback micro :
+                        # une phrase visiblement terminée se clôt plus vite.
+                        host._stt_live_preview = (str(text or ""), time.monotonic(), current_turn_id)
                         if input_allowed(host, turn_epoch, turn_source):
                             _set_transcript(host.ui, text, turn_id=current_turn_id)
-                    # Une session Transcribe est réutilisée jusqu'à dix minutes.
-                    # Cela supprime un handshake WebSocket à chaque phrase, qui
-                    # était la première source des échecs aléatoires observés.
-                    if stream is None:
-                        last_error = None
-                        for _ in range(3):
-                            candidate = turn_factory(host, partial)
-                            try:
-                                await asyncio.wait_for(candidate.start(), timeout=6.0)
-                                stream = candidate
-                                break
-                            except Exception as exc:
-                                last_error = exc
-                                await candidate.close()
-                        if stream is None:
-                            raise GeminiTranscribeError(
-                                f"Connexion Gemini Transcribe impossible : {last_error}"
-                            )
+                    host._stt_live_preview = ("", turn_started_at, turn_id)
+                    # Session pré-chauffée : dans le cas nominal elle est déjà
+                    # ouverte. Sinon on attend le chauffage en cours plutôt que
+                    # d'ouvrir une seconde connexion concurrente.
+                    stream = await pool.acquire()
                     try:
                         await stream.begin(partial)
                     except Exception:
                         # Une session longue peut être fermée côté serveur entre
                         # deux phrases. Réouvrir immédiatement ici évite de perdre
                         # le tour qui vient juste de commencer.
-                        await stream.close()
-                        stream = turn_factory(host, partial)
+                        await pool.discard(stream)
+                        stream = await pool.acquire(fresh=True)
                         try:
-                            await asyncio.wait_for(stream.start(), timeout=6.0)
                             await stream.begin(partial)
                         except Exception as exc:
-                            await stream.close()
+                            await pool.discard(stream)
                             stream = None
                             raise GeminiTranscribeError(
                                 f"Reconnexion Gemini Transcribe impossible : {exc}"
@@ -462,10 +579,16 @@ async def run_gemini_transcribe(host, settings=None, turn_factory=GeminiTranscri
                     f"crête {metrics['peak_dbfs']:.1f} dBFS | "
                     f"écrêtage {metrics['clipped_percent']:.2f} %."
                 )
+                end_received_at = time.monotonic()
                 text = await turn.finish()
+                finalize_ms = round((time.monotonic() - end_received_at) * 1000)
                 pcm = bytes(turn.pcm)
                 preview = str(getattr(turn, "preview", "") or "")
                 turn = None
+                host._stt_live_preview = ("", 0.0, "")
+                # Entre deux phrases : une session vieillissante est remplacée
+                # en arrière-plan, jamais pendant qu'un tour est ouvert.
+                pool.rotate_if_stale()
                 if not text:
                     # Tour confirmé vide : effacer aussi le sous-titre provisoire.
                     _set_transcript(host.ui, "", final=True, turn_id=turn_id)
@@ -517,6 +640,7 @@ async def run_gemini_transcribe(host, settings=None, turn_factory=GeminiTranscri
                 _log_turn(
                     ui, turn_id=turn_id, decision="consensus" if azure_text else "gemini_only",
                     started_at=round(turn_started_at, 3), max_packet_age_ms=round(max_packet_age_ms, 1),
+                    finalize_ms=finalize_ms,
                     queue_depth_end=msg.get("_queue_depth_at_end", 0), vad_evidence_ms=evidence_ms,
                     gemini_preview=preview, gemini_final=text, azure_text=azure_text, azure_status=azure_status,
                     **metrics,
@@ -537,11 +661,9 @@ async def run_gemini_transcribe(host, settings=None, turn_factory=GeminiTranscri
                 _set_transcript(host.ui, "", final=True, turn_id=turn_id)
                 host.ui.write_log(f"STT : {exc}")
                 turn = None
+                host._stt_live_preview = ("", 0.0, "")
                 if stream is not None:
-                    try:
-                        await stream.close()
-                    except Exception:
-                        pass
+                    await pool.discard(stream)
                     stream = None
                 retry_after = time.monotonic() + 1.0
             except Exception as exc:
@@ -549,13 +671,10 @@ async def run_gemini_transcribe(host, settings=None, turn_factory=GeminiTranscri
                 host.ui.write_log("STT : Gemini Transcribe indisponible ; aucune demande n'a été exécutée.")
                 print(f"[Gemini Transcribe] {exc}")
                 turn = None
+                host._stt_live_preview = ("", 0.0, "")
                 if stream is not None:
-                    try:
-                        await stream.close()
-                    except Exception:
-                        pass
+                    await pool.discard(stream)
                     stream = None
                 retry_after = time.monotonic() + 3.0
     finally:
-        if stream is not None:
-            await stream.close()
+        await pool.close()

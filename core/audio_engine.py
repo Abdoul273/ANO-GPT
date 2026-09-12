@@ -105,6 +105,29 @@ _MAX_UTTERANCE_S = 20.0
 # verrouillé sous un bruit de fond continu. 0,9 s = le silence naturel de fin de
 # phrase, aligné sur le hangover du préprocesseur (_HANGOVER_MS).
 _END_SILENCE_S = 0.9
+# Fin de phrase accélérée : quand la transcription live se termine déjà par
+# une ponctuation finale (« . ? ! »), le serveur a lui-même conclu la phrase ;
+# attendre 950 ms de plus n'apporte rien. Une virgule ou une phrase ouverte
+# (« ouvre… euh… ») garde le délai long : rien n'est coupé en deux.
+_FAST_END_SILENCE_S = 0.45
+# L'aperçu doit dater d'au moins ce délai : le texte du dernier mot prononcé
+# arrive avec un peu de retard, un aperçu trop frais peut encore changer.
+_FAST_END_PREVIEW_SETTLE_S = 0.25
+_TERMINAL_PUNCTUATION = (".", "?", "!", "…")
+
+
+def preview_looks_complete(preview, now: float, turn_started_at: float) -> bool:
+    """Vrai si l'aperçu STT (texte, horodatage, id) décrit une phrase conclue."""
+    try:
+        text, updated_at, _turn = preview
+    except (TypeError, ValueError):
+        return False
+    text = str(text or "").rstrip()
+    if len(text) < 2 or updated_at < turn_started_at:
+        return False
+    if (now - float(updated_at)) < _FAST_END_PREVIEW_SETTLE_S:
+        return False
+    return text.endswith(_TERMINAL_PUNCTUATION)
 
 _BARGE_ARM_S = 0.25
 # `has_speech(strict=True)` apporte déjà une confirmation longue et très
@@ -836,7 +859,7 @@ class AudioEngine:
             print("[JARVIS] 🔇↔🎤 Half-duplex (fallback) — micro coupé pendant la parole")
 
         _cb_state = {"last_err_log": 0.0, "err_count": 0, "level": 0.06,
-                     "last_voice": time.monotonic(), "barge_stop_quiet": 0,
+                     "last_voice": time.monotonic(), "last_voice_raw": time.monotonic(), "barge_stop_quiet": 0,
                      "last_held_log": 0.0, "last_held_state": None,
                      # Le callback PortAudio et la boucle asyncio ne sont pas
                      # atomiques. Ce drapeau interdit d'expédier du PCM entre
@@ -1048,6 +1071,10 @@ class AudioEngine:
                     float_audio,
                     opening=not self._activity_open,
                 )
+                if voice_now:
+                    # Silence « brut », sans le maintien du VAD : c'est lui
+                    # qui mesure la vraie pause après le dernier mot.
+                    _cb_state["last_voice_raw"] = now
                 if voice_now or is_speaking_detected:
                     _cb_state["last_voice"] = now
                     if self._activity_open:
@@ -1057,6 +1084,20 @@ class AudioEngine:
 
                 if (self._activity_open
                         and now - _cb_state["last_voice"] > _END_SILENCE_S):
+                    loop.call_soon_threadsafe(self._activity_end)
+                    preroll.append(capture_audio)
+                    return
+
+                # Fin de phrase sémantique : pause courte + phrase déjà conclue
+                # par la transcription live. Le maintien de 950 ms ne sert
+                # qu'aux phrases encore ouvertes.
+                if (self._activity_open
+                        and now - _cb_state.get("last_voice_raw", now) > _FAST_END_SILENCE_S
+                        and now - self._activity_since > 0.6
+                        and preview_looks_complete(
+                            getattr(self, "_stt_live_preview", None), now, self._activity_since,
+                        )):
+                    self._fast_endpoints = getattr(self, "_fast_endpoints", 0) + 1
                     loop.call_soon_threadsafe(self._activity_end)
                     preroll.append(capture_audio)
                     return

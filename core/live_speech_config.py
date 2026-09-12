@@ -141,6 +141,24 @@ def build_input_transcription_config(
     )
 
 
+# Silence, après le dernier mot, avant que Gemini Live ne considère le tour
+# fini et commence à répondre. C'est le délai le plus visible entre la fin de
+# la phrase et le début de la voix. 700 ms garde entières les hésitations
+# courantes (« ouvre… euh… Firefox ») ; réglable via `live_end_silence_ms`.
+DEFAULT_LIVE_END_SILENCE_MS = 700
+MIN_LIVE_END_SILENCE_MS = 300
+MAX_LIVE_END_SILENCE_MS = 2500
+
+
+def live_end_silence_ms(config: dict | None = None) -> int:
+    raw = (config or {}).get("live_end_silence_ms", DEFAULT_LIVE_END_SILENCE_MS)
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        value = DEFAULT_LIVE_END_SILENCE_MS
+    return max(MIN_LIVE_END_SILENCE_MS, min(MAX_LIVE_END_SILENCE_MS, value))
+
+
 def build_output_transcription_config(language: str | None = "fr") -> Any:
     from google.genai import types
 

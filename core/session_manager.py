@@ -45,6 +45,7 @@ from core.live_speech_config import (
     DEFAULT_LIVE_VOICE,
     build_input_transcription_config,
     build_output_transcription_config,
+    live_end_silence_ms,
     normalise_live_voice,
 )
 from core.conversation_language import detect_language_switch, normalise_conversation_language
@@ -744,6 +745,7 @@ class SessionManager:
         from datetime import datetime
 
         # Load customization from config
+        _cfg: dict = {}
         try:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
             self._asst_name = (_cfg.get("assistant_name") or "ANO-GPT").strip()
@@ -981,6 +983,13 @@ class SessionManager:
             ),
             # Pipeline Mark-LII : Gemini Live reçoit le PCM brut et son VAD
             # serveur gère les bornes de tour. Aucun activity_start/end client.
+            # Le silence de fin de tour est raccourci : c'est lui qui sépare
+            # le dernier mot de l'utilisateur du début de la réponse.
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    silence_duration_ms=live_end_silence_ms(_cfg),
+                ),
+            ),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -992,30 +1001,42 @@ class SessionManager:
     async def _send_realtime(self):
         """Pont direct Mark-LII : file PCM → Gemini Live.
 
-        Les anciennes activités VAD sont ignorées : elles appartiennent au
-        pipeline retiré. Les images temps réel conservent leur canal dédié.
+        Les marqueurs VAD locaux ne pilotent pas Gemini Live (son VAD serveur
+        borne les tours) ; ils servent, avec le même PCM, aux sous-titres
+        instantanés (`core.live_captions`), sans jamais retarder cet envoi.
+        Les images temps réel conservent leur canal dédié.
         """
-        while True:
-            msg = await self.out_queue.get()
-            marker = msg.get("activity") if isinstance(msg, dict) else None
-            try:
-                if marker == "video":
-                    await self.session.send_realtime_input(
-                        video={
-                            "data": msg["data"],
-                            "mime_type": msg.get("mime_type", "image/webp"),
-                        }
-                    )
-                elif not marker:
-                    await self.session.send_realtime_input(
-                        audio={
-                            "data": msg["data"],
-                            "mime_type": msg["mime_type"],
-                        }
-                    )
-            except Exception as exc:
-                print(f"[JARVIS] ❌ Envoi direct Mark-LII refusé : {exc}")
-                raise
+        from core.live_captions import LiveCaptions
+        captions = LiveCaptions(self)
+        self._live_captions = captions
+        captions.start()
+        try:
+            while True:
+                msg = await self.out_queue.get()
+                marker = msg.get("activity") if isinstance(msg, dict) else None
+                if marker != "video":
+                    captions.push(msg)
+                try:
+                    if marker == "video":
+                        await self.session.send_realtime_input(
+                            video={
+                                "data": msg["data"],
+                                "mime_type": msg.get("mime_type", "image/webp"),
+                            }
+                        )
+                    elif not marker:
+                        await self.session.send_realtime_input(
+                            audio={
+                                "data": msg["data"],
+                                "mime_type": msg["mime_type"],
+                            }
+                        )
+                except Exception as exc:
+                    print(f"[JARVIS] ❌ Envoi direct Mark-LII refusé : {exc}")
+                    raise
+        finally:
+            self._live_captions = None
+            await captions.close()
 
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
@@ -1137,6 +1158,11 @@ class SessionManager:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt and (not in_buf or in_buf[-1] != txt):
+                                # Les sous-titres instantanés s'effacent : la
+                                # transcription de Live prend l'écran.
+                                captions = getattr(self, "_live_captions", None)
+                                if captions is not None:
+                                    captions.live_transcript_seen()
                                 # Même accumulation simple que Mark-LII : la
                                 # transcription fournie par Live est la seule
                                 # source de vérité du tour.

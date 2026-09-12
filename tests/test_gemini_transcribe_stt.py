@@ -317,8 +317,10 @@ def test_cancelled_echo_turn_aborts_without_killing_session(monkeypatch):
         task = asyncio.create_task(stt.run_gemini_transcribe(host, turn_factory=Turn))
         await host.out_queue.put({"activity": "start", "_audio_epoch": 1})
         await host.out_queue.put({"activity": "cancel", "_audio_epoch": 1})
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        for _ in range(20):
+            if aborted:
+                break
+            await asyncio.sleep(0)
         task.cancel()
         try:
             await task
