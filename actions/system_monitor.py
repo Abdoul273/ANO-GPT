@@ -9,6 +9,7 @@ import platform
 import time
 import re
 import json
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -145,7 +146,12 @@ def _get_battery() -> Optional[Dict[str, Any]]:
     try:
         b = psutil.sensors_battery()
         if b:
-            return {"percent": b.percent, "plugged": b.power_plugged}
+            info: Dict[str, Any] = {"percent": b.percent, "plugged": b.power_plugged}
+            secs = getattr(b, "secsleft", None)
+            if isinstance(secs, (int, float)) and secs > 0 and not b.power_plugged:
+                h, m = divmod(int(secs) // 60, 60)
+                info["remaining"] = f"{h}h{m:02d}" if h else f"{m} min"
+            return info
     except Exception:
         pass
     return None
@@ -186,12 +192,21 @@ def get_system_status(speak_lang: str = "fr") -> str:
     """Retourne un résumé textuel de l'état système."""
     if not _PSUTIL:
         return "psutil n'est pas installé. Exécutez : pip install psutil"
-    cpu  = psutil.cpu_percent(interval=0.2)
+    # Le débit réseau et le CPU par processus se mesurent pendant l'échantillon
+    # CPU global : une seule pause de 250 ms pour les trois.
+    _prime_process_cpu()
+    net0 = _net_counters()
+    t0 = time.monotonic()
+    cpu  = psutil.cpu_percent(interval=0.25)
+    net = _net_rates(net0, t0)
     ram  = psutil.virtual_memory()
+    swap = _get_swap()
+    load = _get_load()
     temp = _get_cpu_temp()
     gpu  = _get_gpu_usage()
     disk = _get_disk_usage()
     batt = _get_battery()
+    hog  = _top_process()
     boot_time   = psutil.boot_time()
     uptime_secs = time.time() - boot_time
     uptime_h    = int(uptime_secs // 3600)
@@ -200,35 +215,134 @@ def get_system_status(speak_lang: str = "fr") -> str:
     fr = speak_lang.startswith("fr")
     if fr:
         parts.append("État du système :")
-        parts.append(f"CPU : {cpu:.0f}% utilisé")
+        cpu_line = f"CPU : {cpu:.0f}% utilisé"
+        if load is not None:
+            cpu_line += f" (charge {load[0]:.1f} sur {psutil.cpu_count() or 1} cœurs)"
+        parts.append(cpu_line)
         parts.append(f"RAM : {ram.percent:.0f}% utilisé ({ram.used / 1024**3:.1f} Go / {ram.total / 1024**3:.1f} Go)")
+        if swap is not None and swap["total"] > 0 and swap["percent"] >= 5:
+            parts.append(f"Swap : {swap['percent']:.0f}% ({swap['used'] / 1024**3:.1f} Go)")
+        if hog:
+            parts.append(f"Le plus gourmand : {hog['name']} ({hog['cpu']:.0f}% CPU, {hog['mem']:.0f}% RAM)")
         if temp > 0:
             parts.append(f"Température CPU : {temp:.0f}°C")
         if gpu >= 0:
             parts.append(f"GPU : {gpu:.0f}% utilisé")
         if disk:
             parts.append(f"Disque : {disk['percent']:.0f}% utilisé ({disk['used'] / 1024**3:.1f} Go / {disk['total'] / 1024**3:.1f} Go)")
+        if net:
+            parts.append(f"Réseau : ↓ {_fmt_rate(net[0])} ↑ {_fmt_rate(net[1])}")
         if batt:
             state = "en charge" if batt["plugged"] else "sur batterie"
-            parts.append(f"Batterie : {batt['percent']:.0f}% ({state})")
+            line = f"Batterie : {batt['percent']:.0f}% ({state})"
+            if batt.get("remaining"):
+                line += f", environ {batt['remaining']} restantes"
+            parts.append(line)
         parts.append(f"Disponibilité : {uptime_h}h {uptime_m}m")
         parts.append(f"Processus : {len(psutil.pids())}")
     else:
         parts.append("System status:")
-        parts.append(f"CPU: {cpu:.0f}% used")
+        cpu_line = f"CPU: {cpu:.0f}% used"
+        if load is not None:
+            cpu_line += f" (load {load[0]:.1f} on {psutil.cpu_count() or 1} cores)"
+        parts.append(cpu_line)
         parts.append(f"RAM: {ram.percent:.0f}% used ({ram.used / 1024**3:.1f} GB / {ram.total / 1024**3:.1f} GB)")
+        if swap is not None and swap["total"] > 0 and swap["percent"] >= 5:
+            parts.append(f"Swap: {swap['percent']:.0f}% ({swap['used'] / 1024**3:.1f} GB)")
+        if hog:
+            parts.append(f"Top process: {hog['name']} ({hog['cpu']:.0f}% CPU, {hog['mem']:.0f}% RAM)")
         if temp > 0:
             parts.append(f"CPU Temp: {temp:.0f}°C")
         if gpu >= 0:
             parts.append(f"GPU: {gpu:.0f}% used")
         if disk:
             parts.append(f"Disk: {disk['percent']:.0f}% used ({disk['used'] / 1024**3:.1f} GB / {disk['total'] / 1024**3:.1f} GB)")
+        if net:
+            parts.append(f"Network: ↓ {_fmt_rate(net[0])} ↑ {_fmt_rate(net[1])}")
         if batt:
             state = "charging" if batt["plugged"] else "on battery"
-            parts.append(f"Battery: {batt['percent']:.0f}% ({state})")
+            line = f"Battery: {batt['percent']:.0f}% ({state})"
+            if batt.get("remaining"):
+                line += f", about {batt['remaining']} left"
+            parts.append(line)
         parts.append(f"Uptime: {uptime_h}h {uptime_m}m")
         parts.append(f"Processes: {len(psutil.pids())}")
     return "\n".join(parts)
+
+
+def _net_counters():
+    try:
+        c = psutil.net_io_counters()
+        return (c.bytes_recv, c.bytes_sent)
+    except Exception:
+        return None
+
+
+def _net_rates(before, t0: float) -> Optional[tuple[float, float]]:
+    """Débit (octets/s reçus, envoyés) depuis `before`, ou None."""
+    after = _net_counters()
+    if before is None or after is None:
+        return None
+    dt = max(1e-3, time.monotonic() - t0)
+    return ((after[0] - before[0]) / dt, (after[1] - before[1]) / dt)
+
+
+def _fmt_rate(bps: float) -> str:
+    if bps >= 1024 ** 2:
+        return f"{bps / 1024 ** 2:.1f} Mo/s"
+    if bps >= 1024:
+        return f"{bps / 1024:.0f} Ko/s"
+    return f"{bps:.0f} o/s"
+
+
+def _get_swap() -> Optional[Dict[str, float]]:
+    try:
+        sw = psutil.swap_memory()
+        return {"total": sw.total, "used": sw.used, "percent": sw.percent}
+    except Exception:
+        return None
+
+
+def _get_load() -> Optional[tuple[float, float, float]]:
+    try:
+        return psutil.getloadavg()
+    except (AttributeError, OSError):
+        return None
+
+
+def _prime_process_cpu() -> None:
+    """Premier relevé : psutil mesure le CPU d'un processus entre deux appels."""
+    try:
+        for p in psutil.process_iter(["pid"]):
+            try:
+                p.cpu_percent(None)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+def _top_process() -> Optional[Dict[str, Any]]:
+    """Processus le plus gourmand en CPU (mesuré sur l'échantillon en cours)."""
+    best = None
+    try:
+        me = os.getpid()
+        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+            info = p.info
+            if info.get("pid") == me:
+                continue
+            try:
+                score = p.cpu_percent(None) / max(1, psutil.cpu_count() or 1)
+            except Exception:
+                score = info.get("cpu_percent") or 0.0
+            if best is None or score > best["cpu"]:
+                best = {"name": (info.get("name") or "?")[:30], "cpu": score,
+                        "mem": info.get("memory_percent") or 0.0}
+    except Exception:
+        return None
+    if best is None or best["cpu"] < 2.5:
+        return None
+    return best
 
 
 class SystemMonitor:
