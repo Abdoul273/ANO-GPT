@@ -1,0 +1,68 @@
+# ── Secrets — ne JAMAIS versionner ───────────────────────────────────────────
+# Clés API réelles (Gemini, DeepSeek, SerpAPI) + réglages personnels.
+# Le gabarit versionné est config/api_keys.example.json.
+config/api_keys.json
+# Certificat HTTPS du dashboard : auto-généré, propre à l'IP de cette machine.
+config/certs/*.key
+config/certs/*.crt
+# Jeton de session du dashboard.
+dashboard/dist/auth.json
+
+# ── État d'exécution — propre à cette machine ────────────────────────────────
+config/devices.json
+config/live_position.json
+config/location_cache.json
+config/geocode_cache.json
+memory/long_term.json
+memory/long_term.json.bak
+memory/tool_usage.jsonl
+# Mémoire longue durée : contenu personnel, et les -wal/-shm sont volatils.
+memory/memory.db
+memory/memory.db-wal
+memory/memory.db-shm
+# Empreinte vocale : c'est une donnée biométrique, elle ne quitte pas la machine.
+memory/voiceprint.npz
+# Modèle d'empreinte vocale : 29 Mo, réinstallable (scripts/install_speaker_id.sh).
+models/speaker_campplus.onnx
+# OAuth Google : les secrets et jetons donnent accès aux données personnelles.
+memory/gmail_token.json
+memory/calendar_token.json
+memory/credentials/
+# Carnet local : noms, adresses et numéros privés.
+memory/contacts.json
+uploads/
+
+# ── Caches Python et outils ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# ── Divers ───────────────────────────────────────────────────────────────────
+*.log
+.DS_Store
+
+# Journal structuré (JSONL rotatif) — propre à cette machine.
+logs/
+
+# ── Ajouté à la mise sur GitHub (12/09/2026) ────────────────────────────────
+# Bases de mémoire : contenu personnel, et personal_rag.db dépasse les 100 Mo
+# que GitHub refuse. Elles se reconstruisent à l'usage.
+memory/*.db
+memory/*.db-*
+# Modèles ONNX : réinstallables, lourds (87 Mo pour MiniLM).
+models/*.onnx
+models/all-MiniLM-L6-v2/
+# État propre à cette machine : dernière position GPS, périphériques audio,
+# date du dernier briefing, greffons activés.
+config/prayer_config.json
+config/daily_briefing_state.json
+config/audio_devices.json
+config/plugin_states.json
+# Builds Flutter du téléphone.
+mobile/ano_remote/build/
+mobile/ano_remote/.dart_tool/

@@ -1,0 +1,42 @@
+[Unit]
+# Unité utilisateur : ANO-GPT est une application graphique Qt/Wayland, elle
+# appartient à la session de l'utilisateur, jamais au système.
+Description=ANO-GPT — assistant vocal
+Documentation=file:%h/OUTILS/ANO-GPT/readme.md
+# La session graphique doit exister avant : sans WAYLAND_DISPLAY, Qt ne peut
+# pas créer sa fenêtre et le service échouerait en boucle.
+After=graphical-session.target
+PartOf=graphical-session.target
+# Cinq échecs en cinq minutes = panne réelle, pas un incident passager : on
+# s'arrête pour de bon plutôt que de boucler sur un écran mort. Ces deux clés
+# appartiennent à [Unit] depuis systemd 229 ; dans [Service] elles sont ignorées.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+WorkingDirectory=%h/OUTILS/ANO-GPT
+ExecStart=/usr/bin/env python3 %h/OUTILS/ANO-GPT/main.py
+
+# Le superviseur interne de main.py relève déjà les crashs natifs
+# (SIGABRT/SIGBUS/SIGSEGV) en une seconde, sans perdre la fenêtre. systemd
+# couvre ce qu'il laisse passer : exception Python remontée jusqu'en haut,
+# tué par l'OOM killer, arrêt anormal après une coupure.
+Restart=on-failure
+RestartSec=3
+# Le journal structuré vit dans logs/anogpt.jsonl ; ce qui sort sur la sortie
+# standard (traces natives, messages Qt) part dans journalctl --user -u anogpt.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=anogpt
+
+# 11 Go partagés avec Qt, l'audio et les modèles ONNX : MemoryHigh freine
+# l'appétit sans tuer l'assistant en pleine phrase, contrairement à MemoryMax.
+MemoryHigh=4G
+# L'assistant parle : sa latence compte plus que celle d'un indexeur de fond.
+Nice=-5
+
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=graphical-session.target

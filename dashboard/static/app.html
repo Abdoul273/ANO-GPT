@@ -1,0 +1,2555 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ANO-GPT // NEXUS — Neural Orb</title>
+<script src="/static/crypto.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #03050a;
+  --cyan: #00f0ff;
+  --cyan-dim: rgba(0,240,255,0.5);
+  --cyan-glow: rgba(0,240,255,0.25);
+  --magenta: #ff2bd6;
+  --magenta-dim: rgba(255,43,214,0.4);
+  --purple: #8b2bf7;
+  --gold: #ffd700;
+  --lime: #39ff14;
+  --text: #c8f7ff;
+  --text-dim: rgba(180,230,255,0.5);
+  --panel: rgba(4,12,22,0.72);
+  --panel-border: rgba(0,240,255,0.2);
+  --danger: #ff3b5c;
+  --font-display: 'Orbitron',system-ui,sans-serif;
+  --font-mono: 'Share Tech Mono',monospace;
+}
+html, body { 
+  width:100%; height:100%; overflow:hidden; 
+  background:var(--bg); color:var(--text); 
+  font-family:var(--font-mono); user-select:none;
+}
+#orb-container { position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; }
+/* TOP BAR */
+.top-bar {
+  position:fixed; top:0; left:0; right:0; z-index:100;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:8px 16px; background:rgba(4,12,22,0.85); backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--panel-border); height:44px;
+}
+.top-bar .brand { display:flex; align-items:center; gap:10px; }
+.top-bar .brand h1 {
+  font-family:var(--font-display); font-size:13px; font-weight:900;
+  background:linear-gradient(90deg,var(--cyan),var(--magenta),var(--gold));
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  background-clip:text; letter-spacing:2px;
+}
+.status-group { display:flex; gap:12px; align-items:center; }
+.status-group .stat-item { display:flex; align-items:center; gap:4px; font-size:9px; color:var(--text-dim); }
+.status-group .stat-item .value { color:var(--cyan); font-weight:700; min-width:32px; }
+.status-dot { width:7px; height:7px; border-radius:50%; }
+.status-dot.online { background:var(--lime); box-shadow:0 0 6px var(--lime); }
+.status-dot.offline { background:var(--danger); box-shadow:0 0 6px var(--danger); }
+.status-dot.thinking { background:var(--gold); animation:pulse-dot .6s ease-in-out infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+/* ORB LABEL */
+#orb-label {
+  position:fixed; bottom:12%; left:50%; transform:translateX(-50%);
+  z-index:20; pointer-events:none;
+  font-family:var(--font-display); font-size:11px; letter-spacing:4px;
+  color:rgba(200,247,255,0.5); text-shadow:0 0 20px rgba(0,240,255,0.2);
+  transition:color 0.8s ease, text-shadow 0.8s ease;
+  animation:label-float 3s ease-in-out infinite;
+}
+@keyframes label-float { 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(-4px)} }
+/* CONSOLE */
+.console-panel {
+  position:fixed; bottom:12px; left:50%; transform:translateX(-50%);
+  z-index:60; width:min(680px,calc(100vw-32px));
+  background:var(--panel); backdrop-filter:blur(16px);
+  border:1px solid var(--panel-border); border-radius:12px;
+  transition:all 0.4s cubic-bezier(0.4,0,0.2,1);
+  overflow:hidden; box-shadow:0 8px 40px rgba(0,0,0,0.5);
+}
+.console-panel.minimized { transform:translateX(-50%) translateY(calc(100% - 40px)); }
+.console-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:8px 14px; border-bottom:1px solid var(--panel-border);
+  cursor:pointer; background:rgba(0,240,255,0.04);
+}
+.console-header span { font-size:9px; color:var(--text-dim); letter-spacing:1px; }
+.console-header .msg-count { color:var(--cyan); font-weight:700; }
+.console-body { max-height:180px; overflow-y:auto; padding:6px 0; scrollbar-width:thin; scrollbar-color:var(--panel-border) transparent; }
+.console-body::-webkit-scrollbar { width:3px; }
+.console-body::-webkit-scrollbar-thumb { background:var(--cyan-dim); border-radius:3px; }
+.console-msgs { padding:0 12px; }
+.msg { display:flex; gap:8px; padding:3px 0; font-size:10px; line-height:1.5; animation:msg-in 0.25s ease; }
+@keyframes msg-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+.msg .icon { width:14px; text-align:center; flex-shrink:0; }
+.msg.system .icon { color:var(--cyan-dim); }
+.msg.user .icon { color:var(--gold); }
+.msg.jarvis .icon { color:var(--magenta); }
+.msg.error .icon { color:var(--danger); }
+.msg .content { color:var(--text); word-break:break-word; }
+.console-input {
+  display:flex; gap:6px; padding:6px 10px 8px;
+  border-top:1px solid var(--panel-border);
+}
+.console-input input {
+  flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--panel-border);
+  border-radius:6px; padding:7px 12px; color:var(--text);
+  font-family:var(--font-mono); font-size:11px; outline:none;
+  transition:border-color 0.3s;
+}
+.console-input input:focus { border-color:var(--cyan); box-shadow:0 0 12px var(--cyan-glow); }
+.console-input input::placeholder { color:rgba(180,230,255,0.3); }
+.console-input button {
+  background:var(--cyan); color:#000; border:none; border-radius:6px;
+  padding:7px 14px; font-family:var(--font-display); font-size:10px; font-weight:700;
+  cursor:pointer; transition:all 0.2s; letter-spacing:1px;
+}
+.console-input button:hover { background:var(--magenta); color:#fff; transform:scale(1.05); }
+.console-input button:active { transform:scale(0.95); }
+.mic-btn {
+  width:32px; padding:7px 0; text-align:center; 
+  background:rgba(255,255,255,0.05); border:1px solid var(--panel-border);
+  color:var(--text); border-radius:6px; cursor:pointer; font-size:13px;
+  transition:all 0.3s;
+}
+.mic-btn.listening { background:var(--magenta); border-color:var(--magenta); color:#fff; box-shadow:0 0 16px var(--magenta-dim); }
+#wake-btn.show { display:block !important; background:rgba(57,255,20,0.1); border-color:var(--lime); color:var(--lime); }
+.msg-file { display:flex; align-items:center; gap:10px; }
+.msg-file .fc-meta { flex:1; min-width:0; }
+.msg-file .fc-name { font-size:11px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.msg-file .fc-size { font-size:9px; color:var(--text-dim); }
+.msg-file .fc-bar-wrap { height:2px; background:rgba(255,255,255,0.08); border-radius:2px; margin-top:4px; overflow:hidden; }
+.msg-file .fc-bar { height:100%; width:0%; background:var(--cyan); transition:width .12s linear; }
+.msg-file .fc-status { font-size:9px; font-weight:700; color:var(--text-dim); flex-shrink:0; }
+.msg-file .fc-status.done { color: var(--lime); }
+.msg-file .fc-status.err  { color: var(--danger); }
+.msg-file .fc-dl { display:block; margin-top:3px; font-size:10px; color:var(--cyan); text-decoration:none; font-weight:700; }
+.msg-file .fc-dl:hover { opacity:0.8; }
+/* QUICK BUTTONS */
+.quick-row {
+  display:flex; gap:4px; padding:4px 10px; flex-wrap:wrap;
+  border-top:1px solid rgba(0,240,255,0.08);
+}
+.quick-row button {
+  background:rgba(0,240,255,0.06); border:1px solid var(--panel-border);
+  color:var(--text-dim); border-radius:4px; padding:3px 8px;
+  font-size:8px; font-family:var(--font-mono); cursor:pointer;
+  transition:all 0.2s; letter-spacing:0.5px;
+}
+.quick-row button:hover { background:rgba(0,240,255,0.15); color:var(--cyan); border-color:var(--cyan-dim); }
+/* LEFT PANEL */
+.side-panel {
+  position:fixed; top:52px; z-index:50;
+  width:200px; background:rgba(4,12,22,0.7); backdrop-filter:blur(12px);
+  border:1px solid var(--panel-border); border-radius:10px;
+  padding:10px; transition:transform 0.4s cubic-bezier(0.4,0,0.2,1);
+  overflow:hidden;
+}
+.side-panel.left { left:12px; }
+.side-panel.right { right:12px; }
+.side-panel.closed { transform:translateX(-220px); }
+.side-panel.right.closed { transform:translateX(220px); }
+.panel-title { 
+  font-family:var(--font-display); font-size:9px; letter-spacing:2px;
+  color:var(--text-dim); margin-bottom:8px; padding-bottom:4px;
+  border-bottom:1px solid var(--panel-border);
+}
+.metric-item { display:flex; justify-content:space-between; padding:3px 0; font-size:9px; }
+.metric-item .label { color:var(--text-dim); }
+.metric-item .val { color:var(--cyan); font-weight:700; }
+.metric-item .val.warm { color:var(--gold); }
+.metric-item .val.danger { color:var(--danger); }
+.bar-track { height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin:2px 0 6px; overflow:hidden; }
+.bar-fill { height:100%; border-radius:2px; transition:width 0.5s ease; background:linear-gradient(90deg,var(--cyan),var(--magenta)); }
+.ws-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:3px; }
+.ws-item {
+  aspect-ratio:1; display:flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,0.04); border-radius:4px;
+  font-size:9px; color:var(--text-dim); transition:all 0.3s;
+}
+.ws-item.active { background:var(--cyan); color:#000; font-weight:700; box-shadow:0 0 8px var(--cyan-glow); }
+.ws-item.occupied { border:1px solid var(--cyan-dim); }
+.proc-list { max-height:100px; overflow-y:auto; }
+.proc-item { display:flex; gap:4px; padding:2px 0; font-size:8px; }
+.proc-item .name { flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.proc-item .cpu { width:36px; text-align:right; color:var(--cyan-dim); }
+.proc-item .mem { width:36px; text-align:right; color:var(--magenta-dim); }
+/* TOGGLE BUTTONS */
+.toggle-btn {
+  position:fixed; top:52px; z-index:55;
+  background:var(--panel); border:1px solid var(--panel-border);
+  color:var(--text-dim); width:24px; height:24px; border-radius:6px;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font-size:12px; transition:all 0.3s;
+}
+.toggle-btn:hover { background:var(--cyan-dim); color:#fff; }
+.toggle-left { left:0; border-left:none; border-radius:0 6px 6px 0; }
+.toggle-right { right:0; border-right:none; border-radius:6px 0 0 6px; }
+/* TOAST */
+.toast {
+  position:fixed; bottom:50%; left:50%; transform:translateX(-50%);
+  z-index:200; background:rgba(4,12,22,0.95); padding:12px 24px;
+  border-radius:8px; border:1px solid var(--panel-border);
+  font-family:var(--font-mono); font-size:11px; color:var(--text);
+  opacity:0; transition:opacity 0.5s,transform 0.5s;
+  pointer-events:none; text-align:center;
+}
+.toast.show { opacity:1; transform:translateX(-50%) translateY(-20px); }
+
+/* ═══ SETTINGS PANEL ═══ */
+.settings-btn {
+  width:28px; height:28px; border-radius:6px; border:1px solid var(--panel-border);
+  background:rgba(0,240,255,0.05); color:var(--text-dim); cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  font-size:14px; transition:all 0.3s; margin-left:8px;
+}
+.settings-btn:hover { background:var(--cyan-dim); color:#fff; border-color:var(--cyan); transform:rotate(30deg); }
+.settings-overlay {
+  position:fixed; inset:0; z-index:300; background:rgba(2,4,10,0.8);
+  backdrop-filter:blur(12px); display:none; align-items:center; justify-content:center;
+  animation:fadeIn 0.3s ease;
+}
+.settings-overlay.open { display:flex; }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+@keyframes slideUp { from{transform:translateY(30px);opacity:0} to{transform:translateY(0);opacity:1} }
+.settings-panel {
+  width:min(680px,calc(100vw-32px)); max-height:80vh;
+  background:rgba(6,14,26,0.97); border:1px solid var(--panel-border);
+  border-radius:16px; overflow:hidden; display:flex; flex-direction:column;
+  box-shadow:0 20px 80px rgba(0,0,0,0.6); animation:slideUp 0.3s ease;
+}
+.settings-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 20px; border-bottom:1px solid var(--panel-border);
+  background:rgba(0,240,255,0.03);
+}
+.settings-header h2 { font-family:var(--font-display); font-size:13px; letter-spacing:2px; }
+.settings-close {
+  width:28px; height:28px; border-radius:6px; border:none;
+  background:rgba(255,255,255,0.05); color:var(--text-dim); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-size:16px;
+  transition:all 0.2s;
+}
+.settings-close:hover { background:var(--danger); color:#fff; }
+.settings-body { flex:1; overflow-y:auto; padding:16px 20px; scrollbar-width:thin; }
+.settings-body::-webkit-scrollbar { width:4px; }
+.settings-body::-webkit-scrollbar-thumb { background:var(--panel-border); border-radius:4px; }
+.settings-section { margin-bottom:20px; }
+.settings-section-title {
+  font-family:var(--font-display); font-size:9px; letter-spacing:2px;
+  color:var(--cyan-dim); margin-bottom:10px; padding-bottom:4px;
+  border-bottom:1px solid rgba(0,240,255,0.08);
+}
+.settings-row { display:flex; gap:10px; margin-bottom:8px; align-items:center; flex-wrap:wrap; }
+.settings-row label { font-size:9px; color:var(--text-dim); min-width:90px; }
+.settings-row select, .settings-row input {
+  flex:1; min-width:140px;
+  background:rgba(0,0,0,0.4); border:1px solid var(--panel-border);
+  border-radius:6px; padding:7px 10px; color:var(--text);
+  font-family:var(--font-mono); font-size:10px; outline:none;
+  transition:border-color 0.3s;
+}
+.settings-row select:focus, .settings-row input:focus { border-color:var(--cyan); box-shadow:0 0 8px var(--cyan-glow); }
+.settings-row select { cursor:pointer; }
+.settings-row select option { background:#0a1422; color:var(--text); }
+.api-key-row { display:flex; gap:6px; align-items:center; }
+.api-key-row input { flex:1; }
+.api-key-row .toggle-vis { 
+  background:none; border:1px solid var(--panel-border); border-radius:4px;
+  color:var(--text-dim); cursor:pointer; padding:4px 8px; font-size:10px;
+  transition:all 0.2s;
+}
+.api-key-row .toggle-vis:hover { background:var(--cyan-dim); color:#fff; }
+.provider-tabs {
+  display:flex; gap:4px; flex-wrap:wrap; margin-bottom:12px;
+}
+.provider-tab {
+  padding:5px 12px; border-radius:6px; border:1px solid var(--panel-border);
+  background:rgba(0,240,255,0.03); color:var(--text-dim); cursor:pointer;
+  font-family:var(--font-mono); font-size:9px; transition:all 0.2s;
+}
+.provider-tab:hover { border-color:var(--cyan-dim); color:var(--text); }
+.provider-tab.active { background:rgba(0,240,255,0.15); border-color:var(--cyan); color:var(--cyan); }
+.settings-footer {
+  padding:12px 20px; border-top:1px solid var(--panel-border);
+  display:flex; gap:8px; justify-content:flex-end;
+  background:rgba(0,0,0,0.2);
+}
+.settings-footer button {
+  padding:7px 20px; border-radius:6px; font-family:var(--font-display);
+  font-size:9px; font-weight:700; letter-spacing:1px; cursor:pointer;
+  transition:all 0.2s;
+}
+.btn-apply { background:var(--cyan); color:#000; border:none; }
+.btn-apply:hover { background:var(--magenta); color:#fff; transform:scale(1.03); }
+.btn-cancel { background:rgba(255,255,255,0.05); border:1px solid var(--panel-border); color:var(--text-dim); }
+.btn-cancel:hover { background:rgba(255,255,255,0.1); color:var(--text); }
+.setting-badge {
+  font-size:7px; padding:2px 6px; border-radius:3px;
+  background:rgba(0,240,255,0.1); color:var(--cyan-dim);
+  border:1px solid rgba(0,240,255,0.1); margin-left:4px;
+}
+.setting-hint { font-size:8px; color:var(--text-dim); margin-top:2px; opacity:0.6; }
+
+/* ═══ SETTINGS // CYBERPUNK SYSTEM MODULE ═══ */
+.settings-btn {
+  position:relative; width:30px; height:30px; border-radius:4px;
+  border-color:rgba(0,240,255,.38); color:var(--cyan);
+  background:linear-gradient(145deg,rgba(0,240,255,.13),rgba(139,43,247,.06));
+  box-shadow:inset 0 0 12px rgba(0,240,255,.04),0 0 0 rgba(0,240,255,0);
+}
+.settings-btn::after {
+  content:""; position:absolute; right:3px; top:3px; width:3px; height:3px;
+  border-radius:50%; background:var(--lime); box-shadow:0 0 6px var(--lime);
+}
+.settings-btn:hover {
+  background:rgba(0,240,255,.14); color:#fff; transform:rotate(25deg) scale(1.05);
+  box-shadow:inset 0 0 16px rgba(0,240,255,.16),0 0 16px var(--cyan-glow);
+}
+.settings-btn:focus-visible { outline:1px solid var(--cyan); outline-offset:3px; }
+.settings-overlay {
+  padding:24px; background:
+    radial-gradient(circle at 50% 44%,rgba(0,240,255,.09),transparent 42%),
+    linear-gradient(rgba(2,4,10,.90),rgba(2,4,10,.97));
+  backdrop-filter:blur(18px) saturate(1.2); animation:settings-fade .22s ease;
+}
+.settings-overlay::before {
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.17;
+  background-image:linear-gradient(rgba(0,240,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(0,240,255,.08) 1px,transparent 1px);
+  background-size:42px 42px; mask-image:radial-gradient(circle,#000 15%,transparent 78%);
+}
+@keyframes settings-fade { from{opacity:0} to{opacity:1} }
+@keyframes settings-deploy { from{transform:translateY(18px) scale(.975);opacity:0;filter:blur(5px)} to{transform:none;opacity:1;filter:none} }
+@keyframes settings-scan { from{transform:translateY(-12px)} to{transform:translateY(780px)} }
+.settings-panel {
+  --settings-cut:14px; position:relative; isolation:isolate;
+  width:min(900px,calc(100vw - 32px)); max-height:min(88vh,780px);
+  border:1px solid rgba(0,240,255,.38); border-radius:0; outline:none;
+  background:linear-gradient(145deg,rgba(7,18,32,.985),rgba(3,8,17,.99));
+  clip-path:polygon(var(--settings-cut) 0,100% 0,100% calc(100% - var(--settings-cut)),calc(100% - var(--settings-cut)) 100%,0 100%,0 var(--settings-cut));
+  box-shadow:0 30px 100px rgba(0,0,0,.76),0 0 48px rgba(0,240,255,.10),inset 0 0 40px rgba(0,240,255,.025);
+  animation:settings-deploy .3s cubic-bezier(.2,.8,.2,1);
+}
+.settings-panel::before {
+  content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background-image:linear-gradient(90deg,rgba(0,240,255,.025) 1px,transparent 1px),linear-gradient(rgba(0,240,255,.018) 1px,transparent 1px);
+  background-size:24px 24px;
+}
+.settings-panel::after {
+  content:""; position:absolute; z-index:5; left:0; right:0; top:0; height:1px;
+  pointer-events:none; opacity:.5; background:linear-gradient(90deg,transparent,var(--cyan),var(--magenta),transparent);
+  box-shadow:0 0 12px var(--cyan); animation:settings-scan 6s linear infinite;
+}
+.settings-corners { position:absolute; inset:7px; z-index:6; pointer-events:none; }
+.settings-corners::before,.settings-corners::after { content:""; position:absolute; width:34px; height:12px; }
+.settings-corners::before { left:8px; top:0; border-left:2px solid var(--cyan); border-top:2px solid var(--cyan); filter:drop-shadow(0 0 5px var(--cyan)); }
+.settings-corners::after { right:8px; bottom:0; border-right:2px solid var(--magenta); border-bottom:2px solid var(--magenta); filter:drop-shadow(0 0 5px var(--magenta)); }
+.settings-rail {
+  height:25px; flex:0 0 auto; padding:0 18px; display:flex; align-items:center; justify-content:space-between;
+  border-bottom:1px solid rgba(0,240,255,.12); background:rgba(0,0,0,.34);
+  color:rgba(180,230,255,.42); font-size:7px; letter-spacing:1.8px;
+}
+.settings-rail-group { display:flex; align-items:center; gap:12px; }
+.settings-rail-signal { display:flex; gap:3px; align-items:flex-end; height:9px; }
+.settings-rail-signal i { display:block; width:2px; background:var(--cyan); box-shadow:0 0 4px var(--cyan); }
+.settings-rail-signal i:nth-child(1){height:3px}.settings-rail-signal i:nth-child(2){height:5px}.settings-rail-signal i:nth-child(3){height:7px}.settings-rail-signal i:nth-child(4){height:9px}
+.settings-rail-live { color:var(--lime); }
+.settings-rail-live::before { content:""; display:inline-block; width:5px; height:5px; margin-right:6px; border-radius:50%; background:var(--lime); box-shadow:0 0 7px var(--lime); }
+.settings-header {
+  padding:18px 22px 17px; border-bottom-color:rgba(0,240,255,.18);
+  background:linear-gradient(90deg,rgba(0,240,255,.075),transparent 58%,rgba(255,43,214,.045));
+}
+.settings-title-wrap { min-width:0; }
+.settings-kicker { margin-bottom:6px; color:var(--cyan); font-size:7px; letter-spacing:3px; }
+.settings-header h2 {
+  font-size:17px; line-height:1.2; letter-spacing:2.4px;
+  background:linear-gradient(90deg,#fff,var(--cyan) 46%,var(--magenta));
+  -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+}
+.settings-header p { margin-top:5px; color:rgba(180,230,255,.46); font-size:8px; letter-spacing:.7px; }
+.settings-header-actions { display:flex; align-items:center; gap:12px; }
+.settings-node { display:flex; align-items:center; gap:7px; padding:6px 9px; color:var(--lime); border:1px solid rgba(57,255,20,.2); background:rgba(57,255,20,.04); font-size:7px; letter-spacing:1.3px; }
+.settings-node::before { content:""; width:5px; height:5px; border-radius:50%; background:var(--lime); box-shadow:0 0 8px var(--lime); }
+.settings-close { width:32px; height:32px; border-radius:3px; border:1px solid rgba(255,59,92,.28); background:rgba(255,59,92,.06); color:rgba(255,150,165,.76); }
+.settings-close:hover { border-color:var(--danger); box-shadow:0 0 18px rgba(255,59,92,.32); }
+.settings-body {
+  min-height:0; padding:16px 20px 18px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px;
+  scrollbar-color:rgba(0,240,255,.32) transparent;
+}
+.settings-body::-webkit-scrollbar-thumb { background:linear-gradient(var(--cyan),var(--purple)); }
+.settings-section {
+  position:relative; min-width:0; margin:0; padding:15px;
+  border:1px solid rgba(0,240,255,.14); background:linear-gradient(145deg,rgba(0,240,255,.035),rgba(139,43,247,.022));
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+  transition:border-color .25s,background .25s;
+}
+.settings-section:hover { border-color:rgba(0,240,255,.32); background:linear-gradient(145deg,rgba(0,240,255,.06),rgba(139,43,247,.035)); }
+.settings-section.provider-section { grid-column:1/-1; }
+.settings-section::after { content:attr(data-code); position:absolute; right:10px; top:10px; color:rgba(0,240,255,.18); font-family:var(--font-display); font-size:7px; letter-spacing:1px; }
+.settings-section-title { display:flex; align-items:center; gap:8px; padding:0 42px 9px 0; margin-bottom:12px; color:var(--cyan); border-bottom-color:rgba(0,240,255,.10); }
+.settings-section-title::before { content:""; width:3px; height:14px; background:linear-gradient(var(--cyan),var(--magenta)); box-shadow:0 0 7px var(--cyan-glow); }
+.settings-row { display:grid; grid-template-columns:108px minmax(0,1fr); gap:10px; margin-bottom:9px; align-items:center; }
+.settings-row:last-child { margin-bottom:0; }
+.settings-row label { min-width:0; color:rgba(180,230,255,.58); font-size:8px; letter-spacing:.5px; }
+.settings-row select,.settings-row input {
+  width:100%; min-width:0; height:34px; padding:7px 10px; border-radius:3px;
+  border-color:rgba(0,240,255,.18); background:rgba(0,5,12,.74);
+  transition:border-color .22s,box-shadow .22s,background .22s;
+}
+.settings-row select:hover,.settings-row input:hover { border-color:rgba(0,240,255,.4); }
+.settings-row select:focus,.settings-row input:focus { background:rgba(0,12,20,.9); box-shadow:0 0 0 1px rgba(0,240,255,.08),0 0 14px var(--cyan-glow); }
+.settings-row input::placeholder { color:rgba(180,230,255,.24); }
+.api-key-row { grid-template-columns:108px minmax(0,1fr) auto auto; gap:6px; }
+.api-key-row .toggle-vis,.cyber-action { min-height:34px; padding:6px 10px; border-radius:3px; background:rgba(0,240,255,.035); border:1px solid rgba(0,240,255,.22); color:var(--text-dim); cursor:pointer; font:9px var(--font-mono); letter-spacing:.5px; transition:all .2s; }
+.api-key-row .toggle-vis:hover,.cyber-action:hover { background:rgba(0,240,255,.12); border-color:var(--cyan); color:#fff; box-shadow:0 0 12px var(--cyan-glow); }
+.api-key-row .api-test { border-color:rgba(57,255,20,.28); color:var(--lime); }
+.provider-tabs { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:6px; margin-bottom:13px; }
+.provider-tab { position:relative; min-width:0; min-height:48px; padding:7px 4px; border-radius:2px; border-color:rgba(0,240,255,.14); background:rgba(0,6,13,.54); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; font-size:8px; letter-spacing:.5px; }
+.provider-tab::after { content:""; position:absolute; left:30%; right:30%; bottom:-1px; height:1px; background:transparent; }
+.provider-tab:hover { border-color:rgba(0,240,255,.46); transform:translateY(-1px); }
+.provider-tab.active { background:linear-gradient(145deg,rgba(0,240,255,.16),rgba(139,43,247,.08)); border-color:var(--cyan); color:#fff; box-shadow:inset 0 0 15px rgba(0,240,255,.09),0 0 12px rgba(0,240,255,.10); }
+.provider-tab.active::after { background:var(--cyan); box-shadow:0 0 8px var(--cyan); }
+.provider-glyph { color:var(--cyan); font-size:13px; line-height:1; }
+.setting-hint { margin-top:4px; padding-left:118px; color:rgba(180,230,255,.36); font-size:7px; line-height:1.45; letter-spacing:.3px; opacity:1; }
+.settings-footer { padding:13px 20px; align-items:center; border-top-color:rgba(0,240,255,.18); background:linear-gradient(90deg,rgba(0,240,255,.035),rgba(0,0,0,.32)); }
+.settings-footer-status { margin-right:auto; display:flex; align-items:center; gap:8px; color:rgba(180,230,255,.4); font-size:7px; letter-spacing:1.6px; }
+.settings-footer-status i { width:5px; height:5px; border-radius:50%; background:var(--lime); box-shadow:0 0 7px var(--lime); }
+.settings-footer button { min-width:112px; min-height:34px; padding:7px 18px; border-radius:3px; font-size:8px; letter-spacing:1.3px; }
+.btn-apply { background:linear-gradient(90deg,var(--cyan),#56f6ff); border:1px solid var(--cyan); color:#001014; box-shadow:0 0 16px rgba(0,240,255,.14); }
+.btn-apply:hover { background:linear-gradient(90deg,var(--magenta),#ff70e5); border-color:var(--magenta); box-shadow:0 0 20px var(--magenta-dim); transform:translateY(-1px); }
+.btn-cancel { background:rgba(255,255,255,.025); border-color:rgba(180,230,255,.16); }
+.btn-cancel:hover { border-color:rgba(180,230,255,.35); }
+body.settings-open { overflow:hidden; }
+@media (max-width:760px) {
+  .settings-overlay{padding:10px;align-items:stretch}.settings-panel{width:100%;max-height:calc(100vh - 20px);margin:auto}.settings-node{display:none}
+  .settings-header{padding:15px 16px}.settings-header h2{font-size:13px;letter-spacing:1.5px}.settings-header p{display:none}
+  .settings-body{grid-template-columns:1fr;padding:12px}.settings-section.provider-section{grid-column:1}.provider-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .settings-row{grid-template-columns:92px minmax(0,1fr)}.api-key-row{grid-template-columns:92px minmax(0,1fr) auto}.api-key-row .api-test{grid-column:2/-1}.setting-hint{padding-left:102px}.settings-footer-status{display:none}
+}
+@media (max-width:440px) {
+  .settings-rail{display:none}.settings-body{padding:10px;gap:10px}.settings-section{padding:12px}.provider-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .settings-row,.api-key-row{grid-template-columns:1fr}.settings-row label{margin-bottom:-3px}.api-key-row .api-test{grid-column:auto}.setting-hint{padding-left:0}.settings-footer{padding:10px 12px}.settings-footer button{min-width:0;flex:1}
+}
+@media (prefers-reduced-motion:reduce) { .settings-overlay,.settings-panel,.settings-panel::after{animation:none}.settings-btn:hover,.provider-tab:hover,.btn-apply:hover{transform:none} }
+
+</style>
+</head>
+<body>
+<script>
+  // ── Auth guard — redirect to /login if no active session ──────────────────
+  if (!sessionStorage.getItem('jarvis_token')) {
+    location.replace('/login');
+  }
+</script>
+
+<div id="orb-container"></div>
+
+<div id="orb-label">SYSTEM ONLINE — AWAITING INPUT</div>
+
+<div class="top-bar">
+  <div class="brand">
+    <span class="status-dot online" id="status-dot"></span>
+    <h1>◈ ANO-GPT // NEXUS</h1>
+  </div>
+  <div class="status-group">
+    <div class="stat-item hide-mobile">⟐ CPU <span class="value" id="cpu-val">0%</span></div>
+    <div class="stat-item hide-mobile">⟐ RAM <span class="value" id="mem-val">0%</span></div>
+    <div class="stat-item">⟐ <span id="status-text">ONLINE</span></div>
+    </div>
+  <button class="settings-btn" id="settings-btn" title="Ouvrir les paramètres" aria-label="Ouvrir les paramètres" aria-haspopup="dialog" aria-controls="settings-overlay" aria-expanded="false">⚙</button>
+</div>
+
+<button class="toggle-btn toggle-left" id="toggle-left">◀</button>
+<button class="toggle-btn toggle-right" id="toggle-right">▶</button>
+
+<div class="side-panel left" id="panel-left">
+  <div class="panel-title">◈ SYSTEM METRICS</div>
+  <div class="metric-item"><span class="label">⟐ CPU</span><span class="val" id="cpu-val-l">0%</span></div>
+  <div class="bar-track"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+  <div class="metric-item"><span class="label">⟐ RAM</span><span class="val" id="mem-val-l">0%</span></div>
+  <div class="bar-track"><div class="bar-fill" id="mem-bar" style="width:0%"></div></div>
+  <div class="metric-item"><span class="label">⟐ TEMP</span><span class="val" id="temp-val-l">0°C</span></div>
+  <div class="bar-track"><div class="bar-fill" id="temp-bar" style="width:0%"></div></div>
+  <div class="metric-item"><span class="label">⟐ DISK</span><span class="val" id="disk-val-l">0%</span></div>
+  <div class="bar-track"><div class="bar-fill" id="disk-bar" style="width:0%"></div></div>
+  <div class="panel-title" style="margin-top:8px;">⟐ WORKSPACES</div>
+  <div class="ws-grid" id="ws-grid"></div>
+</div>
+
+<div class="side-panel right" id="panel-right">
+  <div class="panel-title">⬡ TOP PROCESSES</div>
+  <div class="proc-list" id="proc-list"></div>
+</div>
+
+<div class="console-panel" id="console-panel">
+  <div class="console-header" id="console-toggle">
+    <span>⬡ NEURAL CONSOLE</span>
+    <span class="msg-count" id="msg-count">0</span>
+  </div>
+  <div class="console-body" id="console-body">
+    <div class="console-msgs" id="console-msgs"></div>
+  </div>
+  <div class="quick-row">
+    <button data-action="status">⟐ STATUS</button>
+    <button data-action="cpu">⟐ CPU</button>
+    <button data-action="ram">⟐ RAM</button>
+    <button data-action="disk">⟐ DISK</button>
+    <button data-action="process">⟐ PROCESS</button>
+    <button data-action="uptime">⟐ UPTIME</button>
+  </div>
+  <div class="console-input">
+    <textarea id="text-input" placeholder="Message pour ANO-GPT…" rows="2" style="flex:1;background:rgba(0,0,0,0.4);border:1px solid var(--panel-border);border-radius:6px;padding:8px 12px;color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:none;transition:border-color 0.3s;line-height:1.4;" autofocus></textarea>
+    <button id="send-btn">⬡ SEND</button>
+    <button class="mic-btn" id="mic-btn" title="Commande vocale">🎤</button>
+    <label class="mic-btn" for="file-inp" title="Envoyer un fichier" style="cursor:pointer;">📎</label>
+    <input type="file" id="file-inp" multiple accept="*/*" style="display:none">
+    <button class="mic-btn" id="wake-btn" title="Réveiller ANO-GPT" style="display:none;">⏻</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="settings-overlay" id="settings-overlay" aria-hidden="true">
+  <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
+    <span class="settings-corners" aria-hidden="true"></span>
+    <div class="settings-rail" aria-hidden="true">
+      <div class="settings-rail-group">
+        <span>SYS.CONFIG / NODE-01</span>
+        <span>ACCESS: LOCAL</span>
+      </div>
+      <div class="settings-rail-group">
+        <span class="settings-rail-signal"><i></i><i></i><i></i><i></i></span>
+        <span class="settings-rail-live">CHANNEL STABLE</span>
+      </div>
+    </div>
+    <div class="settings-header">
+      <div class="settings-title-wrap">
+        <div class="settings-kicker">SYS://CONTROL_MATRIX</div>
+        <h2 id="settings-title">PARAMÈTRES NEXUS</h2>
+        <p>Configurez le cœur neural, la voix et votre profil d'interface.</p>
+      </div>
+      <div class="settings-header-actions">
+        <div class="settings-node">NŒUD LOCAL</div>
+        <button class="settings-close" id="settings-close" type="button" aria-label="Fermer les paramètres">✕</button>
+      </div>
+    </div>
+    <div class="settings-body">
+      <section class="settings-section provider-section" data-code="HEALTH.01" aria-labelledby="diagnostics-title">
+        <div class="settings-section-title" id="diagnostics-title">SANTÉ ET PERFORMANCES</div>
+        <p style="font-size:12px;line-height:1.6;margin-bottom:12px">Vérifiez les composants locaux et les temps de réponse mesurés.</p>
+        <button type="button" class="provider-tab" id="diagnostics-refresh">Vérifier maintenant</button>
+        <div id="diagnostics-result" role="status" aria-live="polite" style="font-size:12px;line-height:1.8;margin-top:12px;user-select:text"></div>
+      </section>
+      <!-- PROVIDER -->
+      <div class="settings-section provider-section" data-code="CORE.01">
+        <div class="settings-section-title">NOYAU NEURAL // FOURNISSEUR</div>
+        <div class="provider-tabs" id="provider-tabs">
+          <button class="provider-tab" type="button" data-provider="gemini"><span class="provider-glyph">◇</span><span>GEMINI</span></button>
+          <button class="provider-tab" type="button" data-provider="deepseek"><span class="provider-glyph">◉</span><span>DEEPSEEK</span></button>
+          <button class="provider-tab" type="button" data-provider="anthropic"><span class="provider-glyph">△</span><span>ANTHROPIC</span></button>
+          <button class="provider-tab" type="button" data-provider="grok"><span class="provider-glyph">ϟ</span><span>GROK</span></button>
+          <button class="provider-tab" type="button" data-provider="groq"><span class="provider-glyph">⬡</span><span>GROQ</span></button>
+          <button class="provider-tab" type="button" data-provider="azure_openai"><span class="provider-glyph">▦</span><span>AZURE</span></button>
+          <button class="provider-tab" type="button" data-provider="openai"><span class="provider-glyph">◍</span><span>OPENAI</span></button>
+          <button class="provider-tab" type="button" data-provider="auto"><span class="provider-glyph">✧</span><span>AUTO</span></button>
+          <button class="provider-tab" type="button" data-provider="ollama"><span class="provider-glyph">⌂</span><span>OLLAMA</span></button>
+        </div>
+        <div class="settings-row">
+          <label>Modèle</label>
+          <select id="model-select"><option value="">Choisir un fournisseur d'abord</option></select>
+          <input id="model-custom" type="text" placeholder="…ou saisissez un identifiant de modèle" autocomplete="off">
+        </div>
+      </div>
+      <!-- API KEY -->
+      <div class="settings-section" data-code="SECURITY.02">
+        <div class="settings-section-title">ACCÈS // CLÉ API</div>
+        <div class="settings-row api-key-row">
+          <label id="api-key-label">Clé API</label>
+          <input type="password" id="api-key-input" placeholder="Entrez votre clé API…" autocomplete="off">
+          <button class="toggle-vis" id="toggle-key-vis" type="button" aria-label="Afficher ou masquer la clé API">◉</button>
+          <button class="toggle-vis api-test" id="test-api-btn" type="button">⟐ TEST</button>
+        </div>
+        <div class="setting-hint" id="api-status">La clé est stockée localement dans la config.</div>
+      </div>
+      <!-- VOICE -->
+      <div class="settings-section" data-code="AUDIO.03">
+        <div class="settings-section-title">AUDIO // SYNTHÈSE VOCALE</div>
+        <div class="settings-row">
+          <label>Moteur vocal</label>
+          <select id="voice-engine-select">
+            <option value="browser">Voix du navigateur</option>
+            <option value="gemini_tts">Gemini TTS</option>
+            <option value="edge_tts">Edge TTS</option>
+            <option value="none">Désactivé</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label>Voix</label>
+          <select id="voice-select"><option value="">Chargement…</option></select>
+        </div>
+        <div class="settings-row">
+          <label>Test vocal</label>
+          <button class="cyber-action" id="test-voice-btn" type="button">▶ TESTER LE CANAL</button>
+        </div>
+      </div>
+      <!-- DISPLAY -->
+      <div class="settings-section" data-code="USER.04">
+        <div class="settings-section-title">INTERFACE // PROFIL</div>
+        <div class="settings-row">
+          <label>Langue</label>
+          <select id="lang-select">
+            <option value="fr">Français</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+            <option value="de">Deutsch</option>
+            <option value="pt">Português</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label>Nom d'utilisateur</label>
+          <input type="text" id="username-input" placeholder="Anonymous">
+        </div>
+      </div>
+    </div>
+    <div class="settings-footer">
+      <div class="settings-footer-status"><i></i><span>CONFIGURATION LOCALE PRÊTE</span></div>
+      <button class="btn-cancel" id="settings-cancel" type="button">ANNULER</button>
+      <button class="btn-apply" id="settings-apply" type="button">⟐ APPLIQUER</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Three.js -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ═══════════════════════════════════════════════════════════
+// 1. SCENE SETUP
+// ═══════════════════════════════════════════════════════════
+const container = document.getElementById('orb-container');
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 0.8, 3.2);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+container.appendChild(renderer.domElement);
+
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scene, camera);
+composer.addPass(renderPass);
+
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.7, 0.25, 0.08
+);
+composer.addPass(bloomPass);
+const outputPass = new OutputPass();
+composer.addPass(outputPass);
+
+// ═══════════════════════════════════════════════════════════
+// 2. BACKGROUND STARS + NEBULA
+// ═══════════════════════════════════════════════════════════
+const starGeo = new THREE.BufferGeometry();
+const STAR_COUNT = 2000;
+const starPos = new Float32Array(STAR_COUNT * 3);
+const starSizes = new Float32Array(STAR_COUNT);
+for (let i = 0; i < STAR_COUNT; i++) {
+  const r = 8 + Math.random() * 30;
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  starPos[i*3] = r * Math.sin(phi) * Math.cos(theta);
+  starPos[i*3+1] = r * Math.cos(phi) * 0.6;
+  starPos[i*3+2] = r * Math.sin(phi) * Math.sin(theta);
+  starSizes[i] = 0.2 + Math.random() * 0.8;
+}
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+starGeo.setAttribute('size', new THREE.BufferAttribute(starSizes, 1));
+
+const starMat = new THREE.PointsMaterial({
+  color: 0x88ccff,
+  size: 0.04,
+  transparent: true,
+  opacity: 0.8,
+  blending: THREE.AdditiveBlending,
+  sizeAttenuation: true,
+});
+const stars = new THREE.Points(starGeo, starMat);
+scene.add(stars);
+
+// ═══════════════════════════════════════════════════════════
+// 2c. GRID FLOOR
+// ═══════════════════════════════════════════════════════════
+const gridHelper = new THREE.GridHelper(8, 20, 0x00f0ff, 0x00f0ff);
+gridHelper.position.y = -1.8;
+gridHelper.material.transparent = true;
+gridHelper.material.opacity = 0.06;
+scene.add(gridHelper);
+
+
+// ═══════════════════════════════════════════════════════════
+// 2b. FLOATING TECH SYMBOLS
+// ═══════════════════════════════════════════════════════════
+const techSymbols = ['⬡','⟐','◈','⊗','⚡','🌀','◉','◆','◈','⌘','⚙','⌂','⟁','⎔','⎈','⏣','◈','⌘','⚡','🌀'];
+const symCount = 80;
+const symGeo = new THREE.BufferGeometry();
+const symPos = new Float32Array(symCount * 3);
+const symSizes = new Float32Array(symCount);
+const symSpeeds = new Float32Array(symCount);
+const symOffsets = new Float32Array(symCount);
+const symIndices = new Float32Array(symCount);
+
+for (let i = 0; i < symCount; i++) {
+  const r = 1.2 + Math.random() * 2.0;
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  symPos[i*3] = r * Math.sin(phi) * Math.cos(theta);
+  symPos[i*3+1] = r * Math.cos(phi) * 0.4;
+  symPos[i*3+2] = r * Math.sin(phi) * Math.sin(theta);
+  symSizes[i] = 0.01 + Math.random() * 0.03;
+  symSpeeds[i] = 0.3 + Math.random() * 0.7;
+  symOffsets[i] = Math.random() * Math.PI * 2;
+  symIndices[i] = Math.floor(Math.random() * techSymbols.length);
+}
+symGeo.setAttribute('position', new THREE.BufferAttribute(symPos, 3));
+symGeo.setAttribute('size', new THREE.BufferAttribute(symSizes, 1));
+
+// Utiliser une texture canvas pour les symboles
+const symCanvas = document.createElement('canvas');
+symCanvas.width = 64;
+symCanvas.height = 64;
+const ctx = symCanvas.getContext('2d');
+ctx.fillStyle = '#00f0ff';
+ctx.font = '36px monospace';
+ctx.textAlign = 'center';
+ctx.textBaseline = 'middle';
+ctx.fillText('⬡', 32, 32);
+
+const symTexture = new THREE.CanvasTexture(symCanvas);
+const symMat2 = new THREE.PointsMaterial({
+  map: symTexture,
+  size: 0.06,
+  transparent: true,
+  opacity: 0.25,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  sizeAttenuation: true,
+});
+// Remplacer par sprites pour chaque symbole
+const symGroup = new THREE.Group();
+for (let i = 0; i < symCount; i++) {
+  const can = document.createElement('canvas');
+  can.width = 32; can.height = 32;
+  const c = can.getContext('2d');
+  c.fillStyle = ['#00f0ff','#ff2bd6','#ffd700','#39ff14','#8b2bf7'][Math.floor(Math.random()*5)];
+  c.font = '20px monospace';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(techSymbols[Math.floor(Math.random()*techSymbols.length)], 16, 16);
+  const tex = new THREE.CanvasTexture(can);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.15 + Math.random()*0.15, blending: THREE.AdditiveBlending, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  const r_ = 1.5 + Math.random() * 1.8;
+  const theta_ = Math.random() * Math.PI * 2;
+  const phi_ = Math.acos(2 * Math.random() - 1);
+  sprite.position.set(r_ * Math.sin(phi_) * Math.cos(theta_), r_ * Math.cos(phi_) * 0.3, r_ * Math.sin(phi_) * Math.sin(theta_));
+  sprite.scale.set(0.15, 0.15, 1);
+  symGroup.add(sprite);
+}
+scene.add(symGroup);
+
+// ═══════════════════════════════════════════════════════════
+// 2d. SPIRAL PARTICLES
+// ═══════════════════════════════════════════════════════════
+const SPIRAL_COUNT = 200;
+const spiralGeo = new THREE.BufferGeometry();
+const spiralPos = new Float32Array(SPIRAL_COUNT * 3);
+for (let i = 0; i < SPIRAL_COUNT; i++) {
+  const t = i / SPIRAL_COUNT;
+  const angle = t * Math.PI * 8;
+  const r = 1.2 + t * 1.5;
+  spiralPos[i*3] = Math.cos(angle) * r;
+  spiralPos[i*3+1] = (t - 0.5) * 1.5;
+  spiralPos[i*3+2] = Math.sin(angle) * r;
+}
+spiralGeo.setAttribute('position', new THREE.BufferAttribute(spiralPos, 3));
+const spiralMat = new THREE.PointsMaterial({
+  color: 0xff2bd6,
+  size: 0.012,
+  transparent: true,
+  opacity: 0.08,
+  blending: THREE.AdditiveBlending,
+  sizeAttenuation: true,
+  depthWrite: false,
+});
+const spiralParticles = new THREE.Points(spiralGeo, spiralMat);
+spiralParticles.position.set(0, 0, 0);
+scene.add(spiralParticles);
+
+// ═══════════════════════════════════════════════════════════
+// 3. ORB — CUSTOM IRIDESCENT SHADER
+// ═══════════════════════════════════════════════════════════
+const orbUniforms = {
+  uTime: { value: 0 },
+  uAudioLevel: { value: 0 },
+  uState: { value: 0 },   // 0=idle 1=listening 2=thinking 3=speaking
+  uStateMix: { value: 0 },
+  uColor1: { value: new THREE.Color(0x00f0ff) },  // Cyan
+  uColor2: { value: new THREE.Color(0xff2bd6) },  // Magenta
+  uColor3: { value: new THREE.Color(0x8b2bf7) },  // Purple
+  uColor4: { value: new THREE.Color(0xffd700) },  // Gold
+  uColor5: { value: new THREE.Color(0x39ff14) },  // Lime
+  uResponse: { value: 0 },  // response pulse
+};
+
+const orbVertexShader = `
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+  varying vec2 vUv;
+  uniform float uTime;
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vec3 pos = position;
+    float breathe = 1.0 + 0.018 * sin(uTime * 0.5 + position.y * 2.0);
+    pos *= breathe;
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+    vPosition = mvPosition.xyz;
+    vUv = uv;
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const orbFragmentShader = `
+  uniform float uTime;
+  uniform float uAudioLevel;
+  uniform float uState;
+  uniform float uStateMix;
+  uniform vec3 uColor1;
+  uniform vec3 uColor2;
+  uniform vec3 uColor3;
+  uniform vec3 uColor4;
+  uniform float uResponse;
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+  varying vec2 vUv;
+
+  // Simplex noise
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+  float noise(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p);
+    f = f*f*(3.0-2.0*f);
+    float a = hash(i); float b = hash(i + vec2(1.0,0.0));
+    float c = hash(i + vec2(0.0,1.0)); float d = hash(i + vec2(1.0,1.0));
+    return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+  }
+
+  void main() {
+    vec3 normal = normalize(vNormal);
+    vec3 viewDir = normalize(-vPosition);
+    float rim = 1.0 - max(dot(normal, viewDir), 0.0);
+    rim = pow(rim, 2.5);
+
+    // Time-based color shift
+    float t = uTime * 0.08;
+    float noise1 = noise(vUv * 4.0 + t);
+    float noise2 = noise(vUv * 8.0 - t * 0.7);
+
+    // State-based color mixing
+    vec3 col_idle = mix(uColor1, uColor2, noise1 * 0.5 + 0.5);
+    vec3 col_listen = mix(uColor2, uColor3, noise2);
+    vec3 col_think = mix(uColor1, uColor4, sin(uTime * 2.0) * 0.5 + 0.5);
+    vec3 col_speak = mix(uColor1, mix(uColor2, uColor4, sin(uTime * 3.0) * 0.5 + 0.5), noise1);
+
+    vec3 color;
+    if (uState < 1.0) {
+      float mixVal = smoothstep(0.0, 1.0, uState);
+      color = mix(col_idle, col_listen, mixVal);
+    } else if (uState < 2.0) {
+      float mixVal = smoothstep(1.0, 2.0, uState);
+      color = mix(col_listen, col_think, mixVal);
+    } else if (uState < 3.0) {
+      float mixVal = smoothstep(2.0, 3.0, uState);
+      color = mix(col_think, col_speak, mixVal);
+    } else {
+      color = col_speak;
+    }
+
+    // Iridescence
+    float iri = sin(vUv.x * 20.0 + uTime * 0.5) * 0.15
+              + cos(vUv.y * 15.0 - uTime * 0.4) * 0.15;
+    color += iri * 0.3;
+
+    // Response pulse
+    float pulse = uResponse * exp(-rim * 3.0) * 0.6;
+    color += pulse * uColor4;
+
+    // Rim glow
+    float rimGlow = rim * (0.3 + uAudioLevel * 0.5);
+    color += rimGlow * mix(uColor1, uColor2, sin(uTime * 0.3) * 0.5 + 0.5);
+
+    // Audio-reactive shimmer
+    float shimmer = uAudioLevel * 0.4 * sin(vUv.y * 40.0 + uTime * 3.0);
+    color += shimmer;
+
+    // Fresnel edge brightening
+    float fresnel = pow(rim, 3.0);
+    color += fresnel * 0.5 * mix(uColor1, uColor2, sin(uTime) * 0.5 + 0.5);
+
+    // Quantum containment lattice — hexagonal energy field wrapping the core
+    vec2 hs = vec2(1.0, 1.7320508);
+    vec2 hexUv = vUv * 14.0;
+    vec2 ha = mod(hexUv, hs) - hs * 0.5;
+    vec2 hb = mod(hexUv - hs * 0.5, hs) - hs * 0.5;
+    vec2 gv = (dot(ha, ha) < dot(hb, hb)) ? ha : hb;
+    vec2 gvAbs = abs(gv);
+    float hexD = max(dot(gvAbs, vec2(0.8660254, 0.5)), gvAbs.y);
+    float hexLine = 1.0 - smoothstep(0.46, 0.5, hexD);
+    vec3 latticeColor = mix(uColor1, uColor2, sin(uTime * 0.25 + hexUv.x * 0.3) * 0.5 + 0.5);
+    color += hexLine * latticeColor * (0.35 + uAudioLevel * 0.4 + uResponse * 0.5);
+
+    // Let the plasma nucleus glow through the containment field —
+    // fuller color near the rim (field), more transparent near the center (glass)
+    float baseAlpha = 0.22 + rim * 0.55;
+    float alpha = clamp(baseAlpha + hexLine * 0.3 + uResponse * 0.15, 0.0, 0.95);
+
+    gl_FragColor = vec4(color, alpha);
+  }
+`;
+
+const sphereGeo = new THREE.SphereGeometry(1, 96, 96);
+const orbMat = new THREE.ShaderMaterial({
+  uniforms: orbUniforms,
+  vertexShader: orbVertexShader,
+  fragmentShader: orbFragmentShader,
+  transparent: true,
+  side: THREE.DoubleSide,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+});
+
+const orbMesh = new THREE.Mesh(sphereGeo, orbMat);
+const orbGroup = new THREE.Group();
+orbGroup.add(orbMesh);
+scene.add(orbGroup);
+
+// Wireframe overlay
+const wireMat = new THREE.MeshBasicMaterial({
+  color: 0x00f0ff,
+  wireframe: true,
+  transparent: true,
+  opacity: 0.04,
+});
+const wireMesh = new THREE.Mesh(sphereGeo.clone(), wireMat);
+orbGroup.add(wireMesh);
+
+// Inner glow sphere
+const glowMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color(0x00f0ff) },
+  },
+  vertexShader: `
+    varying vec3 vNormal;
+    uniform float uTime;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      vec3 pos = position * 0.7;
+      float pulse = 1.0 + 0.05 * sin(uTime * 0.8 + position.y * 3.0);
+      pos *= pulse;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform float uTime;
+    uniform vec3 uColor;
+    varying vec3 vNormal;
+    void main() {
+      float intensity = pow(0.65 - dot(vNormal, vec3(0,0,1.0)), 2.5);
+      float pulse = 0.7 + 0.3 * sin(uTime * 0.6);
+      gl_FragColor = vec4(uColor, intensity * 0.25 * pulse);
+    }
+  `,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  side: THREE.BackSide,
+});
+const glowMesh = new THREE.Mesh(sphereGeo.clone(), glowMat);
+orbGroup.add(glowMesh);
+
+// ═══════════════════════════════════════════════════════════
+// 3b. QUANTUM NUCLEUS — turbulent plasma core at the heart of the orb
+// ═══════════════════════════════════════════════════════════
+const nucleusVertexShader = `
+  uniform float uTime;
+  uniform float uAudioLevel;
+  uniform float uResponse;
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+
+  float hash3(vec3 p) {
+    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+  }
+
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vec3 pos = position;
+    float n = hash3(floor(position * 5.0 + uTime * 0.6));
+    float turbulence = 1.0
+      + 0.07 * sin(uTime * 1.6 + position.x * 9.0)
+      + 0.05 * sin(uTime * 2.3 + position.y * 7.0)
+      + 0.04 * (n - 0.5)
+      + uAudioLevel * 0.18
+      + uResponse * 0.22;
+    pos *= turbulence;
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+    vPosition = mvPosition.xyz;
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const nucleusFragmentShader = `
+  uniform float uTime;
+  uniform float uAudioLevel;
+  uniform float uResponse;
+  uniform float uState;
+  uniform vec3 uColor1;
+  uniform vec3 uColor2;
+  uniform vec3 uColor4;
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+
+  float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+  float noise2(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash2(i); float b = hash2(i + vec2(1.0, 0.0));
+    float c = hash2(i + vec2(0.0, 1.0)); float d = hash2(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+
+  void main() {
+    vec3 normal = normalize(vNormal);
+    vec3 viewDir = normalize(-vPosition);
+    float facing = max(dot(normal, viewDir), 0.0);   // 1 = disc center, 0 = silhouette
+
+    vec3 stateCol = mix(uColor1, uColor2, sin(uTime * 0.4) * 0.5 + 0.5);
+    stateCol = mix(stateCol, uColor4, clamp(uState - 2.0, 0.0, 1.0));
+    vec3 hot = vec3(1.0, 0.98, 0.92);
+
+    float turb = noise2(normal.xy * 3.0 + uTime * 0.5);
+    float core = pow(facing, 1.8) * (0.55 + turb * 0.45);
+    vec3 color = mix(stateCol * 0.8, hot, core);
+    color += uResponse * hot * 0.9;
+    color += uAudioLevel * hot * 0.6;
+
+    float alpha = 0.55 + 0.45 * facing;
+    gl_FragColor = vec4(color, alpha);
+  }
+`;
+
+const nucleusGeo = new THREE.IcosahedronGeometry(0.34, 4);
+const nucleusMat = new THREE.ShaderMaterial({
+  uniforms: orbUniforms,
+  vertexShader: nucleusVertexShader,
+  fragmentShader: nucleusFragmentShader,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+});
+const nucleusMesh = new THREE.Mesh(nucleusGeo, nucleusMat);
+orbGroup.add(nucleusMesh);
+
+// ═══════════════════════════════════════════════════════════
+// 4. ENERGY RINGS
+// ═══════════════════════════════════════════════════════════
+const rings = [];
+const RING_COUNT = 3;
+for (let i = 0; i < RING_COUNT; i++) {
+  const ringGeo = new THREE.TorusGeometry(1.35 + i * 0.3, 0.005 + i * 0.004, 24, 64);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: i === 0 ? 0x00f0ff : i === 1 ? 0xff2bd6 : 0x8b2bf7,
+    transparent: true,
+    opacity: 0.06 + (0.1 - i * 0.02),
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = Math.PI * 0.3 * (i + 1);
+  ring.rotation.z = i * 0.5;
+  orbGroup.add(ring);
+  rings.push(ring);
+}
+
+// ═══════════════════════════════════════════════════════════
+// 4b. QUANTUM ELECTRONS — bright particles orbiting each energy ring
+// ═══════════════════════════════════════════════════════════
+const electronPivots = [];
+const electronColors = [0x00f0ff, 0xff2bd6, 0xffd700];
+for (let i = 0; i < RING_COUNT; i++) {
+  const pivot = new THREE.Group();
+  orbGroup.add(pivot);
+
+  const radius = 1.35 + i * 0.3;
+  const eGeo = new THREE.IcosahedronGeometry(0.028 + i * 0.006, 1);
+  const eMat = new THREE.MeshBasicMaterial({
+    color: electronColors[i % electronColors.length],
+    transparent: true,
+    opacity: 0.95,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const electron = new THREE.Mesh(eGeo, eMat);
+  electron.position.set(radius, 0, 0);
+  pivot.add(electron);
+
+  // Small glow trail sprite behind the electron
+  const trailMat = new THREE.MeshBasicMaterial({
+    color: electronColors[i % electronColors.length],
+    transparent: true,
+    opacity: 0.3,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const trail = new THREE.Mesh(new THREE.IcosahedronGeometry(0.06 + i * 0.01, 0), trailMat);
+  trail.position.set(radius, 0, 0);
+  pivot.add(trail);
+
+  electronPivots.push({ pivot, speed: 0.5 + i * 0.35 + Math.random() * 0.2 });
+}
+
+// ═══════════════════════════════════════════════════════════
+// 4c. QUANTUM ARCS — flickering lightning between nucleus and shell
+// ═══════════════════════════════════════════════════════════
+const ARC_COUNT = 6;
+const ARC_SEGMENTS = 6;
+const arcPalette = [0x00f0ff, 0xff2bd6, 0x8b2bf7, 0xffd700];
+const arcs = [];
+
+function _randDir() {
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  return new THREE.Vector3(
+    Math.sin(phi) * Math.cos(theta),
+    Math.cos(phi),
+    Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+for (let i = 0; i < ARC_COUNT; i++) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((ARC_SEGMENTS + 1) * 3), 3));
+  const mat = new THREE.LineBasicMaterial({
+    color: arcPalette[i % arcPalette.length],
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const line = new THREE.Line(geo, mat);
+  orbGroup.add(line);
+  arcs.push({ line, life: 0, cooldown: Math.random() * 1.5 });
+}
+
+function _spawnArc(a) {
+  const dir   = _randDir();
+  const start = dir.clone().multiplyScalar(0.36);
+  const end   = dir.clone().multiplyScalar(1.02 + Math.random() * 0.1);
+  const pos   = a.line.geometry.attributes.position.array;
+  for (let j = 0; j <= ARC_SEGMENTS; j++) {
+    const t = j / ARC_SEGMENTS;
+    const jitter = (1 - Math.abs(t - 0.5) * 2) * 0.1;
+    const px = start.x + (end.x - start.x) * t + (Math.random() - 0.5) * jitter;
+    const py = start.y + (end.y - start.y) * t + (Math.random() - 0.5) * jitter;
+    const pz = start.z + (end.z - start.z) * t + (Math.random() - 0.5) * jitter;
+    pos[j * 3] = px; pos[j * 3 + 1] = py; pos[j * 3 + 2] = pz;
+  }
+  a.line.geometry.attributes.position.needsUpdate = true;
+  a.line.material.color.setHex(arcPalette[Math.floor(Math.random() * arcPalette.length)]);
+  a.line.material.opacity = 0.9;
+  a.life = 0.2 + Math.random() * 0.18;
+}
+
+// ═══════════════════════════════════════════════════════════
+// 5. ENERGY RAYS / BEAMS
+// ═══════════════════════════════════════════════════════════
+const beamGroup = new THREE.Group();
+orbGroup.add(beamGroup);
+
+const BEAM_COUNT = 8;
+for (let i = 0; i < BEAM_COUNT; i++) {
+  const angle = (i / BEAM_COUNT) * Math.PI * 2;
+  const beamLen = 0.4 + Math.random() * 0.6;
+  const beamGeo = new THREE.BufferGeometry();
+  const positions = new Float32Array([
+    0, 0, 0,
+    Math.sin(angle) * beamLen, Math.cos(angle) * beamLen * 0.3, Math.cos(angle) * beamLen,
+  ]);
+  beamGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const beamMat = new THREE.LineBasicMaterial({
+    color: new THREE.Color().setHSL(0.55 + i * 0.04, 0.8, 0.5),
+    transparent: true,
+    opacity: 0.06 + Math.random() * 0.04,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const beam = new THREE.Line(beamGeo, beamMat);
+  beamGroup.add(beam);
+}
+
+// ═══════════════════════════════════════════════════════════
+// 6. PARTICLES WITH NEURAL CONNECTIONS
+// ═══════════════════════════════════════════════════════════
+const PARTICLE_COUNT = 600;
+const particleGeo = new THREE.BufferGeometry();
+const particlePos = new Float32Array(PARTICLE_COUNT * 3);
+const particleColors = new Float32Array(PARTICLE_COUNT * 3);
+const particleSizes = new Float32Array(PARTICLE_COUNT);
+const velocities = new Float32Array(PARTICLE_COUNT * 3);
+const offsets = new Float32Array(PARTICLE_COUNT);
+
+for (let i = 0; i < PARTICLE_COUNT; i++) {
+  const radius = 1.6 + Math.random() * 2.2;
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  particlePos[i*3] = radius * Math.sin(phi) * Math.cos(theta);
+  particlePos[i*3+1] = radius * Math.cos(phi) * 0.5;
+  particlePos[i*3+2] = radius * Math.sin(phi) * Math.sin(theta);
+  
+  const hue = 0.55 + Math.random() * 0.3;
+  const c = new THREE.Color().setHSL(hue, 0.8, 0.5 + Math.random() * 0.3);
+  particleColors[i*3] = c.r;
+  particleColors[i*3+1] = c.g;
+  particleColors[i*3+2] = c.b;
+  
+  particleSizes[i] = 0.008 + Math.random() * 0.02;
+  velocities[i*3] = (Math.random() - 0.5) * 0.3;
+  velocities[i*3+1] = (Math.random() - 0.5) * 0.2;
+  velocities[i*3+2] = (Math.random() - 0.5) * 0.3;
+  offsets[i] = Math.random() * Math.PI * 2;
+}
+particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePos, 3));
+particleGeo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+particleGeo.setAttribute('size', new THREE.BufferAttribute(particleSizes, 1));
+
+const particleMat = new THREE.PointsMaterial({
+  size: 0.02,
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.7,
+  blending: THREE.AdditiveBlending,
+  sizeAttenuation: true,
+  depthWrite: false,
+});
+const particles = new THREE.Points(particleGeo, particleMat);
+scene.add(particles);
+
+// Neural connections (lines between close particles)
+const MAX_CONNECT_DIST = 1.8;
+const connectionGeo = new THREE.BufferGeometry();
+const maxConnections = PARTICLE_COUNT * 4;
+const connPositions = new Float32Array(maxConnections * 2 * 3);
+const connColors = new Float32Array(maxConnections * 2 * 3);
+connectionGeo.setAttribute('position', new THREE.BufferAttribute(connPositions, 3));
+connectionGeo.setAttribute('color', new THREE.BufferAttribute(connColors, 3));
+connectionGeo.setDrawRange(0, 0);
+
+const connMat = new THREE.LineBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.25,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+});
+const connectionLines = new THREE.LineSegments(connectionGeo, connMat);
+scene.add(connectionLines);
+
+// ═══════════════════════════════════════════════════════════
+// 7. RESPONSE RING WAVE
+// ═══════════════════════════════════════════════════════════
+let ringWaves = [];
+
+function createRingWave() {
+  const ringGeo = new THREE.TorusGeometry(0.1, 0.015, 16, 48);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0xffd700,
+    transparent: true,
+    opacity: 0.8,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+  ringMesh.position.set(0, 0, 0);
+  scene.add(ringMesh);
+  ringWaves.push({ mesh: ringMesh, radius: 0.1, maxRadius: 3.5 + Math.random() * 1.5, speed: 1.5 + Math.random() * 0.5 });
+}
+
+// ═══════════════════════════════════════════════════════════
+// 8. STATE MANAGEMENT
+// ═══════════════════════════════════════════════════════════
+const orbState = {
+  current: 'idle',       // idle | listening | thinking | speaking
+  targetMix: 0,
+  currentMix: 0,
+};
+
+function setOrbState(state) {
+  orbState.current = state;
+  const label = document.getElementById('orb-label');
+  const dot = document.getElementById('status-dot');
+  
+  switch(state) {
+    case 'idle':
+      orbState.targetMix = 0;
+      label.textContent = 'SYSTEM ONLINE — AWAITING INPUT';
+      label.style.color = 'rgba(200,247,255,0.5)';
+      label.style.textShadow = '0 0 20px rgba(0,240,255,0.2)';
+      dot.className = 'status-dot online';
+      break;
+    case 'listening':
+      orbState.targetMix = 1;
+      label.textContent = '🎤 LISTENING — VOICE ACTIVE';
+      label.style.color = 'var(--magenta)';
+      label.style.textShadow = '0 0 30px rgba(255,43,214,0.4)';
+      dot.className = 'status-dot online';
+      break;
+    case 'thinking':
+      orbState.targetMix = 2;
+      label.textContent = '⚡ PROCESSING — NEURAL COMPUTE';
+      label.style.color = 'var(--gold)';
+      label.style.textShadow = '0 0 30px rgba(255,215,0,0.4)';
+      dot.className = 'status-dot thinking';
+      break;
+    case 'speaking':
+      orbState.targetMix = 3;
+      label.textContent = '⬡ RESPONDING — OUTPUT STREAM';
+      label.style.color = 'var(--cyan)';
+      label.style.textShadow = '0 0 30px rgba(0,240,255,0.4)';
+      dot.className = 'status-dot online';
+      break;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 9. WEBSOCKET COMMUNICATION — wired to the real JARVIS backend
+// ═══════════════════════════════════════════════════════════
+
+// ── Auth — bearer token / session key (set by /login) ──────────────────────
+const _authToken  = sessionStorage.getItem('jarvis_token');
+const _sessionKey = sessionStorage.getItem('jarvis_key');
+
+function _authHeader() { return { 'Authorization': `Bearer ${_authToken}` }; }
+function _authFetch(url, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers, _authHeader());
+  return fetch(url, opts);
+}
+
+document.getElementById('diagnostics-refresh').addEventListener('click', async () => {
+  const button = document.getElementById('diagnostics-refresh');
+  const target = document.getElementById('diagnostics-result');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  button.disabled = true;
+  target.textContent = 'Vérification en cours…';
+  try {
+    const response = await _authFetch('/api/diagnostics', {signal: controller.signal});
+    if (response.status === 401) throw new Error('Session expirée. Reconnectez-vous pour consulter le diagnostic.');
+    if (!response.ok) throw new Error('Diagnostic indisponible. Réessayez dans quelques instants.');
+    const report = await response.json();
+    target.replaceChildren();
+    const labels = {ok: 'Disponible', warning: 'À vérifier', error: 'Erreur'};
+    for (const check of report.checks || []) {
+      const line = document.createElement('div');
+      line.textContent = `${labels[check.status] || check.status} · ${check.name} — ${check.detail}`;
+      line.style.color = check.status === 'error' ? 'var(--danger)' : check.status === 'warning' ? 'var(--gold)' : 'var(--text)';
+      target.appendChild(line);
+    }
+    const tools = [...(report.tools || [])].sort((a, b) => b.p95_ms - a.p95_ms).slice(0, 5);
+    if (tools.length) {
+      const heading = document.createElement('p');
+      heading.textContent = 'Outils aux attentes les plus longues · 95 % des appels sous le délai affiché';
+      heading.style.marginTop = '12px';
+      target.appendChild(heading);
+      for (const tool of tools) {
+        const line = document.createElement('div');
+        line.textContent = `${tool.tool} · ${(tool.p95_ms / 1000).toFixed(1)} s · ${tool.calls} appels · ${(tool.error_rate * 100).toFixed(0)} % d’erreurs`;
+        target.appendChild(line);
+      }
+    } else {
+      const empty = document.createElement('p');
+      empty.textContent = 'Aucun appel enregistré pour le moment.';
+      target.appendChild(empty);
+    }
+    const scope = document.createElement('p');
+    scope.textContent = report.scope || '';
+    scope.style.marginTop = '12px';
+    target.appendChild(scope);
+  } catch (error) {
+    target.textContent = error.name === 'AbortError' ? 'Le diagnostic met trop de temps à répondre. Réessayez.' : error.message;
+  } finally {
+    clearTimeout(timer);
+    button.disabled = false;
+  }
+});
+
+// ── Position GPS → assistant ───────────────────────────────────────────────
+// Le PC n'a ni GPS ni modem, et la géolocalisation par IP place l'utilisateur
+// sur l'agglomération au mieux — souvent ailleurs en réseau mobile. Le GPS de
+// ce téléphone est la seule source précise ; on la pousse tant que la page est
+// ouverte. `navigator.geolocation` exige un contexte sécurisé : le dashboard
+// est servi en HTTPS, ce qui le satisfait même avec un certificat auto-signé.
+let _geoLastSent = 0;
+let _geoWatchId  = null;
+let _navActive   = false;
+
+function _getGeoInterval() {
+  return _navActive ? 1200 : 30000;  // 1.2s en navigation active, 30s au repos
+}
+
+function _sendPosition(pos, force = false) {
+  const now = Date.now();
+  const interval = _getGeoInterval();
+  if (!force && now - _geoLastSent < interval) return;
+  _geoLastSent = now;
+  _authFetch('/api/location', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      lat: pos.coords.latitude,
+      lon: pos.coords.longitude,
+      accuracy_m: pos.coords.accuracy,
+      heading: pos.coords.heading,
+      speed: pos.coords.speed,
+    }),
+  }).catch(() => { _geoLastSent = 0; });   // réseau coupé : on retentera
+}
+
+function _startGeoTracking() {
+  if (!navigator.geolocation || _geoWatchId !== null) return;
+  _geoWatchId = navigator.geolocation.watchPosition(
+    _sendPosition,
+    (err) => console.warn('[geo]', err.message),
+    { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 },
+  );
+}
+
+// Le navigateur suspend le suivi quand l'onglet passe en arrière-plan ; on
+// force un relevé au retour pour que la position ne soit jamais périmée.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(_sendPosition, () => {},
+                                             { enableHighAccuracy: true });
+  }
+});
+
+if (_authToken) _startGeoTracking();
+
+// ── AES-256-CBC encryption (CryptoJS) — same scheme as the rest of JARVIS ──
+const _AES_SALT = 'JARVIS-DASHBOARD-v1';
+let _aesKey = null;
+function _initCrypto(key) {
+  if (typeof CryptoJS === 'undefined') return false;
+  _aesKey = CryptoJS.SHA256(key + _AES_SALT);
+  return true;
+}
+function _encrypt(plaintext) {
+  if (!_aesKey || typeof CryptoJS === 'undefined') return null;
+  try {
+    const iv  = CryptoJS.lib.WordArray.random(16);
+    const enc = CryptoJS.AES.encrypt(
+      CryptoJS.enc.Utf8.parse(plaintext), _aesKey,
+      { iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7 }
+    );
+    const ivHex = iv.toString(CryptoJS.enc.Hex);
+    const ctHex = enc.ciphertext.toString(CryptoJS.enc.Hex);
+    const hex   = ivHex + ctHex;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return btoa(String.fromCharCode(...bytes));
+  } catch { return null; }
+}
+const _encReady = _sessionKey ? _initCrypto(_sessionKey) : false;
+
+let ws = null;
+let wsConnected = false;
+let wsReconnectTimer = null;
+
+function _setConnDot(online) {
+  const dot  = document.getElementById('status-dot');
+  const stxt = document.getElementById('status-text');
+  dot.className  = 'status-dot ' + (online ? 'online' : 'offline');
+  stxt.textContent = online ? 'ONLINE' : 'OFFLINE';
+}
+
+function connectWebSocket() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = proto + '://' + location.host + '/ws?token=' + encodeURIComponent(_authToken || '');
+
+  try {
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      wsConnected = true;
+      addMessage('system', '⟐ Neural link established with backend.');
+      _setConnDot(true);
+      setOrbState('idle');
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === 'error') {
+          addMessage('error', data.error || 'La commande a été refusée.');
+          setOrbState('idle');
+        } else if (data.type === 'log') {
+          const speaker = data.speaker === 'jarvis' ? 'jarvis' : 'user';
+          addMessage(speaker, data.text);
+          if (speaker === 'jarvis') {
+            setOrbState('idle');
+            orbUniforms.uResponse.value = 1.0;
+            createRingWave();
+            if (ttsActive && 'speechSynthesis' in window) {
+              const utterance = new SpeechSynthesisUtterance(data.text);
+              const saved = JSON.parse(localStorage.getItem('ano_gpt_settings') || '{}');
+              if (saved.voice_engine && saved.voice_engine !== 'none') {
+                const voices = window.speechSynthesis.getVoices();
+                const found = voices.find(v => v.name === saved.voice);
+                if (found) utterance.voice = found;
+                utterance.lang = found ? found.lang : 'fr-FR';
+              } else {
+                utterance.lang = 'fr-FR';
+              }
+              utterance.rate = 0.9;
+              speechSynthesis.speak(utterance);
+            }
+          }
+        } else if (data.type === 'status') {
+          const active = data.state === 'active';
+          setOrbState(active ? 'listening' : 'idle');
+          document.getElementById('wake-btn').classList.toggle('show', !active);
+        } else if (data.type === 'wake') {
+          addMessage('system', '⟐ Mot d’activation détecté. Connexion…');
+          setOrbState('listening');
+        } else if (data.type === 'sys') {
+          addMessage('system', data.text);
+        } else if (data.type === 'file_received') {
+          addFileMessage(data.name, data.size, true);
+        } else if (data.type === 'request_location') {
+          if (!navigator.geolocation) {
+            addMessage('system', '⚠️ Géolocalisation indisponible sur cet appareil.');
+          } else {
+            navigator.geolocation.getCurrentPosition(
+              pos => _sendPosition(pos, true),
+              err => addMessage('system', '⚠️ Autorisez la position GPS : ' + err.message),
+              { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
+            );
+          }
+        }
+      } catch(e) {}
+    };
+
+    ws.onclose = () => {
+      wsConnected = false;
+      _setConnDot(false);
+      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+  } catch(e) {
+    addMessage('system', '⟐ Impossible de joindre le backend — mode autonome.');
+    _setConnDot(false);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 10. UI MESSAGES
+// ═══════════════════════════════════════════════════════════
+const consoleMsgs = document.getElementById('console-msgs');
+const msgCount = document.getElementById('msg-count');
+const textInput = document.getElementById('text-input');
+const sendBtn = document.getElementById('send-btn');
+const micBtn = document.getElementById('mic-btn');
+
+function addMessage(type, text) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + type;
+  const icons = { system: '⟐', user: '◈', jarvis: '⬡', error: '⊗' };
+  div.innerHTML = '<span class="icon">' + (icons[type] || '⟐') + '</span><span class="content">' + escapeHtml(text) + '</span>';
+  consoleMsgs.appendChild(div);
+  consoleMsgs.scrollTop = consoleMsgs.scrollHeight;
+  msgCount.textContent = consoleMsgs.children.length;
+  if (consoleMsgs.children.length > 200) {
+    consoleMsgs.removeChild(consoleMsgs.firstChild);
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+addMessage('system', '🌀 Neural interface initialized. System ready.');
+
+// ═══════════════════════════════════════════════════════════
+// 11. SEND MESSAGE — wired to the real backend command channel
+// ═══════════════════════════════════════════════════════════
+function sendMessage() {
+  const text = textInput.value.trim();
+  if (!text) return;
+
+  if (text.length > 16000) {
+    addMessage('error', 'Commande trop longue : 16 000 caractères maximum.');
+    return;
+  }
+  if (ws && wsConnected && ws.readyState === WebSocket.OPEN) {
+    const enc  = _encrypt(text);
+    const body = enc ? { type: 'command', enc } : { type: 'command', text };
+    try {
+      ws.send(JSON.stringify(body));
+    } catch (error) {
+      addMessage('error', 'Envoi impossible. Votre texte est conservé.');
+      return;
+    }
+    addMessage('user', text);
+    textInput.value = '';
+    setOrbState('thinking');
+  } else {
+    addMessage('error', 'Backend non connecté. Votre texte est conservé pour réessayer.');
+  }
+}
+
+sendBtn.addEventListener('click', sendMessage);
+textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
+
+// Quick action buttons
+document.querySelectorAll('[data-action]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const action = btn.dataset.action;
+    textInput.value = action;
+    sendMessage();
+  });
+});
+
+// ── Wake button — shown automatically while ANO-GPT is in standby ──────────
+document.getElementById('wake-btn').addEventListener('click', () => {
+  addMessage('system', '⟐ Envoi du signal de réveil…');
+  _authFetch('/api/wake', { method: 'POST' });
+});
+
+// ── File helpers (icons / size formatting) ──────────────────────────────────
+function _fileIcon(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (['jpg','jpeg','png','gif','webp','heic','heif','avif','bmp','svg'].includes(ext)) return '🖼️';
+  if (['mp4','mov','avi','mkv','webm','m4v','3gp'].includes(ext))                       return '🎬';
+  if (['mp3','m4a','wav','flac','aac','ogg','opus'].includes(ext))                      return '🎵';
+  if (['pdf'].includes(ext))                                                             return '📋';
+  if (['doc','docx','txt','md','rtf','odt'].includes(ext))                              return '📝';
+  if (['xls','xlsx','csv','ods'].includes(ext))                                         return '📊';
+  if (['zip','rar','7z','tar','gz','bz2','xz'].includes(ext))                          return '📦';
+  return '📎';
+}
+function _fmtSize(bytes) {
+  if (bytes < 1024)         return bytes + ' B';
+  if (bytes < 1024 * 1024)  return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 ** 3)    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  return (bytes / 1024 ** 3).toFixed(2) + ' GB';
+}
+
+// File card for a message received from another client (phone, etc.)
+function addFileMessage(name, size, received) {
+  const div = document.createElement('div');
+  div.className = 'msg system msg-file';
+  const dlUrl = `/uploads/${encodeURIComponent(name)}?token=${encodeURIComponent(_authToken)}`;
+  div.innerHTML =
+    `<span class="icon">${_fileIcon(name)}</span>` +
+    `<div class="fc-meta">` +
+      `<div class="fc-name">${escapeHtml(name)}</div>` +
+      `<div class="fc-size">${_fmtSize(size)}${received ? ' — reçu' : ''}</div>` +
+      `<a class="fc-dl" href="${dlUrl}" download="${escapeHtml(name)}">⬇ Télécharger</a>` +
+    `</div>`;
+  consoleMsgs.appendChild(div);
+  consoleMsgs.scrollTop = consoleMsgs.scrollHeight;
+  msgCount.textContent = consoleMsgs.children.length;
+  showToast(received ? '📎 Fichier reçu.' : '📎 Fichier envoyé.');
+}
+
+// ── File upload (this device → JARVIS) ──────────────────────────────────────
+function _uploadFile(file) {
+  const id = 'fc_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+
+  const card = document.createElement('div');
+  card.className = 'msg system msg-file';
+  card.id = id;
+  card.innerHTML =
+    `<span class="icon">${_fileIcon(file.name)}</span>` +
+    `<div class="fc-meta">` +
+      `<div class="fc-name">${escapeHtml(file.name)}</div>` +
+      `<div class="fc-size">${_fmtSize(file.size)}</div>` +
+      `<div class="fc-bar-wrap"><div class="fc-bar" id="${id}_bar"></div></div>` +
+    `</div>` +
+    `<div class="fc-status" id="${id}_st">0%</div>`;
+  consoleMsgs.appendChild(card);
+  consoleMsgs.scrollTop = consoleMsgs.scrollHeight;
+  msgCount.textContent = consoleMsgs.children.length;
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/upload');
+  xhr.setRequestHeader('Authorization', `Bearer ${_authToken}`);
+
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round(e.loaded / e.total * 100);
+    const bar = document.getElementById(`${id}_bar`);
+    const st  = document.getElementById(`${id}_st`);
+    if (bar) bar.style.width = pct + '%';
+    if (st)  st.textContent  = pct + '%';
+  };
+
+  xhr.onload = () => {
+    const bar = document.getElementById(`${id}_bar`);
+    const st  = document.getElementById(`${id}_st`);
+    if (xhr.status === 200) {
+      let savedName = file.name;
+      try { savedName = JSON.parse(xhr.responseText).name || file.name; } catch {}
+      const dlUrl = `/uploads/${encodeURIComponent(savedName)}?token=${encodeURIComponent(_authToken)}`;
+      if (bar) { bar.style.width = '100%'; bar.style.background = 'var(--lime)'; }
+      if (st)  { st.textContent = '✓'; st.className = 'fc-status done'; }
+      card.querySelector('.fc-meta').insertAdjacentHTML('beforeend',
+        `<a class="fc-dl" href="${dlUrl}" download="${escapeHtml(savedName)}">⬇ Retélécharger</a>`);
+      showToast('📎 Fichier envoyé.');
+    } else {
+      let errMsg = 'Échec de l’envoi';
+      try { errMsg = JSON.parse(xhr.responseText).error || errMsg; } catch {}
+      if (bar) bar.style.background = 'var(--danger)';
+      if (st)  { st.textContent = 'ERR'; st.className = 'fc-status err'; }
+      addMessage('error', '⊗ ' + errMsg);
+    }
+  };
+
+  xhr.onerror = () => {
+    const st = document.getElementById(`${id}_st`);
+    if (st) { st.textContent = 'ERR'; st.className = 'fc-status err'; }
+    addMessage('error', '⊗ Erreur de connexion pendant l’envoi du fichier.');
+  };
+
+  const fd = new FormData();
+  fd.append('file', file);
+  xhr.send(fd);
+}
+
+document.getElementById('file-inp').addEventListener('change', function () {
+  Array.from(this.files).forEach(_uploadFile);
+  this.value = '';
+});
+
+
+// ═══════════════════════════════════════════════════════════
+// 12. MICROPHONE — real voice command streaming + orb reactivity
+// ═══════════════════════════════════════════════════════════
+let audioContext = null;
+let analyser = null;
+let micStream = null;
+let isListening = false;
+let audioLevel = 0;
+let targetAudioLevel = 0;
+let _voiceWs = null;
+let _voiceNode = null;
+
+// Float32 PCM → resample to 16 kHz + convert to Int16 (matches backend Gemini Live input)
+function _f32toPcm16(f32, srcRate) {
+  let s = f32;
+  if (srcRate !== 16000) {
+    const ratio = srcRate / 16000;
+    const len   = Math.round(f32.length / ratio);
+    s = new Float32Array(len);
+    for (let i = 0; i < len; i++) s[i] = f32[Math.min(Math.round(i * ratio), f32.length - 1)];
+  }
+  const out = new Int16Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = Math.max(-32768, Math.min(32767, Math.round(s[i] * 32768)));
+  return out.buffer;
+}
+
+async function startAudio() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch(e) {
+    return false;
+  }
+
+  // Orb-reactive analyser (visual only)
+  try {
+    audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(micStream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+  } catch(e) { /* visuals only — non fatal */ }
+
+  // Real voice channel → backend (Gemini Live), same protocol as the phone app
+  if (_authToken) {
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const vws = new WebSocket(`${wsProto}://${location.host}/ws/phone-audio?token=${encodeURIComponent(_authToken)}`);
+    vws.binaryType = 'arraybuffer';
+    vws.onopen = async () => {
+      try {
+        const rate = audioContext.sampleRate;
+        const src  = audioContext.createMediaStreamSource(micStream);
+        const wCode = `class J extends AudioWorkletProcessor{process(i){const c=i[0]?.[0];if(c)this.port.postMessage(c.slice());return true;}}registerProcessor('j',J);`;
+        const burl = URL.createObjectURL(new Blob([wCode], { type: 'application/javascript' }));
+        await audioContext.audioWorklet.addModule(burl);
+        URL.revokeObjectURL(burl);
+        const nd = new AudioWorkletNode(audioContext, 'j');
+        let _pbuf = [], _plen = 0;
+        nd.port.onmessage = e => {
+          const chunk = new Int16Array(_f32toPcm16(e.data, rate));
+          _pbuf.push(chunk); _plen += chunk.length;
+          if (_plen >= 1024) {
+            const out = new Int16Array(_plen); let off = 0;
+            for (const c of _pbuf) { out.set(c, off); off += c.length; }
+            if (vws.readyState === 1) vws.send(out.buffer);
+            _pbuf = []; _plen = 0;
+          }
+        };
+        src.connect(nd);
+        _voiceNode = nd;
+      } catch(e) { /* fallback: visuals-only mic if worklet unsupported */ }
+    };
+    vws.onerror = () => {};
+    _voiceWs = vws;
+  }
+
+  isListening = true;
+  return true;
+}
+
+function stopAudio() {
+  isListening = false;
+  if (_voiceNode) { try { _voiceNode.disconnect(); } catch(_) {}; _voiceNode = null; }
+  if (_voiceWs)   { const w = _voiceWs; _voiceWs = null; if (w.readyState < 2) w.close(); }
+  if (micStream)  { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  if (audioContext) { try { audioContext.close(); } catch(_) {}; audioContext = null; }
+  analyser = null;
+}
+
+function getAudioLevel() {
+  if (!analyser) return 0;
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(data);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) sum += data[i];
+  return sum / data.length / 256;
+}
+
+micBtn.addEventListener('click', async () => {
+  if (!isListening) {
+    const ok = await startAudio();
+    if (ok) {
+      micBtn.classList.add('listening');
+      micBtn.textContent = '🔴';
+      addMessage('system', '🎤 Micro actif — parlez, ANO-GPT vous écoute.');
+      setOrbState('listening');
+    } else {
+      addMessage('error', '🎤 Micro refusé ou indisponible.');
+    }
+  } else {
+    stopAudio();
+    micBtn.classList.remove('listening');
+    micBtn.textContent = '🎤';
+    setOrbState('idle');
+    addMessage('system', '🎤 Micro désactivé.');
+  }
+});
+
+// TTS Toggle
+let ttsActive = true;  // Active par défaut (désactivable dans settings)
+document.getElementById('console-toggle').addEventListener('click', () => {
+  document.getElementById('console-panel').classList.toggle('minimized');
+});
+
+// Panel toggles
+document.getElementById('toggle-left').addEventListener('click', () => {
+  document.getElementById('panel-left').classList.toggle('closed');
+});
+document.getElementById('toggle-right').addEventListener('click', () => {
+  document.getElementById('panel-right').classList.toggle('closed');
+});
+
+// ═══════════════════════════════════════════════════════════
+// 13. METRICS UPDATE
+// ═══════════════════════════════════════════════════════════
+function updateMetrics(data) {
+  const cpu = Math.round(data.cpu || 0);
+  const mem = Math.round(data.memory || 0);
+  const temp = Math.round(data.temperature || 0);
+  const disk = Math.round(data.disk || 0);
+  
+  document.getElementById('cpu-val').textContent = cpu + '%';
+  document.getElementById('mem-val').textContent = mem + '%';
+  document.getElementById('cpu-val-l').textContent = cpu + '%';
+  document.getElementById('mem-val-l').textContent = mem + '%';
+  document.getElementById('temp-val-l').textContent = temp + '°C';
+  document.getElementById('disk-val-l').textContent = disk + '%';
+  
+  document.getElementById('cpu-bar').style.width = Math.min(cpu, 100) + '%';
+  document.getElementById('mem-bar').style.width = Math.min(mem, 100) + '%';
+  document.getElementById('temp-bar').style.width = Math.min((temp/100)*100, 100) + '%';
+  document.getElementById('disk-bar').style.width = Math.min(disk, 100) + '%';
+  
+  const tempEl = document.getElementById('temp-val-l');
+  tempEl.className = 'val' + (temp > 75 ? ' danger' : temp > 60 ? ' warm' : '');
+  
+  // Process list
+  const procList = document.getElementById('proc-list');
+  if (data.processes && data.processes.length) {
+    procList.innerHTML = '';
+    data.processes.slice(0, 12).forEach(p => {
+      const div = document.createElement('div');
+      div.className = 'proc-item';
+      div.innerHTML = '<span class="name">' + (p.name || '?') + '</span><span class="cpu">' + (p.cpu || 0) + '%</span><span class="mem">' + (p.mem || 0) + '%</span>';
+      procList.appendChild(div);
+    });
+  }
+  
+  // Workspaces
+  const wsGrid = document.getElementById('ws-grid');
+  if (data.workspaces && data.workspaces.length) {
+    wsGrid.innerHTML = '';
+    data.workspaces.forEach(ws => {
+      const div = document.createElement('div');
+      div.className = 'ws-item' + (ws.active ? ' active' : '') + (ws.occupied ? ' occupied' : '') + (ws.urgent ? ' ws-urgent' : '');
+      div.textContent = ws.id;
+      wsGrid.appendChild(div);
+    });
+  }
+  
+  // Status
+  const dot = document.getElementById('status-dot');
+  const stxt = document.getElementById('status-text');
+  if (data.online !== undefined) {
+    dot.className = 'status-dot ' + (data.online ? 'online' : 'offline');
+    stxt.textContent = data.online ? 'ONLINE' : 'OFFLINE';
+  }
+}
+
+// Simulated metrics
+function simulateMetrics() {
+  function rand() { return 15 + Math.random() * 30; }
+  function update() {
+    updateMetrics({
+      cpu: rand(),
+      memory: 40 + Math.random() * 25,
+      temperature: Math.round(45 + Math.random() * 20),
+      disk: 55 + Math.random() * 10,
+      online: true,
+      processes: [
+        { name: 'hyprland', cpu: (2+Math.random()*4).toFixed(1), mem: (1+Math.random()*2).toFixed(1) },
+        { name: 'anonymous', cpu: (5+Math.random()*8).toFixed(1), mem: (3+Math.random()*5).toFixed(1) },
+        { name: 'ollama', cpu: (2+Math.random()*10).toFixed(1), mem: (4+Math.random()*6).toFixed(1) },
+        { name: 'kitty', cpu: (1+Math.random()*3).toFixed(1), mem: (1+Math.random()*2).toFixed(1) },
+        { name: 'firefox', cpu: (8+Math.random()*15).toFixed(1), mem: (10+Math.random()*15).toFixed(1) },
+        { name: 'systemd', cpu: (0.5+Math.random()).toFixed(1), mem: (0.5+Math.random()).toFixed(1) },
+      ],
+      workspaces: [
+        { id: 1, active: true, occupied: true },
+        { id: 2, active: false, occupied: true },
+        { id: 3, active: false, occupied: false },
+        { id: 4, active: false, occupied: true },
+        { id: 5, active: false, occupied: false },
+        { id: 6, active: false, occupied: false },
+        { id: 7, active: false, occupied: true },
+        { id: 8, active: false, occupied: false },
+        { id: 9, active: false, occupied: false },
+        { id: 10, active: false, occupied: false },
+      ],
+    });
+  }
+  update();
+  setInterval(update, 2000);
+}
+
+// ═══════════════════════════════════════════════════════════
+// 14. VOICE BARS
+// ═══════════════════════════════════════════════════════════
+const voiceBarCount = 7;
+const voiceBars = [];
+function createVoiceBars() {
+  const barGroup = new THREE.Group();
+  for (let i = 0; i < voiceBarCount; i++) {
+    const barGeo = new THREE.BoxGeometry(0.02, 0.01, 0.02);
+    const barMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color().setHSL(0.55 + i * 0.04, 0.8, 0.5),
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+    });
+    const bar = new THREE.Mesh(barGeo, barMat);
+    const angle = (i / voiceBarCount) * Math.PI * 2;
+    bar.position.set(Math.sin(angle) * 1.6, 0, Math.cos(angle) * 1.6);
+    bar.lookAt(0, 0, 0);
+    barGroup.add(bar);
+    voiceBars.push({ mesh: bar, angle: angle, height: 0.01 });
+  }
+  scene.add(barGroup);
+}
+createVoiceBars();
+
+function updateVoiceBars(level) {
+  voiceBars.forEach((bar, i) => {
+    const h = 0.01 + level * 0.3 * (0.5 + Math.sin(Date.now() * 0.003 + i) * 0.5);
+    bar.mesh.scale.y = h / 0.01;
+    bar.mesh.position.y = h / 2;
+    bar.mesh.material.opacity = 0.1 + level * 0.8;
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// 15. ANIMATION LOOP
+// ═══════════════════════════════════════════════════════════
+const clock = new THREE.Clock();
+let orbFloatingOffset = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  const elapsed = clock.getElapsedTime();
+
+  // Audio level smoothing
+  if (isListening) {
+    targetAudioLevel = getAudioLevel();
+  } else {
+    targetAudioLevel *= 0.95;
+  }
+  audioLevel += (targetAudioLevel - audioLevel) * 0.15;
+  
+  // Update uniforms
+  orbUniforms.uAudioLevel.value = audioLevel;
+  orbUniforms.uTime.value = elapsed;
+  glowMat.uniforms.uTime.value = elapsed;
+  
+  // Smooth state transition
+  const speed = 2.0 * dt;
+  if (Math.abs(orbState.currentMix - orbState.targetMix) > 0.01) {
+    orbState.currentMix += (orbState.targetMix - orbState.currentMix) * Math.min(1, speed * 2);
+  } else {
+    orbState.currentMix = orbState.targetMix;
+  }
+  orbUniforms.uState.value = orbState.currentMix;
+  
+  // Response pulse decay
+  orbUniforms.uResponse.value *= 0.97;
+  if (orbUniforms.uResponse.value < 0.01) orbUniforms.uResponse.value = 0;
+  
+  // Ring waves
+  for (let i = ringWaves.length - 1; i >= 0; i--) {
+    const w = ringWaves[i];
+    w.radius += dt * w.speed;
+    w.mesh.scale.set(w.radius, w.radius, 1);
+    w.mesh.material.opacity = 0.6 * (1 - w.radius / w.maxRadius);
+    w.mesh.rotation.x = Math.PI / 2;
+    if (w.radius >= w.maxRadius) {
+      scene.remove(w.mesh);
+      ringWaves.splice(i, 1);
+    }
+  }
+  
+  // Orb floating + rotation
+  orbFloatingOffset += dt * 0.3;
+  orbGroup.position.y = Math.sin(orbFloatingOffset) * 0.08;
+  orbGroup.rotation.x = Math.sin(elapsed * 0.1) * 0.03;
+  orbGroup.rotation.y = elapsed * 0.15;
+  orbGroup.rotation.z = Math.sin(elapsed * 0.07) * 0.02;
+
+  // Particle animation
+  const posAttr = particles.geometry.attributes.position;
+  const array = posAttr.array;
+  const audioBoost = 1 + audioLevel * 2;
+
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    const i3 = i * 3;
+    const baseRadius = 1.8 + (i % 10) * 0.35;
+    const angleOffset = offsets[i] + elapsed * velocities[i3] * audioBoost;
+    const radius = baseRadius + Math.sin(elapsed * 0.5 + offsets[i]) * 0.25;
+    const heightOffset = Math.sin(elapsed * 0.3 + offsets[i] * 2) * 0.4 * audioBoost;
+
+    array[i3] = Math.cos(angleOffset) * radius;
+    array[i3+1] = (Math.sin(angleOffset) * 0.3 + heightOffset) * 0.6;
+    array[i3+2] = Math.sin(angleOffset) * radius;
+  }
+  posAttr.needsUpdate = true;
+  
+  // Neural connections
+  const connPos = connectionLines.geometry.attributes.position.array;
+  const connCol = connectionLines.geometry.attributes.color.array;
+  let connIdx = 0;
+  const threshold = MAX_CONNECT_DIST * (0.5 + audioLevel * 0.5);
+  
+  for (let i = 0; i < PARTICLE_COUNT && connIdx < maxConnections * 2; i += 3) {
+    for (let j = i + 3; j < PARTICLE_COUNT && connIdx < maxConnections * 2; j += 3) {
+      const dx = array[i] - array[j];
+      const dy = array[i+1] - array[j+1];
+      const dz = array[i+2] - array[j+2];
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (dist < threshold && dist > 0.1) {
+        const alpha = 1 - dist / threshold;
+        const idx2 = connIdx * 3;
+        connPos[idx2] = array[i];
+        connPos[idx2+1] = array[i+1];
+        connPos[idx2+2] = array[i+2];
+        connPos[idx2+3] = array[j];
+        connPos[idx2+4] = array[j+1];
+        connPos[idx2+5] = array[j+2];
+        connCol[idx2] = particleColors[i];
+        connCol[idx2+1] = particleColors[i+1];
+        connCol[idx2+2] = particleColors[i+2];
+        connCol[idx2+3] = particleColors[j];
+        connCol[idx2+4] = particleColors[j+1];
+        connCol[idx2+5] = particleColors[j+2];
+        connIdx += 2;
+      }
+    }
+  }
+  connectionLines.geometry.attributes.position.needsUpdate = true;
+  connectionLines.geometry.attributes.color.needsUpdate = true;
+  connectionLines.geometry.setDrawRange(0, connIdx);
+  connectionLines.material.opacity = 0.08 + audioLevel * 0.2;
+
+  // Pulse orb size with audio
+  const pulseScale = 1 + audioLevel * 0.12;
+  orbMesh.scale.set(pulseScale, pulseScale, pulseScale);
+  wireMesh.scale.set(pulseScale, pulseScale, pulseScale);
+  nucleusMesh.scale.set(pulseScale, pulseScale, pulseScale);
+
+  // Wireframe opacity
+  wireMat.opacity = 0.04 + audioLevel * 0.25;
+
+  // Ring rotations
+  rings.forEach((ring, i) => {
+    ring.rotation.x = Math.sin(elapsed * 0.15 + i) * 0.4;
+    ring.rotation.y = elapsed * (0.1 + i * 0.02);
+    ring.rotation.z = Math.cos(elapsed * 0.1 + i * 0.5) * 0.2;
+    ring.material.opacity = 0.04 + audioLevel * 0.15 + (0.1 - i * 0.02);
+  });
+
+  // Quantum electrons — ride their ring's plane, plus their own orbit spin
+  electronPivots.forEach((e, i) => {
+    const ring = rings[i];
+    e.pivot.rotation.set(ring.rotation.x, ring.rotation.y, ring.rotation.z);
+    e.pivot.rotation.y += elapsed * e.speed * (1 + audioLevel * 0.8);
+  });
+
+  // Quantum arcs — flickering lightning between nucleus and shell
+  arcs.forEach(a => {
+    if (a.life > 0) {
+      a.life -= dt;
+      a.line.material.opacity = Math.max(0, a.life * 4);
+    } else {
+      a.cooldown -= dt;
+      if (a.cooldown <= 0) {
+        const chance = 0.35 + audioLevel * 0.5 + orbUniforms.uResponse.value * 0.6;
+        if (Math.random() < chance) _spawnArc(a);
+        a.cooldown = 0.15 + Math.random() * 0.5;
+      }
+    }
+  });
+
+  // Nucleus pulses in lockstep with the shell
+
+  // Beam rotation
+  beamGroup.rotation.x = Math.sin(elapsed * 0.08) * 0.2;
+  beamGroup.rotation.y = elapsed * 0.2;
+  beamGroup.rotation.z = Math.cos(elapsed * 0.06) * 0.1;
+
+
+  // Tech symbols rotation + floating
+  symGroup.rotation.y = elapsed * 0.04;
+  symGroup.rotation.x = Math.sin(elapsed * 0.015) * 0.1;
+  
+  // Update tech symbol opacities
+  symGroup.children.forEach((sprite, i) => {
+    sprite.material.opacity = 0.1 + 0.2 * (0.5 + 0.5 * Math.sin(elapsed * symSpeeds[i % symSpeeds.length] + symOffsets[i % symOffsets.length]));
+    sprite.position.y += Math.sin(elapsed * 0.5 + i) * 0.0003;
+  });
+
+  // Spiral rotation
+  spiralParticles.rotation.x = Math.sin(elapsed * 0.03) * 0.15;
+  spiralParticles.rotation.y = elapsed * 0.12;
+  spiralParticles.rotation.z = Math.cos(elapsed * 0.02) * 0.1;
+  spiralParticles.material.opacity = 0.05 + audioLevel * 0.12;
+
+  // Stars rotation
+  stars.rotation.y = elapsed * 0.006;
+  stars.rotation.x = Math.sin(elapsed * 0.003) * 0.04;
+
+
+  // Response flash
+  if (orbUniforms.uResponse.value > 0.1) {
+    const flashIntensity = orbUniforms.uResponse.value * 0.3;
+    starMat.opacity = 0.8 + flashIntensity;
+    // Expand particles briefly
+    const flashScale = 1 + flashIntensity * 0.15;
+    particleMat.size = 0.02 * flashScale;
+  } else {
+    starMat.opacity = 0.8;
+    particleMat.size = 0.02;
+  }
+
+  // Bloom intensity
+  bloomPass.strength = 0.5 + audioLevel * 1.2;
+
+  // Camera gentle movement
+  camera.position.x = Math.sin(elapsed * 0.05) * 0.35;
+  camera.position.y = 0.7 + Math.sin(elapsed * 0.035) * 0.08;
+  camera.lookAt(0, 0, 0);
+
+  // Voice bars
+  updateVoiceBars(audioLevel);
+
+  composer.render();
+}
+
+// ═══════════════════════════════════════════════════════════
+// 16. RESIZE
+// ═══════════════════════════════════════════════════════════
+window.addEventListener('resize', () => {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+});
+
+// ═══════════════════════════════════════════════════════════
+// 17. INIT
+// ═══════════════════════════════════════════════════════════
+animate();
+setTimeout(connectWebSocket, 500);
+setTimeout(simulateMetrics, 500);
+
+const toast = document.getElementById('toast');
+function showToast(msg, duration = 3000) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), duration);
+}
+showToast('🌀 ANO-GPT NEXUS initialisé', 2500);
+
+
+// ═══════════════════════════════════════════════════════════
+// SETTINGS PANEL
+// ═══════════════════════════════════════════════════════════
+const MODEL_CATALOG = {
+  "auto":{"display":"Automatique","models":[]},
+  "gemini":{"display":"Google Gemini","models":["gemini-flash-latest","gemini-2.5-pro","gemini-2.5-flash"]},
+  "azure_openai":{"display":"Azure OpenAI","models":["gpt-5.6-terra","gpt-5.1","gpt-4.1","o4-mini"]},
+  "openai":{"display":"OpenAI","models":["gpt-5.6-terra","gpt-5.1","gpt-4.1","o4-mini"]},
+  "anthropic":{"display":"Anthropic","models":["claude-opus-5","claude-sonnet-5","claude-haiku-4-5-20251001"]},
+  "deepseek":{"display":"DeepSeek","models":["deepseek-v4-flash","deepseek-chat","deepseek-reasoner"]},
+  "grok":{"display":"xAI Grok","models":["grok-4.3","grok-4","grok-3-mini"]},
+  "groq":{"display":"Groq","models":["llama-3.3-70b-versatile","qwen3-32b","moonshotai/kimi-k2-instruct"]},
+  "ollama":{"display":"Ollama","models":["llama3.2","qwen2.5:7b","mistral","deepseek-r1"]},
+  "custom":{"display":"Serveur compatible OpenAI","models":["local-model"]},
+};
+
+const VOICE_CATALOG = {
+  "browser":{"display":"Voix navigateur","voices":["__dynamic__"]},
+  "gemini_tts":{"display":"Gemini TTS","voices":["Puck","Charon","Kore","Fenrir","Aoede","Athena","Hera","Leda","Orpheus","Persephone"]},
+  "edge_tts":{"display":"Edge TTS","voices":["fr-FR-DeniseNeural","fr-FR-HenriNeural","en-US-JennyNeural","en-US-GuyNeural","en-US-AriaNeural","en-GB-SoniaNeural","en-GB-RyanNeural","de-DE-KatjaNeural","de-DE-ConradNeural","ja-JP-NanamiNeural","ja-JP-KeitaNeural","es-ES-AlvaroNeural","es-ES-ElviraNeural","pt-BR-FranciscaNeural","pt-BR-AntonioNeural","it-IT-ElsaNeural","it-IT-DiegoNeural","ko-KR-SunHiNeural","ko-KR-InJoonNeural","zh-CN-XiaoxiaoNeural","zh-CN-YunxiNeural"]},
+};
+
+let currentProvider = 'gemini';
+let settingsData = {};
+
+// Open / close
+const settingsButton = document.getElementById('settings-btn');
+const settingsOverlay = document.getElementById('settings-overlay');
+const settingsPanel = settingsOverlay.querySelector('.settings-panel');
+
+settingsButton.addEventListener('click', () => {
+  settingsOverlay.classList.add('open');
+  settingsOverlay.setAttribute('aria-hidden', 'false');
+  settingsButton.setAttribute('aria-expanded', 'true');
+  document.body.classList.add('settings-open');
+  loadSettings();
+  requestAnimationFrame(() => settingsPanel.focus());
+});
+document.getElementById('settings-close').addEventListener('click', closeSettings);
+document.getElementById('settings-cancel').addEventListener('click', closeSettings);
+settingsOverlay.addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeSettings();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && settingsOverlay.classList.contains('open')) closeSettings();
+});
+function closeSettings() {
+  settingsOverlay.classList.remove('open');
+  settingsOverlay.setAttribute('aria-hidden', 'true');
+  settingsButton.setAttribute('aria-expanded', 'false');
+  document.body.classList.remove('settings-open');
+  settingsButton.focus();
+}
+
+// Provider tabs
+document.querySelectorAll('.provider-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.provider-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentProvider = tab.dataset.provider;
+    updateModelList();
+    updateApiKeyField();
+  });
+});
+
+function updateModelList() {
+  const select = document.getElementById('model-select');
+  const provider = MODEL_CATALOG[currentProvider];
+  if (!provider) return;
+  select.innerHTML = '';
+  provider.models.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    select.appendChild(opt);
+  });
+  // Try to restore saved model
+  const saved = settingsData.llm_model || settingsData.model || '';
+  if (saved && provider.models.includes(saved)) select.value = saved;
+}
+
+function updateApiKeyField() {
+  const label = document.getElementById('api-key-label');
+  const input = document.getElementById('api-key-input');
+  const providerName = MODEL_CATALOG[currentProvider]?.display || currentProvider;
+  label.textContent = `Clé ${providerName}`;
+  // Restore saved key
+  const key = settingsData[`${currentProvider}_api_key`] || '';
+  input.value = key;
+}
+
+function loadSettings() {
+  // Ces réglages (fournisseur LLM, clé API, voix) sont uniquement stockés
+  // localement dans ce navigateur — le backend JARVIS ne les lit pas encore.
+  loadSettingsFromLocal();
+}
+
+function loadSettingsFromLocal() {
+  try {
+    settingsData = JSON.parse(localStorage.getItem('ano_gpt_settings') || '{}');
+  } catch(e) { settingsData = {}; }
+  
+  const provider = settingsData.llm_provider || 'gemini';
+  currentProvider = provider;
+  
+  // Activate correct tab
+  document.querySelectorAll('.provider-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.provider === provider);
+  });
+  
+  updateModelList();
+  updateApiKeyField();
+  
+  // Voice
+  const ve = document.getElementById('voice-engine-select');
+  if (settingsData.voice_engine) ve.value = settingsData.voice_engine;
+  updateVoiceList();
+  
+  if (settingsData.voice) document.getElementById('voice-select').value = settingsData.voice;
+  if (settingsData.lang) document.getElementById('lang-select').value = settingsData.lang;
+  if (settingsData.user_name) document.getElementById('username-input').value = settingsData.user_name;
+}
+
+// Voice engine change
+document.getElementById('voice-engine-select').addEventListener('change', updateVoiceList);
+function updateVoiceList() {
+  const engine = document.getElementById('voice-engine-select').value;
+  const select = document.getElementById('voice-select');
+  select.innerHTML = '';
+  
+  const catalog = VOICE_CATALOG[engine];
+  if (!catalog) {
+    select.innerHTML = '<option value="">Aucune voix disponible</option>';
+    return;
+  }
+  
+  if (engine === 'browser') {
+    // Dynamic browser voices
+    const voices = window.speechSynthesis?.getVoices() || [];
+    if (voices.length === 0) {
+      select.innerHTML = '<option value="">Chargement des voix navigateur…</option>';
+      window.speechSynthesis?.addEventListener('voiceschanged', updateVoiceList, { once: true });
+    } else {
+      voices.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = `${v.name} (${v.lang})`;
+        select.appendChild(opt);
+      });
+    }
+  } else {
+    catalog.voices.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = v;
+      select.appendChild(opt);
+    });
+  }
+}
+
+// Toggle API key visibility
+document.getElementById('toggle-key-vis').addEventListener('click', () => {
+  const input = document.getElementById('api-key-input');
+  input.type = input.type === 'password' ? 'text' : 'password';
+});
+
+// Test voice
+document.getElementById('test-voice-btn').addEventListener('click', () => {
+  const text = "Bonjour, je suis ANO-GPT NEXUS. Votre assistant neural est prêt.";
+  const engine = document.getElementById('voice-engine-select').value;
+  const voiceName = document.getElementById('voice-select').value;
+  
+  if (engine === 'browser' && 'speechSynthesis' in window) {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'fr-FR';
+    utterance.rate = 0.9;
+    const voices = window.speechSynthesis.getVoices();
+    const found = voices.find(v => v.name === voiceName);
+    if (found) utterance.voice = found;
+    speechSynthesis.speak(utterance);
+    showToast('🔊 Test vocal en cours…');
+  } else {
+    showToast(`🔊 Voix ${engine}/${voiceName} — nécessite le backend`);
+  }
+});
+
+// Apply settings
+document.getElementById('settings-apply').addEventListener('click', () => {
+  const settings = {
+    llm_provider: currentProvider,
+    llm_model: (document.getElementById('model-custom').value.trim()
+                || document.getElementById('model-select').value),
+    voice_engine: document.getElementById('voice-engine-select').value,
+    voice: document.getElementById('voice-select').value,
+    lang: document.getElementById('lang-select').value,
+    user_name: document.getElementById('username-input').value || 'Anonymous',
+  };
+  
+  
+  // Activer TTS si une voix est sélectionnée
+  const vEngine = settings.voice_engine || 'none';
+  ttsActive = vEngine !== 'none' && 'speechSynthesis' in window;
+  if (ttsActive && vEngine === 'browser') {
+    window.speechSynthesis.getVoices(); // preload
+  }
+  
+  // Add API key for current provider
+  const apiKey = document.getElementById('api-key-input').value;
+  settings[`${currentProvider}_api_key`] = apiKey;
+  // Also keep existing keys for other providers
+  
+  // Save to localStorage as fallback
+  try {
+    const existing = JSON.parse(localStorage.getItem('ano_gpt_settings') || '{}');
+    Object.assign(existing, settings);
+    // Preserve other API keys
+    for (const prov of ['gemini','deepseek','anthropic','grok','groq','qwen']) {
+      const k = document.getElementById('api-key-input').value;
+      if (currentProvider === prov && k) existing[`${prov}_api_key`] = k;
+    }
+    localStorage.setItem('ano_gpt_settings', JSON.stringify(existing));
+  } catch(e) {}
+  
+  // Ces préférences sont enregistrées localement dans ce navigateur.
+  // Le backend JARVIS n'expose pas encore d'API pour piloter le
+  // fournisseur LLM / la clé API / la voix à distance.
+  showToast('⚙️ Préférences enregistrées localement.');
+
+  closeSettings();
+});
+
+// Listen for settings from backend
+// (The ws.onmessage handler is extended below)
+
+// Init on load
+setTimeout(() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('ano_gpt_settings') || '{}');
+    if (saved.user_name) document.getElementById('username-input').value = saved.user_name;
+    if (saved.llm_provider) {
+      document.getElementById('model-select').innerHTML = '';
+      const provider = MODEL_CATALOG[saved.llm_provider];
+      if (provider) {
+        provider.models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m; opt.textContent = m;
+          document.getElementById('model-select').appendChild(opt);
+        });
+        if (saved.llm_model) document.getElementById('model-select').value = saved.llm_model;
+      }
+    }
+  } catch(e) {}
+}, 1000);
+
+
+
+// Test API connection
+document.getElementById('test-api-btn')?.addEventListener('click', async () => {
+  const key = document.getElementById('api-key-input').value.trim();
+  const statusEl = document.getElementById('api-status');
+
+  if (!key) {
+    statusEl.textContent = '❌ Entrez d\'abord une clé API';
+    statusEl.style.color = 'var(--danger)';
+    return;
+  }
+
+  // Le backend JARVIS ne lit pas encore cette clé — elle est seulement
+  // conservée localement pour l'instant. On vérifie juste que le lien
+  // temps réel avec ANO-GPT fonctionne, pour donner un retour honnête.
+  if (ws && wsConnected) {
+    statusEl.textContent = '✅ Clé enregistrée localement — lien neural actif';
+    statusEl.style.color = 'var(--lime)';
+  } else {
+    statusEl.textContent = '⚠️ Clé enregistrée localement — backend non connecté';
+    statusEl.style.color = 'var(--gold)';
+  }
+});
+
+
+</script>
+</body>
+</html>

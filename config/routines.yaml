@@ -1,0 +1,84 @@
+# Routines vocales d'ANO-GPT — enchaînements déterministes, sans modèle.
+#
+# Une phrase de ce fichier est reconnue localement : les étapes partent
+# immédiatement, sans aller-retour réseau et sans interprétation. Le fichier
+# est relu à chaque modification — pas besoin de redémarrer l'assistant.
+#
+# ── Structure ───────────────────────────────────────────────────────────────
+#   nom      : le nom affiché de la routine.
+#   phrases  : toutes les façons de la déclencher. La phrase entendue doit
+#              correspondre EN ENTIER (le mot « Ano » et les politesses sont
+#              retirés d'office). Une phrase plus longue ne déclenche rien :
+#              c'est ce qui empêche « je pars à Dakar jeudi » de verrouiller
+#              l'écran.
+#   dire     : phrase prononcée — seulement si la voix est déjà éveillée.
+#              Micro coupé, la routine reste silencieuse et confirme par la
+#              carte à l'écran : rien ne part sur le réseau.
+#   etapes   : exécutées dans l'ordre. Une étape qui échoue n'arrête pas les
+#              suivantes.
+#
+# ── Étapes possibles ────────────────────────────────────────────────────────
+#   - outil: <nom>        args: {...}   → n'importe quel outil de l'assistant :
+#       open_app, close_app, computer_settings, music, reminder, youtube,
+#       weather, web_search, find_nearby, show_map, screenshot, email,
+#       file_search, system_status, memory_save…
+#   - shell: "commande"                 → commande exécutée telle quelle
+#       (sans shell : pas de pipe ni de $VAR — un binaire et ses arguments).
+#   - attendre: 0.5                     → pause en secondes, si une fenêtre a
+#       besoin d'exister avant l'étape d'après.
+
+- nom: Mode travail
+  phrases:
+    - mode travail
+    - au boulot
+    - je me mets au travail
+    - on se met au travail
+  dire: "Mode travail."
+  etapes:
+    - outil: open_app
+      args: {app_name: code}
+    - attendre: 0.4
+    - outil: open_app
+      args: {app_name: kitty}
+    - outil: music
+      args: {action: pause}
+    - shell: "brightnessctl set 70%"
+
+- nom: Mode nuit
+  phrases:
+    - mode nuit
+    - bonne nuit
+    - je vais dormir
+    - au lit
+  dire: "Bonne nuit."
+  etapes:
+    - outil: music
+      args: {action: stop}
+    - shell: "brightnessctl set 15%"
+    - shell: "playerctl --all-players pause"
+    # Décommente pour verrouiller aussi la session en même temps :
+    # - outil: computer_settings
+    #   args: {action: lock_screen}
+
+- nom: Je pars
+  phrases:
+    - je pars
+    - je m en vais
+    - je sors
+    - a plus tard
+  dire: "À tout à l'heure."
+  etapes:
+    - outil: music
+      args: {action: stop}
+    - shell: "playerctl --all-players pause"
+    - outil: computer_settings
+      args: {action: lock_screen}
+
+# ── Modèle à copier ─────────────────────────────────────────────────────────
+# - nom: Ma routine
+#   phrases: [ma phrase, mon autre phrase]
+#   dire: "C'est fait."
+#   etapes:
+#     - outil: open_app
+#       args: {app_name: firefox, target: "https://exemple.fr"}
+#     - shell: "hyprctl dispatch workspace 2"

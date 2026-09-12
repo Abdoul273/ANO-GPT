@@ -1,0 +1,32 @@
+{
+  "needs": [
+    {
+      "id": "35afed01b558",
+      "fingerprint": "allumer mon",
+      "samples": [
+        "Tu peux allumer mon PC ? [Je n'ai pas d'outil pour allumer physiquement l'ordinateur à distance.]"
+      ],
+      "created_at": "2026-09-07T06:15:50.962447+00:00",
+      "updated_at": "2026-09-07T06:15:50.962480+00:00",
+      "status": "observed",
+      "extension_name": "",
+      "specification": "",
+      "report": "",
+      "preview": ""
+    },
+    {
+      "id": "c1639f1c6a11",
+      "fingerprint": "chocolat fait heure lit moka papa quelle",
+      "samples": [
+        "Je veux le papa de lit. Je veux le moka. Avec le le chocolat. Il fait quelle heure ? [aucun outil correspondant dans le répartiteur central]"
+      ],
+      "created_at": "2026-09-09T19:05:16.865057+00:00",
+      "updated_at": "2026-09-09T19:05:16.865089+00:00",
+      "status": "observed",
+      "extension_name": "",
+      "specification": "",
+      "report": "",
+      "preview": ""
+    }
+  ]
+}

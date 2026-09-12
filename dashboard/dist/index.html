@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>J.A.R.V.I.S // SYSTEM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="module" crossorigin src="/assets/index-DJRBGerv.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Cc_YMoBD.css">
+    <style>
+      /* Sortie des informations temporaires : balayage, coupure puis dissolution. */
+      .system-action-badge.action-leaving {
+        display: inline-flex !important;
+        overflow: hidden;
+        animation: cyber-action-out 420ms cubic-bezier(.7, 0, 1, .45) forwards !important;
+      }
+      .system-action-badge.action-leaving::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(0,240,255,.82), transparent);
+        mix-blend-mode: screen;
+        animation: cyber-action-wipe 360ms ease-in forwards;
+      }
+      @keyframes cyber-action-out {
+        0%   { opacity: 1; transform: translate(-50%, 0) scaleX(1); filter: none; }
+        42%  { opacity: .95; transform: translate(-48%, -2px) scaleX(1.02); filter: brightness(1.65); }
+        70%  { opacity: .48; transform: translate(-43%, -4px) scaleX(.88); filter: blur(1px) hue-rotate(35deg); }
+        100% { opacity: 0; transform: translate(-20%, -8px) scaleX(.08); filter: blur(5px); }
+      }
+      @keyframes cyber-action-wipe {
+        from { transform: translateX(-120%); opacity: .9; }
+        to   { transform: translateX(120%); opacity: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .system-action-badge.action-leaving { animation-duration: 120ms !important; }
+        .system-action-badge.action-leaving::after { display: none; }
+      }
+    </style>
+  </head>
+  <body data-theme="neural">
+    <!-- FX layers -->
+    <canvas id="fx-particles" aria-hidden="true"></canvas>
+    <div id="fx-vignette" aria-hidden="true"></div>
+    <div id="fx-scanlines" aria-hidden="true"></div>
+    <div id="fx-grid" aria-hidden="true"></div>
+    <div id="fx-noise" aria-hidden="true"></div>
+    <div id="fx-chromatic" aria-hidden="true"></div>
+
+    <!-- HUD corners -->
+    <div class="hud-corner hud-tl" aria-hidden="true"></div>
+    <div class="hud-corner hud-tr" aria-hidden="true"></div>
+    <div class="hud-corner hud-bl" aria-hidden="true"></div>
+    <div class="hud-corner hud-br" aria-hidden="true"></div>
+
+    <!-- Three.js orb -->
+    <canvas id="orb-canvas"></canvas>
+
+    <!-- Top HUD bar -->
+    <header id="hud-top">
+      <div class="hud-brand">
+        <span class="hud-brand-mark">◈</span>
+        <div class="hud-brand-text">
+          <span class="hud-brand-title">J.A.R.V.I.S</span>
+          <span class="hud-brand-sub" id="hud-version">NEURAL OS // v4.1</span>
+          <span class="hud-brand-sub" id="hud-model-info" style="color: var(--cyan); margin-left: 8px;"></span>
+        </div>
+      </div>
+
+      <div id="status-text" class="hud-status"></div>
+      <div id="system-action-badge" class="system-action-badge hidden" aria-live="polite">
+        <span class="system-action-dot"></span>
+        <span id="system-action-label">EXEC // …</span>
+      </div>
+
+      <div class="hud-top-right">
+        <button id="theme-button" class="cyber-btn cyber-btn-sm" type="button" title="Thème">
+          <span class="cyber-btn-glow"></span>
+          <span id="theme-button-label" class="cyber-btn-label">CITY</span>
+        </button>
+        <button id="sfx-button" class="cyber-btn cyber-btn-sm" type="button" title="Sons UI">
+          <span class="cyber-btn-glow"></span>
+          <span id="sfx-button-label" class="cyber-btn-label">SFX</span>
+        </button>
+        <button id="offline-button" class="cyber-btn cyber-btn-sm" type="button" title="Mode Hors Ligne">
+          <span class="cyber-btn-glow"></span>
+          <span id="offline-button-label" class="cyber-btn-label">ONLINE</span>
+        </button>
+        <button id="log-button" class="cyber-btn cyber-btn-sm" type="button" title="Journal système">
+          <span class="cyber-btn-glow"></span>
+          <span class="cyber-btn-label">LOG</span>
+          <span id="log-badge-dot" class="log-badge-dot hidden" aria-hidden="true"></span>
+        </button>
+        <div id="connection-badge" class="cyber-badge">
+          <span id="connection-dot"></span>
+          <span id="connection-label">SYNC…</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Left control stack -->
+    <aside id="hud-left">
+      <button id="mute-button" class="cyber-btn" type="button" aria-label="Stop parole">
+        <span class="cyber-btn-glow"></span>
+        <span class="cyber-btn-label">STOP</span>
+      </button>
+      <button
+        id="keyboard-button"
+        class="cyber-btn"
+        type="button"
+        aria-pressed="false"
+        aria-label="Mode clavier"
+      >
+        <span class="cyber-btn-glow"></span>
+        <svg class="kb-icon-keyboard" viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+          <rect x="2" y="6" width="20" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M10 14h4M18 14h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <svg class="kb-icon-mic" viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true" style="display:none">
+          <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/>
+          <path d="M5 11a7 7 0 0 0 14 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          <line x1="12" y1="18" x2="12" y2="22" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span id="keyboard-button-label" class="cyber-btn-label">INPUT</span>
+      </button>
+    </aside>
+
+    <!-- Dialogue container (raw text below orb) -->
+    <section id="dialogue-panel" aria-live="polite" style="position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%); width: 80%; max-width: 800px; text-align: center; z-index: 50;">
+      <div id="chat-history" class="chat-history-container" style="background: transparent; border: none; padding: 0;">
+        <!-- Messages appended here dynamically -->
+      </div>
+    </section>
+
+    <!-- ── TELEMETRY HUD ──────────────────────────────────────────────────────── -->
+    <div id="hud-telemetry" class="cyber-panel telemetry-panel">
+      <div class="telemetry-row">
+        <span class="telemetry-label">CPU</span>
+        <div class="telemetry-track"><div id="telemetry-cpu" class="telemetry-fill"></div></div>
+        <span id="telemetry-cpu-val" class="telemetry-val">0%</span>
+      </div>
+      <div class="telemetry-row">
+        <span class="telemetry-label">RAM</span>
+        <div class="telemetry-track"><div id="telemetry-ram" class="telemetry-fill"></div></div>
+        <span id="telemetry-ram-val" class="telemetry-val">0%</span>
+      </div>
+    </div>
+
+    <!-- System log console -->
+    <div id="log-console" class="cyber-panel log-console hidden">
+      <div class="log-console-header">
+        <span>SYSTEM LOG</span>
+        <button id="log-close" type="button" aria-label="Fermer le journal">×</button>
+      </div>
+      <div id="log-console-body" class="log-console-body"></div>
+    </div>
+
+    <!-- Webcam live preview -->
+    <div id="camera-panel" class="cyber-panel camera-panel hidden">
+      <div class="camera-panel-header">CAM // LIVE</div>
+      <img id="camera-feed" alt="Flux caméra" />
+    </div>
+
+    <!-- Full-page drop overlay -->
+    <div id="drop-overlay" class="hidden">
+      <div id="drop-overlay-text">// DÉPOSEZ LE FICHIER POUR L'ENVOYER À JARVIS</div>
+    </div>
+
+    <!-- Mic control -->
+    <div id="mic-area">
+      <div class="mic-ring mic-ring-outer" aria-hidden="true"></div>
+      <div class="mic-ring mic-ring-mid" aria-hidden="true"></div>
+      <button id="mic-button" type="button" aria-pressed="false" aria-label="Micro">
+        <span class="mic-core"></span>
+        <svg class="mic-icon" viewBox="0 0 24 24" width="26" height="26" fill="none" aria-hidden="true">
+          <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/>
+          <path d="M5 11a7 7 0 0 0 14 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          <line x1="12" y1="18" x2="12" y2="22" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          <line x1="8" y1="22" x2="16" y2="22" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <svg class="mic-stop-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true" style="display:none">
+          <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>
+        </svg>
+      </button>
+      <div id="mic-label">ACTIVER LE NEURAL LINK</div>
+    </div>
+
+    <!-- Attached file chip -->
+    <div id="file-chip" class="file-chip hidden">
+      <span id="file-chip-name"></span>
+      <button id="file-chip-clear" type="button" aria-label="Retirer le fichier">×</button>
+    </div>
+
+    <!-- Keyboard input -->
+    <form id="text-input-bar" class="hidden cyber-input-shell" autocomplete="off">
+      <div class="input-prefix">&gt;_</div>
+      <button id="attach-button" type="button" class="attach-button" aria-label="Joindre un fichier" title="Joindre un fichier">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+          <path d="M21 11.5l-8.5 8.5a4.5 4.5 0 0 1-6.36-6.36l8.5-8.5a3 3 0 0 1 4.24 4.24l-8.5 8.5a1.5 1.5 0 0 1-2.12-2.12l7.79-7.79" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <input id="file-input" type="file" hidden />
+      <input
+        id="text-input"
+        type="text"
+        placeholder="TRANSMETTRE UNE COMMANDE…"
+        maxlength="2000"
+        aria-label="Message pour Jarvis"
+        spellcheck="false"
+      />
+      <button id="text-send-button" type="submit" class="cyber-send" aria-label="Envoyer">
+        <span>SEND</span>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+          <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </form>
+
+    <div id="assistant-label">SYSTEM ONLINE</div>
+    <div id="error-text" class="cyber-toast"></div>
+
+    <script>
+      (() => {
+        const badge = document.getElementById('system-action-badge');
+        if (!badge) return;
+
+        let wasVisible = !badge.classList.contains('hidden');
+        let exitTimer = 0;
+        const observer = new MutationObserver(() => {
+          const isHidden = badge.classList.contains('hidden');
+          if (!isHidden) {
+            wasVisible = true;
+            window.clearTimeout(exitTimer);
+            badge.classList.remove('action-leaving');
+            return;
+          }
+          if (!wasVisible || badge.classList.contains('action-leaving')) return;
+
+          wasVisible = false;
+          badge.classList.add('action-leaving');
+          exitTimer = window.setTimeout(() => {
+            badge.classList.remove('action-leaving');
+          }, 460);
+        });
+        observer.observe(badge, { attributes: true, attributeFilter: ['class'] });
+      })();
+    </script>
+
+  </body>
+</html>

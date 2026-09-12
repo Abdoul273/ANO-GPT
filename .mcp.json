@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ano-gpt": {
+      "type": "stdio",
+      "command": "/usr/bin/python",
+      "args": [
+        "/home/anonymous/OUTILS/ANO-GPT/anogpt_mcp.py"
+      ]
+    }
+  }
+}

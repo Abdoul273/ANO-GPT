@@ -1,0 +1,6 @@
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[mcp_servers.ano-gpt]
+command = "/usr/bin/python"
+args = ["/home/anonymous/OUTILS/ANO-GPT/anogpt_mcp.py"]

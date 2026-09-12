@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""
+Command-line control for a running ANO-GPT instance.
+
+Bound to compositor hotkeys (Hyprland) since Wayland gives no client global
+keyboard access — the compositor owns the key, this forwards it to the app.
+
+Usage:
+    anogpt-ctl toggle          # mute <-> listen  (main hotkey)
+    anogpt-ctl listen          # force listening
+    anogpt-ctl mute            # force muted
+    anogpt-ctl interrupt       # stop the assistant mid-sentence
+    anogpt-ctl wake            # toggle the offline wake word on/off
+    anogpt-ctl status          # print current state
+    anogpt-ctl action-stats [motif]  # coût réel des actions (appels, échecs, p95)
+    anogpt-ctl doctor [--json] # local diagnostics, even when stopped
+    anogpt-ctl show            # show/activate the existing window
+    anogpt-ctl ask "ouvre firefox"
+    anogpt-ctl proactive-mode silence|on|status
+    anogpt-ctl proactive-event '{"topic":"terminal","data":{"command":"make","duration_s":42,"exit_code":0}}'
+"""
+
+import sys
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from core.ipc import send_command  # noqa: E402
+
+
+def main() -> int:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+
+    if sys.argv[1] == "doctor":
+        from core.diagnostics import main as doctor
+        return doctor(sys.argv[2:])
+
+    line = " ".join(sys.argv[1:])
+    try:
+        reply = send_command(line)
+    except ConnectionError as e:
+        # Les fins de build doivent survivre à un assistant arrêté. Le
+        # service videra ce spool atomique au prochain lancement.
+        if sys.argv[1] == "proactive-event" and len(sys.argv) >= 3:
+            try:
+                from actions.background_tasks import persist_external_event
+
+                persist_external_event(json.loads(" ".join(sys.argv[2:])))
+                print("OK mis en file durable pour le prochain lancement")
+                return 0
+            except Exception as persist_error:
+                print(f"anogpt-ctl: spool impossible: {persist_error}", file=sys.stderr)
+        print(f"anogpt-ctl: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"anogpt-ctl: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+
+    print(reply)
+    return 0 if reply.startswith("OK") else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

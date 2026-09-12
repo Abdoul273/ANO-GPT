@@ -1,0 +1,1518 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ANO-GPT — Roadmap des Fonctionnalités JARVIS Ultime</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #060913;
+      --bg-surface: rgba(13, 20, 36, 0.75);
+      --bg-surface-hover: rgba(22, 34, 60, 0.9);
+      --border-color: rgba(0, 240, 255, 0.2);
+      --border-active: rgba(0, 240, 255, 0.6);
+      --cyan: #00f0ff;
+      --cyan-glow: rgba(0, 240, 255, 0.35);
+      --purple: #9d4edd;
+      --purple-glow: rgba(157, 78, 221, 0.35);
+      --gold: #ffd166;
+      --green: #06d6a0;
+      --red: #ef476f;
+      --text-main: #e2e8f0;
+      --text-muted: #94a3b8;
+      --font-hud: 'Orbitron', sans-serif;
+      --font-body: 'Rajdhani', sans-serif;
+      --font-code: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(0, 240, 255, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(157, 78, 221, 0.08) 0%, transparent 40%),
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+      color: var(--text-main);
+      font-family: var(--font-body);
+      font-size: 17px;
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: 30px 20px 80px;
+      overflow-x: hidden;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* HEADER */
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+      position: relative;
+    }
+
+    .hud-badge {
+      display: inline-block;
+      font-family: var(--font-hud);
+      font-size: 12px;
+      letter-spacing: 3px;
+      color: var(--cyan);
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid var(--cyan);
+      padding: 6px 16px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      box-shadow: 0 0 15px var(--cyan-glow);
+      margin-bottom: 15px;
+    }
+
+    h1 {
+      font-family: var(--font-hud);
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 900;
+      letter-spacing: 2px;
+      background: linear-gradient(135deg, #ffffff 0%, var(--cyan) 50%, var(--purple) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 12px;
+      text-shadow: 0 0 30px rgba(0, 240, 255, 0.2);
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.2rem;
+      font-weight: 500;
+      max-width: 700px;
+      margin: 0 auto 30px;
+    }
+
+    /* PROGRESS DASHBOARD */
+    .dashboard-panel {
+      background: var(--bg-surface);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 35px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 240, 255, 0.03);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: rgba(6, 9, 19, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+    }
+
+    .stat-card.total::before { background: var(--cyan); }
+    .stat-card.done::before { background: var(--green); }
+    .stat-card.prog::before { background: var(--gold); }
+    .stat-card.todo::before { background: var(--red); }
+
+    .stat-val {
+      font-family: var(--font-hud);
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .stat-card.total .stat-val { color: var(--cyan); }
+    .stat-card.done .stat-val { color: var(--green); }
+    .stat-card.prog .stat-val { color: var(--gold); }
+    .stat-card.todo .stat-val { color: var(--red); }
+
+    .stat-lbl {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 12px;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      position: relative;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--cyan), var(--purple));
+      border-radius: 10px;
+      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 0 15px var(--cyan-glow);
+    }
+
+    /* CONTROLS & FILTERS */
+    .controls-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 30px;
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 280px;
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 12px 18px 12px 45px;
+      color: #fff;
+      font-family: var(--font-body);
+      font-size: 1.1rem;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+
+    .search-box input:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 15px var(--cyan-glow);
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 15px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--cyan);
+    }
+
+    .filter-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .filter-btn {
+      background: rgba(13, 20, 36, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: var(--font-body);
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: all 0.25s ease;
+    }
+
+    .filter-btn:hover, .filter-btn.active {
+      background: rgba(0, 240, 255, 0.15);
+      border-color: var(--cyan);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+    }
+
+    .global-actions {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 25px;
+    }
+
+    .hud-btn {
+      background: rgba(0, 240, 255, 0.12);
+      border: 1px solid var(--cyan);
+      color: #fff;
+      font-family: var(--font-hud);
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      padding: 10px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.25s ease;
+      text-transform: uppercase;
+    }
+
+    .hud-btn:hover {
+      background: var(--cyan);
+      color: #000;
+      box-shadow: 0 0 20px var(--cyan-glow);
+    }
+
+    .hud-btn.secondary {
+      background: rgba(157, 78, 221, 0.12);
+      border-color: var(--purple);
+    }
+
+    .hud-btn.secondary:hover {
+      background: var(--purple);
+      color: #fff;
+      box-shadow: 0 0 20px var(--purple-glow);
+    }
+
+    /* CARDS GRID */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+      gap: 24px;
+    }
+
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .feature-card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
+    }
+
+    .feature-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--border-active);
+      box-shadow: 0 12px 35px rgba(0, 240, 255, 0.15);
+    }
+
+    .feature-card.is-done {
+      border-color: rgba(6, 214, 160, 0.4);
+      background: rgba(6, 214, 160, 0.04);
+    }
+
+    .feature-card.is-done::after {
+      content: '✓ IMPLÉMENTÉ';
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      font-family: var(--font-hud);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--green);
+      letter-spacing: 1px;
+      background: rgba(6, 214, 160, 0.15);
+      border: 1px solid var(--green);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .cat-pill {
+      font-family: var(--font-hud);
+      font-size: 11px;
+      letter-spacing: 1px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .card-title {
+      font-family: var(--font-hud);
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 12px;
+      line-height: 1.35;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .quote-box {
+      background: rgba(0, 0, 0, 0.45);
+      border-left: 3px solid var(--cyan);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 14px;
+      font-style: italic;
+      color: #7dd3fc;
+      font-size: 0.95rem;
+      margin-bottom: 16px;
+    }
+
+    .card-body {
+      color: #cbd5e1;
+      font-size: 1rem;
+      margin-bottom: 20px;
+      flex-grow: 1;
+    }
+
+    .card-body ul {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .card-body li {
+      position: relative;
+      padding-left: 20px;
+      margin-bottom: 8px;
+      line-height: 1.45;
+    }
+
+    .card-body li::before {
+      content: '▹';
+      position: absolute;
+      left: 0;
+      color: var(--cyan);
+      font-weight: bold;
+    }
+
+    .card-body li strong {
+      color: #fff;
+    }
+
+    .audit-note {
+      margin: 0 0 18px;
+      padding: 11px 13px;
+      border-radius: 9px;
+      background: rgba(255, 209, 102, 0.07);
+      border: 1px solid rgba(255, 209, 102, 0.28);
+      color: #dbeafe;
+      font-size: 0.92rem;
+      line-height: 1.4;
+    }
+
+    .audit-note.done {
+      background: rgba(6, 214, 160, 0.07);
+      border-color: rgba(6, 214, 160, 0.32);
+    }
+
+    .audit-note strong {
+      color: var(--green);
+    }
+
+    .audit-note.prog strong {
+      color: var(--gold);
+    }
+
+    .audit-summary {
+      margin-top: 14px;
+      color: var(--text-muted);
+      text-align: center;
+      font-size: 0.95rem;
+    }
+
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      gap: 10px;
+    }
+
+    .status-select {
+      background: rgba(6, 9, 19, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .status-select:focus {
+      border-color: var(--cyan);
+    }
+
+    .copy-btn {
+      background: rgba(0, 240, 255, 0.08);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      color: var(--cyan);
+      padding: 7px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: var(--font-hud);
+      font-size: 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .copy-btn:hover {
+      background: var(--cyan);
+      color: #000;
+      box-shadow: 0 0 12px var(--cyan-glow);
+    }
+
+    .copy-btn.copied {
+      background: var(--green);
+      border-color: var(--green);
+      color: #000;
+    }
+
+    /* TOAST NOTIFICATION */
+    #toast {
+      position: fixed;
+      bottom: 30px;
+      right: 30px;
+      background: #0d1424;
+      border: 1px solid var(--cyan);
+      box-shadow: 0 0 25px var(--cyan-glow);
+      color: #fff;
+      padding: 14px 24px;
+      border-radius: 12px;
+      font-family: var(--font-hud);
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 9999;
+    }
+
+    #toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <div class="hud-badge">PROJET JARVIS • ARCHITECTURE DE POINTE</div>
+      <h1>ANO-GPT : LE GUIDE DE L'ASSISTANT ULTIME</h1>
+      <p class="subtitle">Catalogue complet des 55 super-fonctionnalités interactives, classées par modules. Suis ton avancement et copie chaque prompt d'implémentation en 1 clic.</p>
+    </header>
+
+    <!-- DASHBOARD -->
+    <div class="dashboard-panel">
+      <div class="stats-grid">
+        <div class="stat-card total">
+          <div class="stat-val" id="stat-total">55</div>
+          <div class="stat-lbl">Total Modules</div>
+        </div>
+        <div class="stat-card done">
+          <div class="stat-val" id="stat-done">0</div>
+          <div class="stat-lbl">Implémentés</div>
+        </div>
+        <div class="stat-card prog">
+          <div class="stat-val" id="stat-prog">0</div>
+          <div class="stat-lbl">En Cours</div>
+        </div>
+        <div class="stat-card todo">
+          <div class="stat-val" id="stat-todo">55</div>
+          <div class="stat-lbl">À Développer</div>
+        </div>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <p class="audit-summary">Audit du code effectué le 30 août 2026 • Intégrations vertes reliées à l'application et validées par la suite de tests • Orange = implémentation partielle.</p>
+    </div>
+
+    <!-- CONTROLS -->
+    <div class="controls-wrap">
+      <div class="search-box">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" id="search-input" placeholder="Rechercher une fonctionnalité (ex: Docker, GPS, Voix, BCI)...">
+      </div>
+
+      <div class="filter-tags" id="filter-tags">
+        <button class="filter-btn active" data-cat="all">Tous</button>
+        <button class="filter-btn" data-cat="agents">🧠 Agents & Cerveau</button>
+        <button class="filter-btn" data-cat="dev">💻 Dev & Système</button>
+        <button class="filter-btn" data-cat="audio">🎙️ Audio & Voix</button>
+        <button class="filter-btn" data-cat="vision">👁️ Vision & Espace</button>
+        <button class="filter-btn" data-cat="security">🛡️ Sécurité & Privacy</button>
+        <button class="filter-btn" data-cat="life">🌐 Vie & Productivité</button>
+        <button class="filter-btn" data-cat="health">💓 Santé & Bio</button>
+      </div>
+    </div>
+
+    <div class="global-actions">
+      <button class="hud-btn" id="btn-export-plan">📋 Exporter le Plan JSON</button>
+      <button class="hud-btn secondary" id="btn-reset-all">🔄 Restaurer l'audit du code</button>
+    </div>
+
+    <!-- CARDS CONTAINER -->
+    <div class="grid" id="features-grid">
+      <!-- Generated via JS -->
+    </div>
+  </div>
+
+  <div id="toast">
+    <span id="toast-icon">✨</span>
+    <span id="toast-msg">Texte copié dans le presse-papier !</span>
+  </div>
+
+  <script>
+    const FEATURES_DATA = [
+      {
+        id: "feat-1",
+        cat: "audio",
+        catName: "🎙️ Audio & Voix",
+        title: "1. Interruption Vocale Instantanée (Barge-in sans latence)",
+        quote: "« ANO stop » ou « Attends » coupe immédiatement la parole de l'assistant.",
+        bullets: [
+          "<strong>Half-duplex intelligent avec double flux AEC PipeWire</strong> : sa voix ne pollue jamais le micro principal.",
+          "<strong>Détection Vosk locale ultralégère (~2% CPU)</strong> : écoute des mots-clés d'arrêt même pendant la synthèse vocale.",
+          "<strong>Coupure du TTS en moins de 50 ms</strong> sans nécessiter de clic souris."
+        ]
+      },
+      {
+        id: "feat-2",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "2. Perception d'Écran Proactive & Auto-Debug Live",
+        quote: "« C'est quoi ce bug dans mon terminal ? » ou « Explique-moi ce schéma à l'écran. »",
+        bullets: [
+          "<strong>Interception automatique des erreurs</strong> : tracebacks Python, panics Rust, builds C++ échoués.",
+          "<strong>Capture instantanée de la fenêtre active Hyprland</strong> sans besoin de découpage manuel.",
+          "<strong>Vision multimodale en direct</strong> : analyse de graphiques, architecture réseau, PDFs et code complexe."
+        ]
+      },
+      {
+        id: "feat-3",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "3. Voice DevSecOps & Maître du Système Linux",
+        quote: "« Relance la stack Docker, purge les conteneurs morts et montre les logs d'accès. »",
+        bullets: [
+          "<strong>Pilotage complet de l'OS</strong> : conteneurs Docker, services Systemd, gestion de paquets.",
+          "<strong>Automatisation Git intelligente</strong> : commits vocaux formulés proprement, rebases interactifs.",
+          "<strong>Orchestrateur Hyprland</strong> : déplacement dynamique de fenêtres sur les workspaces dédiés."
+        ]
+      },
+      {
+        id: "feat-4",
+        cat: "agents",
+        catName: "🧠 Agents & Cerveau",
+        title: "4. Mode « Agent Fantôme » (Délégation Asynchrone)",
+        quote: "« Analyse ce repo GitHub, écris les tests manquants et prépare-moi un résumé. »",
+        bullets: [
+          "<strong>Délégation en arrière-plan</strong> via le protocole d'outils MCP pendant que la voix reste libre.",
+          "<strong>Exécution de scripts, audits de sécurité et scraping</strong> en autonomie complète.",
+          "<strong>Interpellation vocale discrète à l'achèvement</strong> : « Patron, l'audit est terminé »."
+        ]
+      },
+      {
+        id: "feat-5",
+        cat: "audio",
+        catName: "🎙️ Audio & Voix",
+        title: "5. Prosodie Adaptative & Empathie Vocale",
+        quote: "Un assistant qui ressent ton niveau d'énergie et adapte son intonation.",
+        bullets: [
+          "<strong>Détection acoustique de l'état émotionnel</strong> : urgence, concentration, fatigue, détente.",
+          "<strong>Ajustement dynamique du débit et de la concision</strong> selon la situation.",
+          "<strong>Voix douce et posée en soirée</strong>, ultra-synthétique et rythmée lors des sprints de travail."
+        ]
+      },
+      {
+        id: "feat-6",
+        cat: "agents",
+        catName: "🧠 Agents & Cerveau",
+        title: "6. « Second Brain » : Graphe de Connaissances Universel",
+        quote: "« Retrouve-moi la commande pour compresser les vidéos dont on avait parlé le mois dernier. »",
+        bullets: [
+          "<strong>Indexation sémantique à l'écriture</strong> sans base vectorielle lourde (FTS5 enrichi par IA).",
+          "<strong>Réseau associatif</strong> reliant personnes, projets, fichiers de dev et notes personnelles.",
+          "<strong>Recherche par analogie d'idées</strong> et non par correspondance exacte de mots-clés."
+        ]
+      },
+      {
+        id: "feat-7",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "7. Navigation GPS Parlée Pas-à-Pas (Mobile + PC)",
+        quote: "« Dans 200 mètres, tourne à gauche sur l'avenue principale. »",
+        bullets: [
+          "<strong>Synchronisation temps réel</strong> avec le GPS poussé par l'application mobile Android (ANO-Remote).",
+          "<strong>Itinéraire OSRM / Valhalla animé</strong> sur la carte Leaflet du grand écran.",
+          "<strong>Annonces vocales anticipées à 3 seuils (500m / 150m / immédiat)</strong> via synthèse locale zéro latence."
+        ]
+      },
+      {
+        id: "feat-8",
+        cat: "agents",
+        catName: "🧠 Agents & Cerveau",
+        title: "8. Moteur d'Habitudes & Anticipation Proactive",
+        quote: "« Tu commences ta session de code, je te mets ta playlist habituelle ? »",
+        bullets: [
+          "<strong>Apprentissage des routines quotidiennes</strong> (horaires de dev, lancements d'apps, playlists).",
+          "<strong>Garde-fous stricts</strong> : une seule suggestion max par créneau, blocage immédiat en cas de refus.",
+          "<strong>Alertes de départ intelligentes</strong> en croisant l'agenda et le temps de trajet réel."
+        ]
+      },
+      {
+        id: "feat-9",
+        cat: "security",
+        catName: "🛡️ Sécurité & Privacy",
+        title: "9. Anneau de Sécurité Biométrique (Voice ID CAM++)",
+        quote: "Seule ta propre empreinte vocale autorise les actions destructrices du système.",
+        bullets: [
+          "<strong>Reconnaissance de locuteur neuronale (modèle CAM++ 512-dim)</strong> en microsecondes.",
+          "<strong>3 anneaux de privilèges</strong> : consultation libre, action système = voix vérifiée, destruction = voix + confirmation.",
+          "<strong>Immunité totale aux voix des vidéos YouTube</strong> ou aux personnes autour dans la pièce."
+        ]
+      },
+      {
+        id: "feat-10",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "10. Briefing du Matin & Débriefing du Soir",
+        quote: "Un panorama complet de tes journées à l'allumage et à l'extinction.",
+        bullets: [
+          "<strong>Matin</strong> : météo, rendez-vous du jour, emails importants et flash d'actualités ciblé.",
+          "<strong>Soir</strong> : synthèse des commits, temps passé par projet et rappels prioritaires pour le lendemain.",
+          "<strong>Restauration en un clic des tâches inachevées</strong>."
+        ]
+      },
+      {
+        id: "feat-11",
+        cat: "security",
+        catName: "🛡️ Sécurité & Privacy",
+        title: "11. Sentinelle Cyber & Lockdown d'Urgence (Protocole Zéro)",
+        quote: "« Protocole Zéro » : verrouille tout, coupe le réseau et masque les fenêtres sensibles.",
+        bullets: [
+          "<strong>Surveillance des sockets réseau et des processus anormaux</strong> sur Linux en continu.",
+          "<strong>Lockdown d'urgence en 1 seconde</strong> : extinction des flux réseau, verrouillage Hyprland, micro coupé.",
+          "<strong>Scanner anti-phishing dans le presse-papier</strong> avant ouverture d'un lien suspect."
+        ]
+      },
+      {
+        id: "feat-12",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "12. Secrétaire Vocal Autonome & Téléphonie",
+        quote: "« Jarvis, appelle le garage pour savoir si mon véhicule est disponible. »",
+        bullets: [
+          "<strong>Prise de rendez-vous téléphonique autonome</strong> (via SIP / Twilio / passerelle Android).",
+          "<strong>Filtrage vocal des appels entrants</strong> : répond, demande la raison et transmet un résumé sur le PC.",
+          "<strong>Enregistrement automatique des créneaux validés</strong> dans Google Calendar."
+        ]
+      },
+      {
+        id: "feat-13",
+        cat: "vision",
+        catName: "👁️ Vision & Espace",
+        title: "13. Contrôle Gestuel & Reconnaissance Faciale",
+        quote: "Un geste de la main devant la caméra pour couper le son ou changer de bureau.",
+        bullets: [
+          "<strong>MediaPipe / OpenCV ultrarapide</strong> : doigt sur la bouche = mute, balayage = workspace suivant, poing = pause.",
+          "<strong>Identification faciale des personnes entrant dans la pièce</strong> avec salutations adaptées.",
+          "<strong>Zéro charge CPU excessive</strong> grâce à un échantillonnage visuel intelligent."
+        ]
+      },
+      {
+        id: "feat-14",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "14. Hub Domotique & Contrôle Physique (Home Assistant)",
+        quote: "« Mode Focus : lumière tamisée à 20%, verrouille la porte et allume la LED rouge. »",
+        bullets: [
+          "<strong>Connexion MQTT / Home Assistant locale</strong> pour contrôler ampoules, prises, chauffage et volets.",
+          "<strong>Wake-on-LAN</strong> : réveil ou extinction de serveurs et PCs distants sur le réseau local.",
+          "<strong>Scénarios immersifs liés à tes activités</strong> (Mode Cinéma, Mode Code, Mode Nuit)."
+        ]
+      },
+      {
+        id: "feat-15",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "15. Live Coding Vocal & Injection Cursor / VS Code",
+        quote: "« Rédige un composant paginé avec bouton d'export CSV et insère-le au curseur. »",
+        bullets: [
+          "<strong>Génération et injection instantanée de code</strong> directement à l'emplacement actif dans l'IDE.",
+          "<strong>Refactoring vocal</strong> : « Vectorise cette boucle en NumPy et ajoute des annotations de type ».",
+          "<strong>Génération de micro-applications interactives à la volée</strong> pour tester des prototypes."
+        ]
+      },
+      {
+        id: "feat-16",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "16. Sparring Partner & Simulateur d'Entraînement",
+        quote: "« Entraîne-moi pour mon entretien d'embauche technique de demain. »",
+        bullets: [
+          "<strong>Jeu de rôle vocal interactif</strong> : recruteur exigeant, client difficile, examinateur technique.",
+          "<strong>Challenge en direct</strong> avec questions pièges et objections réalistes.",
+          "<strong>Analyse d'élocution post-session</strong> : détection des hésitations et conseils de clarté."
+        ]
+      },
+      {
+        id: "feat-17",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "17. Meeting Transcriber & Synthèse d'Action Items",
+        quote: "« Écoute cette réunion Google Meet et génère le plan d'action des tâches. »",
+        bullets: [
+          "<strong>Transcription multi-locuteurs en temps réel</strong> capturant l'audio système.",
+          "<strong>Extraction automatique des décisions et responsabilités</strong> (« Qui fait quoi pour quand »).",
+          "<strong>Envoi automatique de la fiche récapitulative</strong> par email ou Telegram."
+        ]
+      },
+      {
+        id: "feat-18",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "18. Radar Économique & Veille GitHub 24/7",
+        quote: "« Un nouveau modèle de VAD vient de sortir sur GitHub et bat tous les benchmarks. »",
+        bullets: [
+          "<strong>Surveillance autonome des flux ArXiv, HackerNews et dépôts GitHub</strong> selon tes stacks préférées.",
+          "<strong>Chasseur de baisses de prix et promotions réelles</strong> sur tes listes d'achats matériel.",
+          "<strong>Alertes boursières et crypto en direct</strong> sur franchissement de seuils clés."
+        ]
+      },
+      {
+        id: "feat-19",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "19. Digital Twin & Secrétariat Multi-Messageries",
+        quote: "« Résume les 20 messages Discord et prépare un brouillon pour Alex dans mon style. »",
+        bullets: [
+          "<strong>Hub unifié pour Telegram, WhatsApp, Discord et Slack</strong> avec filtrage d'urgence.",
+          "<strong>Rédaction de brouillons mimant ton style d'écriture</strong> nécessitant un simple « Envoie » pour validation.",
+          "<strong>CRM relationnel</strong> : rappels d'anniversaires et suggestions de reprise de contact."
+        ]
+      },
+      {
+        id: "feat-20",
+        cat: "health",
+        catName: "💓 Santé & Bio",
+        title: "20. Bio-Monitoring, Posture & Rythme Circadien",
+        quote: "« Tes yeux fatiguent et tu es courbé depuis 45 min, prends 2 minutes pour t'étirer. »",
+        bullets: [
+          "<strong>Analyse discrète de posture et de clignements d'yeux</strong> par caméra pour prévenir la fatigue oculaire.",
+          "<strong>Connexion API / Bluetooth avec montres connectées</strong> (sommeil, stress, fréquence cardiaque).",
+          "<strong>Gestion circadienne de la lumière</strong> : atténuation automatique de la lumière bleue écran et bureau à 22h."
+        ]
+      },
+      {
+        id: "feat-21",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "21. Studio Créatif & Montage Vidéo Automatique (Auto-Cut)",
+        quote: "« Prends mon enregistrement d'écran, coupe les blancs et ajoute des sous-titres animés. »",
+        bullets: [
+          "<strong>Découpage automatique des silences et hésitations</strong> avec FFmpeg & Whisper en quelques secondes.",
+          "<strong>Sous-titrage dynamique synchronisé</strong> prêt pour YouTube / Shorts.",
+          "<strong>Génération d'images et d'icônes vectorielles</strong> à la voix pour tes projets."
+        ]
+      },
+      {
+        id: "feat-22",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "22. Sandbox Sécurisée & Micro-VM Jetables",
+        quote: "« Teste ce script inconnu dans un conteneur éphémère et vérifie s'il est sain. »",
+        bullets: [
+          "<strong>Isolation stricte dans des micro-conteneurs Docker / Firecracker</strong> sans risque pour la machine hôte.",
+          "<strong>Audit automatique des comportements réseau et système</strong> du code testé.",
+          "<strong>Benchmarks de performance comparatifs</strong> entre plusieurs algorithmes avec graphiques."
+        ]
+      },
+      {
+        id: "feat-23",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "23. « Time Travel » : Snapshots de Sessions Hyprland",
+        quote: "« Restaure mon espace de travail tel qu'il était mardi à 15h sur le module audio. »",
+        bullets: [
+          "<strong>Restauration en 1 seconde</strong> : fenêtres, terminaux, branches Git et fichiers ouverts dans l'IDE.",
+          "<strong>Historique d'activité enrichi</strong> : liste précise des commits et recherches faites à n'importe quelle date.",
+          "<strong>Bascule instantanée entre plusieurs projets complexes</strong> sans perdre le fil."
+        ]
+      },
+      {
+        id: "feat-24",
+        cat: "audio",
+        catName: "🎙️ Audio & Voix",
+        title: "24. Traducteur Téléphonique Universel (Mode Babel Fish)",
+        quote: "« Traduis mon appel en anglais dans mon oreillette et réponds avec ma voix en anglais. »",
+        bullets: [
+          "<strong>Traduction vocale bidirectionnelle en temps réel</strong> pour les réunions ou vidéos étrangères.",
+          "<strong>Clonage de timbre vocal</strong> pour que ton interlocuteur étranger entende tes propos avec ta propre voix.",
+          "<strong>Prise en charge instantanée de plus de 30 langues</strong>."
+        ]
+      },
+      {
+        id: "feat-25",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "25. Enquêteur OSINT & Fact-Checking en Direct",
+        quote: "« Fais-moi une fiche d'investigation sur cette entreprise avant mon rendez-vous. »",
+        bullets: [
+          "<strong>Recherche approfondie autonome</strong> : brevets, stack technique, dirigeants, réputation et litiges récents.",
+          "<strong>Vérification des faits en direct</strong> lors de l'écoute d'un podcast ou d'une conférence.",
+          "<strong>Fiche de synthèse ultra-dense de 2 minutes</strong> avec les questions clés à poser."
+        ]
+      },
+      {
+        id: "feat-26",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "26. Web Operator Autonome (Computer Use)",
+        quote: "« Réserve un billet de train pour Lyon vendredi soir et choisis une place côté fenêtre. »",
+        bullets: [
+          "<strong>Navigation invisible via Playwright</strong> pour exécuter des réservations et remplir des formulaires.",
+          "<strong>Téléchargement et classement automatique des factures et fiches de paie</strong> chaque mois.",
+          "<strong>Demande de validation unique à l'étape finale du paiement</strong>."
+        ]
+      },
+      {
+        id: "feat-27",
+        cat: "audio",
+        catName: "🎙️ Audio & Voix",
+        title: "27. Mode « Murmure Discret » (Subvocal)",
+        quote: "Chuchote doucement au micro dans une bibliothèque, il te répond feutré dans l'oreillette.",
+        bullets: [
+          "<strong>Détection acoustique ultra-sensible des phonèmes non voisés</strong> (souffle du chuchotement).",
+          "<strong>Synthèse vocale murmurée adaptée</strong> pour préserver la discrétion dans les lieux publics.",
+          "<strong>Parfaite intelligibilité sans forcer sur les cordes vocales</strong>."
+        ]
+      },
+      {
+        id: "feat-28",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "28. Copilote Automobile & Diagnostic OBD2",
+        quote: "« Le voyant moteur s'est allumé, analyse le code erreur en direct. »",
+        bullets: [
+          "<strong>Connexion Bluetooth au calculateur OBD2</strong> de la voiture pour lire et expliquer les codes pannes.",
+          "<strong>Détection de somnolence au volant par caméra smartphone</strong> avec engagement de conversation anti-sommeil.",
+          "<strong>Recherche des stations-service les moins chères</strong> sur l'itinéraire en cours."
+        ]
+      },
+      {
+        id: "feat-29",
+        cat: "health",
+        catName: "💓 Santé & Bio",
+        title: "29. Vision Frigo & Chef Cuisinier en Direct",
+        quote: "Montre l'intérieur de ton frigo à la caméra : « Qu'est-ce que je peux cuisiner en 15 min ? »",
+        bullets: [
+          "<strong>Reconnaissance instantanée d'ingrédients et restes</strong> avec propositions de recettes adaptées.",
+          "<strong>Calculateur nutritionnel par caméra</strong> : estimation des calories et macronutriments de ton assiette.",
+          "<strong>Suivi automatique des stocks et dates d'expiration</strong>."
+        ]
+      },
+      {
+        id: "feat-30",
+        cat: "security",
+        catName: "🛡️ Sécurité & Privacy",
+        title: "30. Zero Trace Privacy & Nettoyeur d'Empreinte",
+        quote: "« Crée un email jetable pour ce site et supprime toutes les métadonnées de cette image. »",
+        bullets: [
+          "<strong>Génération d'alias d'emails temporaires</strong> pour bloquer le spam et protéger ton adresse réelle.",
+          "<strong>Purge automatique des métadonnées EXIF et coordonnées GPS</strong> sur toutes les photos partagées.",
+          "<strong>Détection et blocage des traceurs web intrusifs</strong>."
+        ]
+      },
+      {
+        id: "feat-31",
+        cat: "agents",
+        catName: "🧠 Agents & Cerveau",
+        title: "31. Simulateur Holodeck (Personas Multi-Agents)",
+        quote: "« Testons mon idée d'application auprès d'un investisseur, d'un dev et d'un designer IA. »",
+        bullets: [
+          "<strong>Débat multi-agents simultané</strong> pour trouver les failles d'un projet avant son lancement.",
+          "<strong>Simulation de réactions d'utilisateurs types</strong> sur une maquette ou une proposition commerciale.",
+          "<strong>Jeux de rôle interactifs vocaux immersifs</strong> pour la détente avec effets sonores."
+        ]
+      },
+      {
+        id: "feat-32",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "32. Voice-to-3D & Modélisation CAO Vocale",
+        quote: "« Crée un support mural pour mon casque audio avec deux trous de vis de 4 mm. »",
+        bullets: [
+          "<strong>Génération de code OpenSCAD paramétrique</strong> à partir d'une simple description orale.",
+          "<strong>Rendu 3D instantané à l'écran</strong> et export automatique en fichier `.stl` pour impression 3D.",
+          "<strong>Ajustement des cotes à la voix en direct</strong>."
+        ]
+      },
+      {
+        id: "feat-33",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "33. Auto-Évolution & Auto-Programmation d'Outils",
+        quote: "« Jarvis, apprends à interagir avec la nouvelle API de Spotify. »",
+        bullets: [
+          "<strong>Écriture autonome de nouveaux modules d'actions Python</strong> dans le dossier `actions/`.",
+          "<strong>Validation par tests unitaires automatisés</strong> avant rechargement à chaud sans redémarrage.",
+          "<strong>Auto-optimisation nocturne des requêtes de mémoire</strong> et des temps de réponse audio."
+        ]
+      },
+      {
+        id: "feat-34",
+        cat: "health",
+        catName: "💓 Santé & Bio",
+        title: "34. Bouclier Anti-Distraction & Gardien de Dopamine",
+        quote: "Un ange gardien qui t'aide à rester concentré sur ce qui compte vraiment.",
+        bullets: [
+          "<strong>Détecteur de dispersion cognitive</strong> : intervient si tu alternes entre 12 onglets sans avancer.",
+          "<strong>Blocage dynamique des flux infinis (Shorts, Reels, Twitter)</strong> pendant les sessions de concentration.",
+          "<strong>Maintien dans l'état de Flow</strong> avec pauses programmées intelligentes."
+        ]
+      },
+      {
+        id: "feat-35",
+        cat: "security",
+        catName: "🛡️ Sécurité & Privacy",
+        title: "35. Sentinelle Acoustique Environnementale",
+        quote: "« Un bruit d'écoulement d'eau inhabituel est détecté dans la salle de bain depuis 10 min. »",
+        bullets: [
+          "<strong>Classification locale des bruits de la maison en veille</strong> : fuite d'eau, bris de verre, alarme fumée.",
+          "<strong>Alerte prioritaire sur smartphone</strong> en cas d'anomalie sonore critique.",
+          "<strong>Zéro transmission de données audio sur Internet</strong> pour respecter la vie privée du domicile."
+        ]
+      },
+      {
+        id: "feat-36",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "36. Négociateur Automatique de Prix (LeBonCoin / Vinted)",
+        quote: "« Vends cette carte graphique à 180 € minimum, gère les premiers messages des acheteurs. »",
+        bullets: [
+          "<strong>Discussion polie et autonome avec les acheteurs/vendeurs</strong> avec défense de ton prix cible.",
+          "<strong>Filtrage automatique des propositions farfelues et arnaques</strong>.",
+          "<strong>Alerte sur les erreurs de prix éclair</strong> sur les sites d'e-commerce."
+        ]
+      },
+      {
+        id: "feat-37",
+        cat: "audio",
+        catName: "🎙️ Audio & Voix",
+        title: "37. Paysages Sonores Immersifs Génératifs",
+        quote: "L'ambiance sonore de ta pièce s'adapte en direct à ce que tu lis ou codes.",
+        bullets: [
+          "<strong>Génération d'ambiances dynamiques</strong> : synthwave pour le code, pluie et feu de bois pour la lecture.",
+          "<strong>Ondes cérébrales binaurales (Alpha / Thêta)</strong> synchronisées pour favoriser la concentration profonde.",
+          "<strong>Transition sonore imperceptible</strong> au changement d'activité."
+        ]
+      },
+      {
+        id: "feat-38",
+        cat: "agents",
+        catName: "🧠 Agents & Cerveau",
+        title: "38. Biographe de Vie & Mémoire Épisodique Permanente",
+        quote: "« Comment j'avais résolu ce bug de PipeWire en août 2026 ? »",
+        bullets: [
+          "<strong>Magazine interactif hebdomadaire de ta vie</strong> : projets achevés, lieux visités, apprentissages clés.",
+          "<strong>Exploration temporelle de ton passé</strong> comme une base de connaissances vivante.",
+          "<strong>Rappels des leçons apprises</strong> face à des situations déjà rencontrées."
+        ]
+      },
+      {
+        id: "feat-39",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "39. Alchimiste Universel de Données",
+        quote: "« Transforme cette vidéo de 40 min en un schéma Mermaid, une fiche Notion et un quiz. »",
+        bullets: [
+          "<strong>Conversion polymorphe instantanée</strong> de n'importe quel contenu (PDF, audio, code, base de données).",
+          "<strong>Génération de présentations diaporama HTML5</strong> et de diagrammes d'architecture en 5 secondes.",
+          "<strong>Synthèse ultra-dense adaptée au temps dont tu disposes</strong>."
+        ]
+      },
+      {
+        id: "feat-40",
+        cat: "audio",
+        catName: "🎙️ Audio & Voix",
+        title: "40. Podcast Matinal Sur-Mesure",
+        quote: "Une émission de radio personnalisée de 7 minutes créée chaque matin à ton réveil.",
+        bullets: [
+          "<strong>Compilation audio captivante avec musique de fond</strong> : météo, trajet, emails urgents, actus ciblées.",
+          "<strong>Ton dynamique et motivant</strong> adapté à ton planning de la journée.",
+          "<strong>Écoutable directement sur smartphone pendant que tu te prépares</strong>."
+        ]
+      },
+      {
+        id: "feat-41",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "41. Auto-Healing Linux & Optimiseur de Noyau",
+        quote: "« PipeWire avait planté, j'ai relancé le socket et restauré le routage audio en 2 secondes. »",
+        bullets: [
+          "<strong>Surveillance autonome de `systemd` et `journalctl`</strong> pour réparer les services en panne.",
+          "<strong>Nettoyage automatique de la RAM et de la VRAM</strong> lors des lancements de gros programmes.",
+          "<strong>Attribution de priorité temps réel (SCHED_FIFO)</strong> au thread vocal pour fluidité absolue."
+        ]
+      },
+      {
+        id: "feat-42",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "42. Réseau Maillé Multi-Appareils (Swarm Mesh)",
+        quote: "Passe du PC au smartphone sans aucune interruption de ta conversation avec Jarvis.",
+        bullets: [
+          "<strong>Passage de témoin transparent de la session</strong> entre PC bureau, portable et téléphone.",
+          "<strong>Pilotage d'un parc de machines hétérogènes</strong> (Raspberry Pi, serveurs de calcul, PC).",
+          "<strong>Contexte partagé unifié</strong> en temps réel sur tous tes terminaux."
+        ]
+      },
+      {
+        id: "feat-43",
+        cat: "audio",
+        catName: "🎙️ Audio & Voix",
+        title: "43. Audition Bionique & Son Spatial 3D",
+        quote: "Isole la voix de ton interlocuteur dans un café bruyant et spatialise les réponses de Jarvis.",
+        bullets: [
+          "<strong>Suppression directionnelle sélective des bruits ambiants</strong> pour conversations en lieu bondé.",
+          "<strong>Positionnement 3D réaliste de la voix</strong> dans tes écouteurs selon l'angle de ton écran.",
+          "<strong>Clarté sonore cristalline en toute circonstance</strong>."
+        ]
+      },
+      {
+        id: "feat-44",
+        cat: "vision",
+        catName: "👁️ Vision & Espace",
+        title: "44. Vision Guidage Réel & Scan Comptable",
+        quote: "Montre un composant ou un tableau électrique : « Où se branche ce câble ? »",
+        bullets: [
+          "<strong>Assistance technique en réalité assistée</strong> pour le montage, câblage et dépannage physique.",
+          "<strong>Extraction automatique des données de factures sous webcam</strong> (montants, IBAN, dates d'échéance).",
+          "<strong>Rangement et archivage comptable automatique</strong> dans ton cloud local."
+        ]
+      },
+      {
+        id: "feat-45",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "45. Entraîneur Cognitif Vocal & Anki Parlé",
+        quote: "« Pendant que tu te prépares, révisons 5 concepts de ton projet d'architecture. »",
+        bullets: [
+          "<strong>Répétition espacée vocale (Spaced Repetition)</strong> lors des temps morts du quotidien.",
+          "<strong>Quiz interactifs adaptés à ton niveau</strong> avec feedback immédiat sur tes réponses.",
+          "<strong>Ancrage durable des connaissances techniques</strong> sans avoir à regarder un écran."
+        ]
+      },
+      {
+        id: "feat-46",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "46. Pilotage Imprimante 3D & Matériel (OctoPrint / Klipper)",
+        quote: "« Lance l'impression du boîtier et surveille les décollements par la caméra. »",
+        bullets: [
+          "<strong>Contrôle vocal des impressions 3D</strong>, températures de buses et plateaux.",
+          "<strong>Détection automatique d'échec d'impression par vision</strong> avec arrêt d'urgence préventif.",
+          "<strong>Télémétrie en direct de capteurs Arduino / ESP32</strong> de ton atelier."
+        ]
+      },
+      {
+        id: "feat-47",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "47. Négociateur Financier & Détecteur de Hausses (CFO)",
+        quote: "« Ton forfait a augmenté de 4 €, j'ai rédigé le courrier de résiliation conforme à la loi. »",
+        bullets: [
+          "<strong>Surveillance des abonnements récurrents</strong> et détection des hausses tarifaires cachées.",
+          "<strong>Génération automatique de courriers de réclamation juridiques</strong> (loi Châtel, RGPD, retards).",
+          "<strong>Optimisation de ton budget mensuel</strong> avec suggestions d'économies concrètes."
+        ]
+      },
+      {
+        id: "feat-48",
+        cat: "agents",
+        catName: "🧠 Agents & Cerveau",
+        title: "48. Hive Mind : War Room d'Agents Spécialisés",
+        quote: "« Lance une simulation d'équipe complète pour concevoir notre nouvelle application. »",
+        bullets: [
+          "<strong>Déploiement de 5 sous-agents spécialisés</strong> : Architecte, Dev Backend, Designer UI, Pentester Sécurité, PM.",
+          "<strong>Débats et arbitrage autonome des compromis techniques</strong> en arrière-plan.",
+          "<strong>Synthèse unifiée de décision</strong> présentée par Jarvis à l'utilisateur."
+        ]
+      },
+      {
+        id: "feat-49",
+        cat: "audio",
+        catName: "🎙️ Audio & Voix",
+        title: "49. Caméléon Vocal & Doubleur Multi-Personnages",
+        quote: "« Lis-moi ce document avec la voix de Jarvis VO, puis passe en mode FRIDAY. »",
+        bullets: [
+          "<strong>Clonage et bascule instantanée entre plusieurs voix légendaires</strong>.",
+          "<strong>Lecture théâtralisée de livres et récits</strong> avec attribution d'une voix distincte par personnage.",
+          "<strong>Richesse d'intonation émotionnelle expressive</strong>."
+        ]
+      },
+      {
+        id: "feat-50",
+        cat: "agents",
+        catName: "🧠 Agents & Cerveau",
+        title: "50. Oracle Prédictif & Arbres de Décision Probabilistes",
+        quote: "« Si je consacre 20h/semaine à ce projet, simule les scénarios à 18 mois. »",
+        bullets: [
+          "<strong>Modélisation de scénarios bayésiens</strong> croisant temps, budget, probabilité d'échec et stress.",
+          "<strong>Graphe de décision interactif visualisé à l'écran</strong> avec points de bascule critiques.",
+          "<strong>Clarification des choix stratégiques majeurs</strong> sans biais émotionnel."
+        ]
+      },
+      {
+        id: "feat-51",
+        cat: "health",
+        catName: "💓 Santé & Bio",
+        title: "51. Interface Cerveau-Machine (Casques EEG / BCI)",
+        quote: "Déclenche des actions et adapte l'environnement par ton niveau d'ondes cérébrales.",
+        bullets: [
+          "<strong>Connexion aux casques EEG grand public (Muse, OpenBCI)</strong> pour mesurer les ondes Bêta/Alpha.",
+          "<strong>Passage automatique en mode sombre et focus total</strong> dès détection d'hyper-concentration.",
+          "<strong>Déclenchement de macros par impulsion d'attention soutenue</strong> sans prononcer un mot."
+        ]
+      },
+      {
+        id: "feat-52",
+        cat: "dev",
+        catName: "💻 Dev & Système",
+        title: "52. Archéologue de Code & Cartographe de Dépôts Géants",
+        quote: "« Explique-moi le parcours d'un paquet réseau dans le noyau Linux. »",
+        bullets: [
+          "<strong>Cartographie 3D navigable de dépôts de millions de lignes</strong> (Chromium, Linux, Unreal Engine).",
+          "<strong>Animation visuelle des flux d'exécution</strong> et diagrammes de séquence interactifs.",
+          "<strong>Explication pas-à-pas des composants critiques</strong> et de leur rôle."
+        ]
+      },
+      {
+        id: "feat-53",
+        cat: "life",
+        catName: "🌐 Vie & Productivité",
+        title: "53. Psychologue Négociateur & Analyse de Sous-Entendus",
+        quote: "« Analyse cet email : qu'est-ce qu'il sous-entend et comment formuler la réponse la plus persuasive ? »",
+        bullets: [
+          "<strong>Décryptage psychologique des non-dits et rapports de force</strong> dans les écrits professionnels.",
+          "<strong>Moteur de persuasion tactique basé sur les principes de Cialdini</strong>.",
+          "<strong>Rédaction de 3 variantes stratégiques</strong> : diplomate, ferme ou compromis."
+        ]
+      },
+      {
+        id: "feat-54",
+        cat: "vision",
+        catName: "👁️ Vision & Espace",
+        title: "54. Spatial Data Builder (Visualisation 3D Cyberpunk)",
+        quote: "« Affiche mes finances et l'état de mes serveurs sous forme de ville 3D interactive. »",
+        bullets: [
+          "<strong>Data-visualisation 3D immersive (Three.js / WebGL)</strong> où chaque immeuble représente une catégorie.",
+          "<strong>Lumières et météo de la ville reflétant la santé de tes systèmes</strong> en temps réel.",
+          "<strong>Navigation spatiale fluide et interactive</strong> à la souris ou au clavier."
+        ]
+      },
+      {
+        id: "feat-55",
+        cat: "vision",
+        catName: "👁️ Vision & Espace",
+        title: "55. Sentinelle Thermique & Vision Infrarouge",
+        quote: "« Vérifie si la carte mère ou la batterie chauffe anormalement. »",
+        bullets: [
+          "<strong>Connexion caméra thermique USB (FLIR / Infiray)</strong> pour inspecter cartes électroniques et pièces.",
+          "<strong>Détection préventive de composants en surchauffe</strong> avant la panne matérielle.",
+          "<strong>Repérage visuel des ponts thermiques et déperditions d'énergie</strong> dans la maison."
+        ]
+      }
+    ];
+
+    // Audit du dépôt ANO-GPT (30 août 2026).
+    // "done" = fonctionnalité principale reliée à main.py et utilisable.
+    // "prog" = briques réelles présentes, mais promesse de la fiche incomplète.
+    const CODE_AUDIT = {
+      "feat-1":  { status: "done", evidence: "core/barge_in.py + intégration audio dans main.py + tests d'interruption locale." },
+      "feat-2":  { status: "done", evidence: "Auto-debug, capture Hyprland et vision multimodale reliés ; application de correctif désormais explicite, validée et sauvegardée." },
+      "feat-3":  { status: "done", evidence: "actions/devsecops.py couvre Docker, systemd, paquets, Git et audit ; actions/hypr_orchestrator.py gère les workspaces." },
+      "feat-4":  { status: "done", evidence: "Agent Fantôme via agy réellement asynchrone et persistant : conversation libre, annulation du groupe, rapport durable, journal Kitty facultatif, comparaison vérifiée des fichiers créés/modifiés/supprimés et annonce proactive finale." },
+      "feat-5":  { status: "done", evidence: "core/prosody.py analyse le signal et applique les profils urgence, focus, fatigue et nuit." },
+      "feat-6":  { status: "done", evidence: "Graphe SQLite/FTS5, enrichissement sémantique, ingestion projets/contacts/notes et recherche associative implémentés." },
+      "feat-7":  { status: "done", evidence: "Navigation OSRM/Valhalla, GPS live, seuils vocaux et recalcul reliés ; blocage sur l'étape de départ Valhalla corrigé et testé." },
+      "feat-8":  { status: "done", evidence: "core/habit_model.py apprend sur 21 jours avec seuils, limite quotidienne et blocage de 30 jours après refus." },
+      "feat-9":  { status: "done", evidence: "CAM++ relié aux outils sensibles avec politique fail-closed : verdict en cours, absent, expiré ou voix inconnue bloque l'action." },
+      "feat-10": { status: "prog", evidence: "Briefing matinal complet et testé ; le débriefing automatique du soir et la restauration des tâches restent à finaliser." },
+      "feat-12": { status: "prog", evidence: "Appels sortants implémentés via ANO-Remote : permissions Android, recherche dans les contacts du téléphone, ambiguïtés, carte SIM et retour d'état. Filtrage entrant et conversation autonome restent à développer." },
+      "feat-15": { status: "prog", evidence: "actions/code_helper.py et actions/dev_agent.py savent générer, modifier, optimiser, exécuter et corriger du code ; l'injection au curseur IDE manque." },
+      "feat-16": { status: "done", evidence: "Sparring Partner relié à Gemini Live : quatre rôles, difficultés, manches et objections structurées, capture des transcriptions vocales, débit réel, hésitations, répétitions, clarté et rapport final testés." },
+      "feat-18": { status: "prog", evidence: "Veille persistante de prix et recherche web actualité/research disponibles ; flux GitHub/ArXiv et alertes marché dédiées manquent." },
+      "feat-19": { status: "prog", evidence: "Envoi WhatsApp, Telegram, Signal, Discord, Instagram et Messenger avec confirmation, plus contacts ; pas encore de hub de synthèse multi-messageries." },
+      "feat-21": { status: "prog", evidence: "Traitement FFmpeg, coupe, compression, conversion et transcription vidéo disponibles ; auto-cut des silences et sous-titres animés manquent." },
+      "feat-25": { status: "prog", evidence: "Recherche web approfondie, actualités, comparaison et synthèse existent ; le pipeline OSINT/fact-check continu n'est pas spécialisé." },
+      "feat-26": { status: "prog", evidence: "Moteur Playwright avec navigation, clic intelligent, saisie, formulaires et téléchargements ; workflow de paiement protégé incomplet." },
+      "feat-29": { status: "prog", evidence: "La caméra PC/téléphone et la vision multimodale peuvent analyser aliments et images ; stocks et dates d'expiration ne sont pas suivis." },
+      "feat-33": { status: "prog", evidence: "Agent de développement, auto-debug et auto-réparation d'outils existent ; création autonome d'une nouvelle action avec rechargement à chaud incomplète." },
+      "feat-34": { status: "done", evidence: "Gardien Focus opt-in relié à Hyprland et au bus proactif : score local sur dix minutes, intervention après dispersion, blocage URL précis Shorts/Reels/X/TikTok via CDP, restauration, confidentialité et pauses adaptatives protégeant le flow, tous testés." },
+      "feat-38": { status: "prog", evidence: "Mémoire épisodique, conversations datées et graphe temporel sont persistants ; le magazine hebdomadaire n'est pas généré." },
+      "feat-39": { status: "prog", evidence: "Le processeur universel couvre images, PDF, documents, données, code, audio, vidéo, archives et PPTX ; les sorties Mermaid/Notion/quiz ne sont pas toutes automatisées." },
+      "feat-40": { status: "prog", evidence: "Le contenu personnalisé du briefing matinal et sa restitution vocale existent ; l'émission audio de 7 minutes distribuée au smartphone manque." },
+      "feat-41": { status: "prog", evidence: "Diagnostic, statistiques d'outils et lancement d'auto-réparation existent ; optimisation RAM/VRAM et priorité noyau SCHED_FIFO manquent." },
+      "feat-42": { status: "prog", evidence: "Dashboard mobile authentifié avec canaux WebSocket audio, caméra, GPS et commandes ; transfert transparent d'une session entre plusieurs machines absent." },
+      "feat-44": { status: "prog", evidence: "Vision live PC/téléphone et OCR/analyse de documents existent ; extraction comptable structurée et archivage automatique restent à faire." },
+      "feat-47": { status: "prog", evidence: "La veille persistante d'une baisse de prix est disponible ; analyse bancaire des abonnements et courriers juridiques automatiques manquent." },
+      "feat-49": { status: "prog", evidence: "Choix et bascule durable entre plusieurs voix Gemini disponibles ; clonage vocal et distribution multi-personnages absents." },
+      "feat-52": { status: "prog", evidence: "Indexation de projets, graphe de connaissances, Mermaid et agent d'explication de code existent ; cartographie 3D de très grands dépôts absente." }
+    };
+
+    const DEFAULT_STATUSES = Object.fromEntries(
+      FEATURES_DATA.map(feature => [feature.id, CODE_AUDIT[feature.id]?.status || 'todo'])
+    );
+
+    // Une nouvelle clé garantit que l'audit remplace l'ancien état vide v1.
+    // Les changements manuels restent ensuite persistants dans le navigateur.
+    const STORAGE_KEY = 'anogpt_jarvis_features_status_v2';
+    let savedStatuses;
+    try {
+      savedStatuses = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    } catch (_error) {
+      savedStatuses = null;
+    }
+    let cardStatuses = savedStatuses && typeof savedStatuses === 'object'
+      ? { ...DEFAULT_STATUSES, ...savedStatuses }
+      : { ...DEFAULT_STATUSES };
+
+    // DOM Elements
+    const grid = document.getElementById('features-grid');
+    const searchInput = document.getElementById('search-input');
+    const filterTags = document.getElementById('filter-tags');
+    const statTotal = document.getElementById('stat-total');
+    const statDone = document.getElementById('stat-done');
+    const statProg = document.getElementById('stat-prog');
+    const statTodo = document.getElementById('stat-todo');
+    const progressFill = document.getElementById('progress-fill');
+    const toast = document.getElementById('toast');
+    const toastMsg = document.getElementById('toast-msg');
+
+    let currentCategory = 'all';
+    let searchQuery = '';
+
+    // Render Cards
+    function renderCards() {
+      grid.innerHTML = '';
+      
+      const filtered = FEATURES_DATA.filter(feat => {
+        const matchesCat = currentCategory === 'all' || feat.cat === currentCategory;
+        const matchesSearch = !searchQuery || 
+          feat.title.toLowerCase().includes(searchQuery) ||
+          feat.quote.toLowerCase().includes(searchQuery) ||
+          feat.bullets.some(b => b.toLowerCase().includes(searchQuery));
+        return matchesCat && matchesSearch;
+      });
+
+      filtered.forEach(feat => {
+        const status = cardStatuses[feat.id] || 'todo';
+        const isDone = status === 'done';
+
+        const card = document.createElement('div');
+        card.className = `feature-card ${isDone ? 'is-done' : ''}`;
+        card.dataset.id = feat.id;
+
+        const bulletsHtml = feat.bullets.map(b => `<li>${b}</li>`).join('');
+        const audit = CODE_AUDIT[feat.id];
+        const auditHtml = audit
+          ? `<div class="audit-note ${audit.status}"><strong>${audit.status === 'done' ? '✓ Preuve dans le code' : '⚙ Implémentation partielle'}</strong><br>${audit.evidence}</div>`
+          : '';
+
+        card.innerHTML = `
+          <div>
+            <div class="card-header">
+              <span class="cat-pill">${feat.catName}</span>
+            </div>
+            <h3 class="card-title">${feat.title}</h3>
+            <div class="quote-box">« ${feat.quote.replace(/[«»]/g, '')} »</div>
+            <div class="card-body">
+              <ul>${bulletsHtml}</ul>
+            </div>
+            ${auditHtml}
+          </div>
+          <div class="card-footer">
+            <select class="status-select" data-id="${feat.id}">
+              <option value="todo" ${status === 'todo' ? 'selected' : ''}>⏳ À Développer</option>
+              <option value="prog" ${status === 'prog' ? 'selected' : ''}>⚙️ En Cours</option>
+              <option value="done" ${status === 'done' ? 'selected' : ''}>✅ Implémenté / complet</option>
+            </select>
+            <button class="copy-btn" data-id="${feat.id}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              Copier
+            </button>
+          </div>
+        `;
+
+        grid.appendChild(card);
+      });
+
+      updateStats();
+      attachEvents();
+    }
+
+    // Update Dashboard Statistics
+    function updateStats() {
+      const total = FEATURES_DATA.length;
+      let doneCount = 0;
+      let progCount = 0;
+      let todoCount = 0;
+
+      FEATURES_DATA.forEach(feat => {
+        const s = cardStatuses[feat.id] || 'todo';
+        if (s === 'done') doneCount++;
+        else if (s === 'prog') progCount++;
+        else todoCount++;
+      });
+
+      statTotal.textContent = total;
+      statDone.textContent = doneCount;
+      statProg.textContent = progCount;
+      statTodo.textContent = todoCount;
+
+      const pct = Math.round((doneCount / total) * 100);
+      progressFill.style.width = `${pct}%`;
+    }
+
+    // Attach Event Handlers
+    function attachEvents() {
+      // Status Changes
+      document.querySelectorAll('.status-select').forEach(sel => {
+        sel.addEventListener('change', (e) => {
+          const id = e.target.dataset.id;
+          const val = e.target.value;
+          cardStatuses[id] = val;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(cardStatuses));
+          
+          const card = document.querySelector(`.feature-card[data-id="${id}"]`);
+          if (card) {
+            if (val === 'done') card.classList.add('is-done');
+            else card.classList.remove('is-done');
+          }
+          updateStats();
+        });
+      });
+
+      // Copy Buttons
+      document.querySelectorAll('.copy-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = btn.dataset.id;
+          const feat = FEATURES_DATA.find(f => f.id === id);
+          if (!feat) return;
+
+          const plainBullets = feat.bullets.map(b => `  • ${b.replace(/<[^>]*>/g, '')}`).join('\n');
+          const copyText = `──────
+### ${feat.title}
+
+  │ « ${feat.quote.replace(/[«»]/g, '')} »
+
+${plainBullets}
+──────`;
+
+          navigator.clipboard.writeText(copyText).then(() => {
+            btn.classList.add('copied');
+            btn.innerHTML = `✓ Copié !`;
+            showToast(`« ${feat.title} » copié dans le presse-papier !`);
+            setTimeout(() => {
+              btn.classList.remove('copied');
+              btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copier`;
+            }, 2000);
+          });
+        });
+      });
+    }
+
+    // Toast Function
+    function showToast(msg) {
+      toastMsg.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 2500);
+    }
+
+    // Filters
+    filterTags.addEventListener('click', (e) => {
+      if (e.target.classList.contains('filter-btn')) {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        currentCategory = e.target.dataset.cat;
+        renderCards();
+      }
+    });
+
+    // Search
+    searchInput.addEventListener('input', (e) => {
+      searchQuery = e.target.value.toLowerCase().trim();
+      renderCards();
+    });
+
+    // Reset All
+    document.getElementById('btn-reset-all').addEventListener('click', () => {
+      if (confirm('Restaurer les statuts issus de l\'audit du code ?')) {
+        cardStatuses = { ...DEFAULT_STATUSES };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(cardStatuses));
+        renderCards();
+        showToast('Les statuts vérifiés dans le code ont été restaurés.');
+      }
+    });
+
+    // Export Plan
+    document.getElementById('btn-export-plan').addEventListener('click', () => {
+      const exportData = FEATURES_DATA.map(f => ({
+        ...f,
+        status: cardStatuses[f.id] || 'todo'
+      }));
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ANO_GPT_JARVIS_ROADMAP_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Plan d\'architecture exporté avec succès en JSON !');
+    });
+
+    // Initial Render
+    renderCards();
+  </script>
+</body>
+</html>
