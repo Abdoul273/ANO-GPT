@@ -73,13 +73,20 @@ def _deg_to_cardinal(deg: Optional[float]) -> str:
     return dirs[round(deg / 45) % 8]
 
 # ── Géocodage (Open‑Meteo, sans clé) ────────────────────────────────────────
+# Réseau : trois appels en cascade (géocodage, prévision, repli) doivent tenir
+# sous le plafond de 25 s du répartiteur, marge comprise.
+_HTTP_TIMEOUT = 6.0
+
+
+@kit.memo(6 * 3600, key=lambda city: city.casefold().strip())
 def _geocode_city(city: str) -> Optional[Tuple[float, float, str, str]]:
-    """Retourne (lat, lon, nom_officiel, pays) ou None."""
+    """Retourne (lat, lon, nom_officiel, pays) ou None. Une ville ne bouge
+    pas : le résultat est mémorisé pour la session."""
     url = ("https://geocoding-api.open-meteo.com/v1/search"
            f"?name={quote_plus(city)}&count=1&language=fr&format=json")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as r:
             data = json.loads(r.read().decode("utf-8"))
         results = data.get("results") or []
         if not results:
@@ -92,7 +99,9 @@ def _geocode_city(city: str) -> Optional[Tuple[float, float, str, str]]:
         return None
 
 # ── Récupération météo Open‑Meteo (sans clé) ───────────────────────────────
+@kit.memo(600, key=lambda lat, lon: (round(lat, 2), round(lon, 2)))
 def _fetch_open_meteo(lat: float, lon: float) -> Optional[Dict]:
+    """Prévision mémorisée dix minutes : « et demain ? » ne repaie pas l'appel."""
     url = ("https://api.open-meteo.com/v1/forecast"
            f"?latitude={lat}&longitude={lon}"
            "&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
@@ -102,7 +111,7 @@ def _fetch_open_meteo(lat: float, lon: float) -> Optional[Dict]:
            "&forecast_days=7&timezone=auto")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as r:
             return json.loads(r.read().decode("utf-8"))
     except Exception as e:
         print(f"[Weather] Open‑Meteo échoué : {e}")
@@ -113,7 +122,7 @@ def _fetch_wttr(city: str) -> Optional[Dict]:
     url = f"https://wttr.in/{quote_plus(city)}?format=j1&lang=fr"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as r:
             return json.loads(r.read().decode("utf-8"))
     except Exception as e:
         print(f"[Weather] wttr.in échoué : {e}")
@@ -361,7 +370,10 @@ def weather_action(
                 return "Je n'ai pas compris la ville ou la période pour la météo. Précisez par exemple : 'météo à Lyon demain'."
 
     if not city or not isinstance(city, str) or not city.strip():
-        return "La ville n'est pas précisée pour le rapport météo."
+        # « Quel temps fait-il ? » sans ville : là où se trouve l'utilisateur.
+        city = _current_city()
+        if not city:
+            return "La ville n'est pas précisée pour le rapport météo."
     city = city.strip()
     when = (when or "aujourd'hui").strip()
 
@@ -408,6 +420,28 @@ def weather_action(
         except Exception:
             pass
     return msg
+
+def _current_city() -> Optional[str]:
+    """Ville courante (GPS du téléphone, IP, ou configuration), sinon None."""
+    try:
+        from core.geolocation import get_user_location
+        loc = get_user_location() or {}
+    except Exception:
+        return None
+    city = str(loc.get("city") or "").strip()
+    if city:
+        country = str(loc.get("country_name") or "").strip()
+        return f"{city}, {country}" if country else city
+    lat, lon = loc.get("lat"), loc.get("lon")
+    if lat is not None and lon is not None:
+        try:
+            from core.geolocation import reverse_geocode
+            place = reverse_geocode(float(lat), float(lon)) or {}
+            return str(place.get("city") or place.get("name") or "").strip() or None
+        except Exception:
+            return None
+    return None
+
 
 def _log(message: str, player=None) -> None:
     print(f"[Weather] {message}")

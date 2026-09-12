@@ -100,6 +100,19 @@ def find_nearby(parameters: dict | None = None, session_memory=None, ui=None) ->
     except Exception as exc:
         return f"La recherche de lieux a échoué : {exc}"
 
+    widened = 0.0
+    if not places and radius_km < 30.0:
+        # Rien dans le rayon demandé : on élargit une fois avant de renoncer,
+        # en le disant — « la pharmacie la plus proche est à 12 km » vaut
+        # mieux qu'un « aucun résultat » sec.
+        widened = min(30.0, max(radius_km * 3.0, 10.0))
+        try:
+            places, sources = search_places(
+                terms, (center_lat, center_lon), radius_km=widened
+            )
+        except Exception:
+            places, sources = [], sources
+
     if not places:
         advice = ""
         if not has_serpapi():
@@ -109,7 +122,7 @@ def find_nearby(parameters: dict | None = None, session_memory=None, ui=None) ->
                 "pour couvrir les lieux absents d'OpenStreetMap."
             )
         return (f"Aucun résultat pour « {terms} » dans un rayon de "
-                f"{radius_km:g} km autour de {city}.{advice}")
+                f"{max(radius_km, widened):g} km autour de {city}.{advice}")
 
     if ui is not None and hasattr(ui, "show_nearby_map"):
         try:
@@ -117,7 +130,11 @@ def find_nearby(parameters: dict | None = None, session_memory=None, ui=None) ->
         except Exception as exc:
             print(f"[FindNearby] Carte indisponible : {exc}")
 
-    return describe_places(places, terms, city, sources)
+    text = describe_places(places, terms, city, sources)
+    if widened:
+        text = (f"Rien à moins de {radius_km:g} km ; j'ai élargi à {widened:g} km. "
+                + text)
+    return text
 
 
 if __name__ == "__main__":
