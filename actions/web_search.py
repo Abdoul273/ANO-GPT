@@ -10,6 +10,7 @@ import random
 import re
 import sys
 import threading
+import time
 import unicodedata
 import atexit
 import warnings
@@ -52,6 +53,55 @@ def _run_with_timeout(fn, *args, timeout: float = _GEMINI_TIMEOUT, **kwargs):
         return future.result(timeout=timeout)
     except _FutureTimeout:
         raise TimeoutError(f"L'appel Gemini a dépassé {timeout}s")
+
+
+# Une même question posée deux fois dans la conversation (« et donc ? »,
+# reformulation par le modèle) ne repaie ni Gemini ni DuckDuckGo.
+_RESULT_TTL = 90.0
+_HEDGE_DELAY = 2.5  # Gemini répond en général sous 2 s ; au-delà on couvre.
+
+
+def _hedged(primary, fallback, *, timeout: float, hedge_after: float = _HEDGE_DELAY):
+    """Requête couverte : `fallback` démarre si `primary` traîne.
+
+    Avant, l'assistant attendait l'échec complet de Gemini (jusqu'à 8 s) avant
+    de seulement *commencer* DuckDuckGo. Ici le repli part dès que Gemini
+    dépasse `hedge_after`, et le premier résultat exploitable gagne — Gemini
+    reste prioritaire s'il arrive dans la fenêtre.
+    """
+    p_future = _executor.submit(primary)
+    try:
+        return p_future.result(timeout=hedge_after)
+    except _FutureTimeout:
+        pass
+    except Exception as exc:
+        print(f"[WebSearch] ⚠️ backend principal échoué ({exc}) — repli immédiat")
+        return fallback()
+
+    f_future = _executor.submit(fallback)
+    deadline = time.monotonic() + max(0.5, timeout - hedge_after)
+    primary_error: Optional[BaseException] = None
+    while time.monotonic() < deadline:
+        if p_future.done():
+            if p_future.exception() is None:
+                f_future.cancel()
+                return p_future.result()
+            primary_error = p_future.exception()
+            break
+        if f_future.done() and f_future.exception() is None and primary_error is None:
+            # Le repli a fini le premier : on laisse encore un court instant à
+            # Gemini, dont la réponse est plus riche, sans bloquer l'utilisateur.
+            try:
+                return p_future.result(timeout=0.8)
+            except (_FutureTimeout, Exception):
+                return f_future.result()
+        time.sleep(0.05)
+    try:
+        return f_future.result(timeout=max(0.5, deadline - time.monotonic() + 3.0))
+    except _FutureTimeout:
+        if primary_error is not None:
+            raise primary_error
+        raise TimeoutError("aucun moteur de recherche n'a répondu à temps")
 
 
 def _get_base_dir() -> Path:
@@ -460,9 +510,26 @@ def _serpapi_compare(items: list, aspect: str) -> str:
 
 
 # ── Backends Gemini & DuckDuckGo ────────────────────────────────────────────
+_gemini_client_cache: Dict[str, Any] = {}
+_gemini_client_lock = threading.Lock()
+
+
+def _gemini_client():
+    """Client Gemini réutilisé : sa construction (SSL, découverte) coûte
+    plusieurs centaines de millisecondes à chaque recherche."""
+    key = _get_api_key()
+    with _gemini_client_lock:
+        client = _gemini_client_cache.get(key)
+        if client is None:
+            from google import genai
+            client = genai.Client(api_key=key)
+            _gemini_client_cache.clear()
+            _gemini_client_cache[key] = client
+        return client
+
+
 def _gemini_search_impl(query: str) -> str:
-    from google import genai
-    client   = genai.Client(api_key=_get_api_key())
+    client = _gemini_client()
     chat = client.chats.create(
         model=BALANCED_MODEL,
         config={"tools": [{"google_search": {}}]},
@@ -764,18 +831,20 @@ def _gemini_headlines(n: int = 5) -> tuple:
 
 
 # ── Modes ───────────────────────────────────────────────────────────────────
+@kit.memo(_RESULT_TTL, key=lambda query, player=None: query.casefold().strip())
 def _search(query: str, player=None) -> str:
-    print("[WebSearch] 🤖 Recherche standard avec Gemini Grounding...")
+    print("[WebSearch] 🤖 Recherche standard avec Gemini Grounding (couverte DDG)...")
     if player:
         player.write_log("[Search:Gemini] Recherche standard...")
-    try:
-        return _gemini_search(query)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ Gemini échoué ({e}) — tentative DuckDuckGo...")
+
+    def _ddg() -> str:
         if player:
-            player.write_log("[Search:DuckDuckGo] Repli sur DuckDuckGo...")
-        results = _ddg_search(query)
-        return _format_ddg(query, results)
+            player.write_log("[Search:DuckDuckGo] Couverture DuckDuckGo...")
+        return _format_ddg(query, _ddg_search(query))
+
+    # Appel direct de l'implémentation : `_hedged` borne déjà le temps, et un
+    # `submit` imbriqué dans le même pool pourrait l'épuiser.
+    return _hedged(lambda: _gemini_search_impl(query), _ddg, timeout=_GEMINI_TIMEOUT + 4.0)
 
 
 def _news(query: str, player=None) -> str:
@@ -827,6 +896,9 @@ def _news(query: str, player=None) -> str:
     return result_box[0] or f"Aucune actualité trouvée pour : {query}"
 
 
+_news = kit.memo(_RESULT_TTL, key=lambda query, player=None: ("news", query.casefold().strip()))(_news)
+
+
 def _headlines(count: int = 5, player=None) -> str:
     print("[WebSearch] 📰 Titres IA & cyber du jour avec Gemini Grounding...")
     if player:
@@ -846,22 +918,24 @@ def _headlines(count: int = 5, player=None) -> str:
         return _format_news("IA & cybersécurité — titres du jour", results)
 
 
+@kit.memo(_RESULT_TTL, key=lambda query, player=None: ("research", query.casefold().strip()))
 def _research(query: str, player=None) -> str:
-    print("[WebSearch] 🔬 Recherche approfondie avec Gemini Grounding...")
+    print("[WebSearch] 🔬 Recherche approfondie avec Gemini Grounding (couverte DDG)...")
     if player:
         player.write_log("[Search:Gemini] Recherche approfondie...")
     research_query = (
         f"Explication complète et détaillée de : {query}. "
         "Inclus le contexte, les faits clés, l'état actuel et les nuances importantes."
     )
-    try:
-        return _gemini_search(research_query)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ Gemini research échoué ({e}) — DuckDuckGo...")
+
+    def _ddg() -> str:
         if player:
-            player.write_log("[Search:DuckDuckGo] Repli sur DuckDuckGo...")
-        results = _ddg_search(query, max_results=10)
-        return _format_ddg(query, results)
+            player.write_log("[Search:DuckDuckGo] Couverture DuckDuckGo...")
+        return _format_ddg(query, _ddg_search(query, max_results=10))
+
+    # Une recherche approfondie mérite un peu plus de patience côté Gemini.
+    return _hedged(lambda: _gemini_search_impl(research_query),
+                   _ddg, timeout=_GEMINI_TIMEOUT + 8.0, hedge_after=4.0)
 
 
 def _price(query: str, player=None) -> str:

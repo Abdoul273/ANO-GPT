@@ -503,7 +503,10 @@ def _kill_pids(pids: List[int], graceful: bool = True) -> Tuple[bool, int]:
                 continue
             except PermissionError:
                 pass
-        time.sleep(0.8)
+        # On rend la main dès que tout est mort : la plupart des applications
+        # quittent en moins de 100 ms sur SIGTERM, inutile d'attendre 0,8 s.
+        kit.wait_until(lambda: not any(_pid_exists(p) for p in pids),
+                       timeout=1.2, interval=0.05, max_interval=0.2)
         survivors = [p for p in pids if _pid_exists(p)]
         if not survivors:
             return True, len(pids)
@@ -788,7 +791,10 @@ def _close_linux(app_name: str, ws_num: Optional[int] = None) -> Tuple[bool, int
     hypr_closed = _close_hypr_windows(tokens, ws_num=ws_num)
     if hypr_closed > 0:
         logger.info(f"Closed {hypr_closed} Hyprland windows for '{canonical}'")
-        time.sleep(0.5)
+        # Laisser les processus propriétaires quitter avant de chercher des
+        # survivants, sans dormir plus que nécessaire.
+        kit.wait_until(lambda: not _collect_pids(tokens), timeout=0.8,
+                       interval=0.06, max_interval=0.2)
     if ws_num is not None:
         return (hypr_closed > 0, hypr_closed)
     pids = _collect_pids(tokens)
