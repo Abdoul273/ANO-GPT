@@ -10,9 +10,21 @@ Permet à l'assistant de piloter la navigation guidée :
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-from core.navigation import get_navigation_manager, NavigationRoute
+from core.navigation import get_navigation_manager
 
 from core import action_kit as kit
+
+
+# Le modèle transmet souvent le mode tel que dicté : on l'aligne sur les
+# profils du moteur d'itinéraire au lieu de retomber silencieusement en voiture.
+_MODE_ALIASES = {
+    "driving": "driving", "drive": "driving", "car": "driving", "voiture": "driving",
+    "en voiture": "driving", "auto": "driving", "taxi": "driving", "moto": "driving",
+    "walking": "walking", "walk": "walking", "à pied": "walking", "a pied": "walking",
+    "pied": "walking", "marche": "walking", "on foot": "walking",
+    "cycling": "cycling", "bike": "cycling", "bicycle": "cycling", "vélo": "cycling",
+    "velo": "cycling", "à vélo": "cycling", "a velo": "cycling",
+}
 
 
 @kit.action("navigation_action")
@@ -27,7 +39,7 @@ def navigation_action(
     params = parameters or {}
     action = str(params.get("action") or "start").strip().lower()
     destination = str(params.get("destination") or params.get("query") or params.get("target") or "").strip()
-    mode = str(params.get("mode") or "driving").strip().lower()
+    mode = _MODE_ALIASES.get(str(params.get("mode") or "driving").strip().lower(), "driving")
 
     nav_mgr = get_navigation_manager()
 
