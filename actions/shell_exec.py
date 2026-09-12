@@ -383,6 +383,12 @@ def _run_normal(command: str, cwd: str, timeout: float) -> str:
         "returncode": res.code, "duration_s": round(res.duration, 2),
     })
     parts = [f"[exit {res.code}]"]
+    if res.code == 127:
+        # Binaire absent : dire tout de suite quel paquet l'apporte, plutôt
+        # que de laisser le modèle deviner.
+        hint = _package_hint(_first_binary(command))
+        if hint:
+            parts.append(hint)
     if stdout:
         if len(stdout) > 6000:
             parts.append(stdout[:6000] + f"\n… (tronqué, {len(stdout)} caractères au total)")
@@ -391,6 +397,22 @@ def _run_normal(command: str, cwd: str, timeout: float) -> str:
     if stderr:
         parts.append(f"stderr: {stderr[:2000]}")
     return "\n".join(parts) if len(parts) > 1 else f"[exit {res.code}] (aucune sortie)"
+
+
+def _package_hint(binary: str) -> str:
+    """« ripgrep fournit rg : sudo pacman -S ripgrep », via la base de fichiers pacman."""
+    if not binary or kit.which(binary) or not kit.have("pacman"):
+        return ""
+    res = kit.run(["pacman", "-F", "--machinereadable", binary], timeout=6, quiet=True)
+    if not res.ok:
+        return ""
+    for line in res.lines():
+        # repo\0paquet\0version\0chemin
+        fields = line.split("\0")
+        if len(fields) >= 4 and fields[3].endswith(f"/bin/{binary}"):
+            return (f"« {binary} » n'est pas installé ; le paquet {fields[1]} "
+                    f"le fournit : sudo pacman -S {fields[1]}")
+    return ""
 
 
 def _run_detached(command: str, cwd: str) -> str:
