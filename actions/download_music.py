@@ -754,11 +754,70 @@ def _download_job(
         _unregister(str(state.get("id") or ""))
 
 
+def _active_snapshot() -> list[dict[str, Any]]:
+    with _ACTIVE_LOCK:
+        return [{"id": key, **{k: v for k, v in rec.items() if k in ("query", "title", "state")}}
+                for key, rec in _ACTIVE.items()]
+
+
+def _cancel_by_voice(query: str) -> str:
+    recs = _active_snapshot()
+    if not recs:
+        return "Aucun téléchargement en cours."
+    target = _matching_active(query) if query else None
+    if query and target is None and len(recs) > 1:
+        return "Je ne vois pas ce téléchargement ; en cours : " + ", ".join(
+            str(r.get("title") or r.get("query")) for r in recs)
+    ids = ([key for key, rec in _ACTIVE.items() if rec is target or rec.get("title") == target.get("title")]
+           if target else [r["id"] for r in recs])
+    cancelled = [rid for rid in ids if cancel_download(rid)]
+    if not cancelled:
+        return "Aucun téléchargement à annuler."
+    return f"Téléchargement annulé ({len(cancelled)})." if len(cancelled) > 1 else \
+        f"Téléchargement de « {(target or recs[0]).get('title') or query} » annulé."
+
+
+def _status_by_voice() -> str:
+    recs = _active_snapshot()
+    if not recs:
+        return "Aucun téléchargement en cours."
+    lines = []
+    for rec in recs:
+        state = rec.get("state") or {}
+        pct = float(state.get("percent") or 0)
+        extra = " ".join(x for x in (state.get("speed"), f"reste {state['eta']}" if state.get("eta") else "") if x)
+        lines.append(f"- {rec.get('title') or rec.get('query')} : {pct:.0f} %" + (f" ({extra})" if extra else ""))
+    return "Téléchargements en cours :\n" + "\n".join(lines)
+
+
+def _recent_downloads(limit: int = 8) -> str:
+    dest = music_dir()
+    files = []
+    for path in dest.glob("*"):
+        if path.suffix.lower() in {".m4a", ".mp3", ".opus", ".webm", ".flac", ".ogg"}:
+            try:
+                files.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+    if not files:
+        return f"Aucun morceau dans {dest}."
+    files.sort(reverse=True)
+    return f"Derniers morceaux dans {dest.name} :\n" + "\n".join(
+        f"- {readable_media_name(p.stem)}" for _, p in files[:limit])
+
+
 @kit.action("download_music")
 def download_music(parameters: dict | None = None, player=None, speak=None, **_kwargs) -> str:
     """Cherche le bon morceau, lance yt-dlp en fond, rend tout de suite la phrase d'attente."""
     params = parameters or {}
+    action = str(params.get("action") or "download").strip().casefold()
     raw = str(params.get("query") or params.get("url") or params.get("title") or "").strip()
+    if action in {"cancel", "stop", "annule", "annuler"}:
+        return _cancel_by_voice(raw)
+    if action in {"status", "progress", "etat", "état"}:
+        return _status_by_voice()
+    if action in {"list", "recent", "derniers"}:
+        return _recent_downloads()
     if not raw:
         return "Dis-moi le titre du morceau à télécharger."
     if not shutil.which("yt-dlp"):
@@ -787,6 +846,7 @@ def download_music(parameters: dict | None = None, player=None, speak=None, **_k
         "path": "",
         "destination": str(dest),
     }
+    rec["state"] = state  # lisible par « où en est le téléchargement ? »
     _push(player, state)
 
     try:

@@ -1247,8 +1247,10 @@ TOOL_DECLARATIONS = [
                         "close closes a window. "
                         "move moves the mouse cursor to exact (x, y) coordinates. "
                         "focus_window brings a window matching 'title' or 'window' to the front. "
-                        "move_to_workspace moves a window to workspace given in 'workspace'. "
-                        "switch_workspace switches the currently visible workspace to 'workspace'. "
+                        "switch_workspace switches only the currently visible workspace; it must be used for "
+                        "‘va/navigue au bureau N’ and must never move a window. "
+                        "move_to_workspace moves a window to workspace given in 'workspace' and is allowed "
+                        "only when the user explicitly says to move/send a window. "
                         "list_windows lists all open windows with their workspace number. "
                         "system_status is a lightweight local CPU/RAM/focus snapshot. "
                         "clipboard_status never exposes clipboard contents. "
@@ -1470,7 +1472,9 @@ TOOL_DECLARATIONS = [
             "déplacer des fenêtres, mettre en plein écran, mode flottant, lister les fenêtres ouvertes, "
             "saisir du texte dans n'importe quelle fenêtre (wtype), envoyer des raccourcis clavier, "
             "gérer le presse-papiers (wl-copy/wl-paste), prendre des captures d'écran (grim), "
-            "donner le focus à une application. Plus précis que shell_exec pour les opérations Hyprland."
+            "donner le focus à une application. Plus précis que shell_exec pour les opérations Hyprland. "
+            "Règle impérative : action='workspace' navigue seulement (ne déplace jamais une fenêtre) ; "
+            "action='move_to_workspace' exige une demande explicite de déplacer/envoyer une fenêtre."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -1831,8 +1835,12 @@ TOOL_DECLARATIONS = [
                     "type": "STRING",
                     "description": "URL YouTube optionnelle si l'utilisateur en a donné une",
                 },
+                "action": {
+                    "type": "STRING",
+                    "description": "download (défaut) | cancel (annule le téléchargement en cours, query facultatif) | status (progression) | list (derniers morceaux téléchargés)",
+                },
             },
-            "required": ["query"],
+            "required": [],
         },
     },
     {
