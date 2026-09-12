@@ -25,7 +25,6 @@ BLOCKING = {"run", "check_output", "check_call", "call"}
 POPEN_HERITAGE = {
     "actions/app_control.py",
     "actions/capture.py",
-    "actions/desktop.py",
     "actions/desktop_apps.py",
     "actions/download_music.py",
     "actions/music.py",
