@@ -516,10 +516,44 @@ def chrome_forward() -> str:
 # 🎶 Contrôles génériques MPRIS (tout lecteur : Spotify, VLC, navigateur…)
 # ════════════════════════════════════════════════════════════════════════════
 
+def _player_statuses() -> List[Tuple[str, str]]:
+    """[(lecteur, Playing|Paused|Stopped)] pour tous les lecteurs MPRIS."""
+    ok, out = _run_out(["playerctl", "-a", "metadata", "--format",
+                        "{{playerName}}\t{{status}}"])
+    if not ok:
+        return []
+    pairs = []
+    for line in out.splitlines():
+        name, _, status = line.partition("\t")
+        if name.strip():
+            pairs.append((name.strip(), status.strip() or "Stopped"))
+    return pairs
+
+
+def _active_player(prefer_playing: bool = True) -> Optional[str]:
+    """Le lecteur qui joue vraiment — `playerctl` sans `--player` vise le
+    premier de sa liste, souvent un onglet en pause pendant que Spotify joue."""
+    statuses = _player_statuses()
+    if not statuses:
+        return None
+    if prefer_playing:
+        for name, status in statuses:
+            if status == "Playing":
+                return name
+    for name, status in statuses:
+        if status == "Paused":
+            return name
+    return statuses[0][0]
+
+
 def _mpris(action: str) -> Optional[str]:
     if not _have("playerctl"):
         return None
-    ok = _run_list(["playerctl", action])
+    target = _active_player(prefer_playing=action != "play")
+    argv = ["playerctl"] + (["--player", target] if target else []) + [action]
+    ok = _run_list(argv)
+    if not ok and target:
+        ok = _run_list(["playerctl", action])
     return "ok" if ok else None
 
 
@@ -556,10 +590,18 @@ def media_previous() -> str:
 def now_playing() -> str:
     if not _have("playerctl"):
         return "❓ playerctl n'est pas installé."
-    ok, out = _run_out(["playerctl", "metadata", "--format",
-                        "{{artist}} — {{title}}"])
+    target = _active_player()
+    argv = ["playerctl"] + (["--player", target] if target else [])
+    ok, out = _run_out(argv + ["metadata", "--format",
+                               "{{status}}\t{{artist}}\t{{title}}\t{{duration(position)}}\t{{duration(mpris:length)}}"])
     if ok and out.strip():
-        return f"🎵 En cours : {out.strip()}"
+        status, artist, title, position, length = (out.strip().split("\t") + [""] * 5)[:5]
+        icon = {"Playing": "🎵", "Paused": "⏸️"}.get(status, "⏹️")
+        label = " — ".join(part for part in (artist, title) if part) or "titre inconnu"
+        where = f" ({position}/{length})" if position and length else ""
+        source = f" sur {target}" if target else ""
+        state = {"Playing": "En cours", "Paused": "En pause"}.get(status, "Arrêté")
+        return f"{icon} {state}{source} : {label}{where}"
     return "❓ Aucune lecture détectée."
 
 
