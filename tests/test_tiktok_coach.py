@@ -153,16 +153,30 @@ def test_confirmed_report_creates_an_actionable_markdown_file(tmp_path, monkeypa
         "detailed_markdown": "- **0:00 :** le contexte reste flou.\n- **0:03 :** la chute doit arriver plus vite.",
     })
 
+    opened: list = []
+    monkeypatch.setattr(tc, "_open_report", lambda path: opened.append(path) or True)
+    monkeypatch.setattr(tc, "generate_video_prompts", lambda v, s, d: {
+        "rationale": "Le conflit arrive dès la première image.",
+        "prompts": [
+            {"target": "Grok Imagine", "seconds": 15, "prompt": "FORMAT : Vertical 9:16, 15s…"},
+            {"target": "Gemini Veo", "seconds": 10, "prompt": "FORMAT : Vertical 9:16, 10s…"},
+        ],
+    })
+
     result = tc.tiktok_coach({"action": "report"})
     reports = list(tmp_path.glob("*.md"))
 
-    assert "créé" in result and len(reports) == 1
+    assert "créé" in result and "OUVERT" in result and len(reports) == 1
+    assert opened == [reports[0]]
     content = reports[0].read_text(encoding="utf-8")
     assert "# Diagnostic TikTok complet" in content
     assert "## Données mesurées" in content
     assert "## Plan de montage, seconde par seconde" in content
     assert "## Tests A/B à faire avant de conclure" in content
     assert "## Limites du diagnostic" in content
+    assert "## Prompts vidéo prêts à coller" in content
+    assert "### Grok Imagine — 15 s" in content and "### Gemini Veo — 10 s" in content
+    assert "FORMAT : Vertical 9:16, 10s…" in content
 
 
 def test_tools_are_declared_to_the_model():

@@ -840,7 +840,8 @@ TOOL_DECLARATIONS = [
             "environ une minute plus tard : ne relance pas l'outil, ne dis pas que c'est fini. Après un "
             "diagnostic terminé, l'utilisateur se voit proposer un rapport complet. S'il répond oui ou "
             "demande le fichier, appelle tiktok_coach avec action='report' (query facultative) : cela crée "
-            "un .md ultra-complet dans ~/Documents/ANO-GPT/Diagnostics TikTok et L'OUVRE aussitôt dans "
+            "un .md ultra-complet (diagnostic, corrections, plan de montage, et deux prompts vidéo prêts à coller : "
+            "Grok Imagine 15 s et Gemini Veo 10 s) dans ~/Documents/ANO-GPT/Diagnostics TikTok et L'OUVRE aussitôt dans "
             "Markdown Studio (ne jamais l'ouvrir toi-même via shell_exec ou un éditeur). Ne crée jamais ce "
             "fichier avant cet accord explicite. « Ouvre le rapport » ⇒ action='open_report'."
         ),

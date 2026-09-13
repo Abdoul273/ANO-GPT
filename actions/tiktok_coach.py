@@ -657,7 +657,7 @@ def _bullet_section(title: str, values: Any) -> list[str]:
     return [f"## {title}", "", *(f"- {row}" for row in rows), ""] if rows else []
 
 
-def _build_diagnosis_report(v: dict, summary: dict, data: dict) -> str:
+def _build_diagnosis_report(v: dict, summary: dict, data: dict, video_prompts: dict | None = None) -> str:
     """Rapport actionnable : chiffres mesurés, regard vidéo et protocole de test."""
     created = v.get("posted_at") or "date indisponible"
     desc = str(v.get("desc") or "Sans titre")
@@ -707,6 +707,7 @@ def _build_diagnosis_report(v: dict, summary: dict, data: dict) -> str:
     hashtags = [str(tag).lstrip("#") for tag in rewrite.get("hashtags") or [] if str(tag).strip()]
     if hashtags:
         lines += ["**Hashtags ciblés :** " + " ".join("#" + tag for tag in hashtags), ""]
+    lines += _video_prompts_section(video_prompts or {})
     lines += [
         "## Plan de montage, seconde par seconde",
         "",
@@ -737,6 +738,155 @@ def _build_diagnosis_report(v: dict, summary: dict, data: dict) -> str:
     return "\n".join(lines)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# Prompts vidéo prêts à coller (Grok Imagine 15 s · Gemini Veo 10 s)
+# ════════════════════════════════════════════════════════════════════════════
+
+VIDEO_PROMPT_TARGETS = (("Grok Imagine", 15), ("Gemini Veo", 10))
+
+# Gabarit de référence : la STRUCTURE et le niveau de détail sont imposés, le
+# contenu doit être entièrement nouveau et propre à la vidéo diagnostiquée.
+_VIDEO_PROMPT_TEMPLATE = """FORMAT : Vertical 9:16, 15s, photoréaliste documentaire premium, qualité reportage cinéma/found-footage hybride, 24fps, lumière fluorescente froide, ambiance salle d'attente d'hôpital de nuit.
+
+PERSONNAGE :
+- LE SAGE (INFIRMIER RETRAITÉ) — 66 ans, blouse blanche usée encore portée par habitude, lunettes fines sur le bout du nez, cernes marqués mais regard vif, mains posées calmement sur les genoux, voix douce mais sans hésitation, calme presque troublant.
+- LE JOURNALISTE (HORS-CHAMP) — jamais visible, seule sa main et son micro apparaissent dans le cadre.
+
+DÉCOR : Couloir d'hôpital vide la nuit, néons froids qui bourdonnent légèrement, chaises en plastique alignées floues en arrière-plan, une porte entrouverte au loin qui laisse filtrer une lumière chaude, silence quasi total.
+
+ANGLE CAMÉRA : Plan large qui se resserre très lentement en travelling avant sur tout le segment (dolly-in continu, aucune coupe), symétrie du couloir qui encadre le personnage au centre, légère distorsion optique douce en grand angle au début.
+
+DÉCOUPAGE (timing très serré, rythme cut sec) :
+0-1.5s — HOOK : plan large, il est assis seul au bout du couloir vide, immobile, silence total, on entend juste le bourdonnement des néons.
+1.5-3.5s : "J'ai tenu la main de plus de mille personnes à leur dernier souffle."
+3.5-5.5s : "Aucune n'a jamais parlé de son travail."
+5.5-7.5s : il retire lentement ses lunettes, les plie, regarde enfin la caméra, le travelling se rapproche.
+7.5-9.5s — TWIST : voix qui reste douce mais ferme : "Elles parlaient toutes des gens qu'elles n'avaient pas appelés assez."
+9.5-11.5s : silence d'une seconde, puis : "Le temps qu'on croit avoir, on ne l'a jamais vraiment."
+11.5-13s : il remet lentement ses lunettes, regard toujours fixe caméra, expression grave mais sereine.
+13-15s : freeze frame progressif, le travelling s'arrête à mi-hauteur de son visage, la lumière chaude de la porte lointaine qui reste floue derrière lui.
+
+AUDIO : Voix douce et posée avec de longs silences entre les phrases, bourdonnement continu et discret des néons, un bip lointain de moniteur médical à peine audible, aucune musique pendant les dialogues, ce même bip qui s'arrête net à 13s comme seul effet sonore de transition.
+
+STYLE VISUEL : Rendu photoréaliste haut de gamme, peau avec texture réelle et imperfections naturelles (cernes profonds, peau fatiguée, rides d'expression), grain cinématographique léger type shot on iPhone, aucun style cartoon/3D/anime, pas de texte à l'écran, pas de morphing, cohérence du visage sur toute la durée du plan malgré le travelling avant continu.
+
+HOOK COMMENTAIRE : Terminer sur le freeze frame — son regard calme après avoir vu tant de fins dire que la vraie urgence dans une vie, ce n'est jamais le travail qu'on n'a pas fini, c'est l'appel qu'on n'a jamais passé."""
+
+_VIDEO_PROMPTS_INSTRUCTIONS = """Tu es directeur artistique et réalisateur de vidéos courtes générées par IA (Grok Imagine, Gemini Veo). À partir du DIAGNOSTIC ci-dessous d'une vidéo TikTok qui n'a pas marché, écris {count} prompts de génération vidéo pour la NOUVELLE version qui, elle, doit marcher.
+
+RÈGLES ABSOLUES :
+1. Chaque prompt suit EXACTEMENT la structure et le niveau de détail du GABARIT (mêmes rubriques dans le même ordre : FORMAT, PERSONNAGE, DÉCOR, ANGLE CAMÉRA, DÉCOUPAGE, AUDIO, STYLE VISUEL, HOOK COMMENTAIRE). Le gabarit n'est qu'un exemple de forme : n'en reprends NI le sujet, NI les personnages, NI le décor, NI les dialogues.
+2. Le contenu vient de la vidéo diagnostiquée : même niche, même sujet, même intention, mais en appliquant les corrections du diagnostic (accroche visible dès 0-1 s, escalade, chute, boucle) et en ÉVITANT explicitement chaque défaut relevé.
+3. DÉCOUPAGE : timing serré et continu, couvrant toute la durée cible ; la première tranche est le HOOK, une tranche est marquée TWIST, la dernière est la chute/boucle. Les tranches sont adaptées à la durée : {durations}.
+4. Dialogues courts, en français, entre guillemets, dicibles dans le temps imparti. Pas de texte à l'écran demandé au générateur (le texte sera ajouté au montage).
+5. Une seule prise, cohérence du personnage sur toute la durée, photoréaliste sauf si la niche impose un autre style.
+6. Les prompts sont en français, prêts à coller tels quels, sans commentaire, sans markdown, sans titre.
+
+Réponds en JSON strict :
+{{
+  "rationale": "2 phrases : ce que ces prompts corrigent par rapport à la vidéo diagnostiquée",
+  "prompts": [
+    {{"target": "Grok Imagine", "seconds": 15, "prompt": "..."}},
+    {{"target": "Gemini Veo", "seconds": 10, "prompt": "..."}}
+  ]
+}}
+
+=== GABARIT (forme uniquement) ===
+{template}
+
+=== DIAGNOSTIC DE LA VIDÉO ===
+{diagnosis}
+"""
+
+
+def _diagnosis_digest(v: dict, summary: dict, data: dict) -> str:
+    """Le diagnostic condensé pour le rédacteur de prompts."""
+    parts = [
+        f"Vidéo : « {str(v.get('desc') or 'Sans titre')[:200]} » — {v.get('duration', '?')} s, "
+        f"{v.get('plays', 0)} vues (médiane du compte {int(summary.get('median_plays') or 0)}).",
+    ]
+    if data.get("spoken"):
+        parts.append("Verdict : " + str(data["spoken"]))
+    for title, key in (("Défauts relevés (À ÉVITER)", "why"), ("Corrections à appliquer", "improvements")):
+        items = [str(x) for x in (data.get(key) or []) if str(x).strip()]
+        if items:
+            parts.append(title + " :\n" + "\n".join(f"- {x}" for x in items[:8]))
+    findings = [str(x) for x in (data.get("findings") or []) if str(x).strip()]
+    if findings:
+        parts.append("Constats chiffrés :\n" + "\n".join(f"- {x}" for x in findings[:6]))
+    if data.get("repost_idea"):
+        parts.append("Angle retenu pour la nouvelle version : " + str(data["repost_idea"]))
+    detailed = str(data.get("detailed_markdown") or "").strip()
+    if detailed:
+        parts.append("Audit détaillé :\n" + detailed[:2500])
+    return "\n\n".join(parts)
+
+
+def _prompt_targets_text() -> str:
+    return " ; ".join(f"{name} = {secs} s" for name, secs in VIDEO_PROMPT_TARGETS)
+
+
+def _prompts_json_fallback(prompt: str) -> dict:
+    """Gemini indisponible (quota) : le modèle profond Azure rédige les prompts."""
+    from core import azure_specialists
+    from core.multimodal_vision import _parse_vision_json
+    text = azure_specialists.text("deep", prompt, system="Réponds uniquement en JSON strict.")
+    return _parse_vision_json(text)
+
+
+def generate_video_prompts(v: dict, summary: dict, data: dict) -> dict:
+    """Deux prompts vidéo (Grok 15 s, Gemini 10 s) adaptés au diagnostic.
+
+    Renvoie ``{"rationale": str, "prompts": [{target, seconds, prompt}, …]}`` ;
+    dict vide si aucun modèle n'a répondu — le rapport se fait alors sans.
+    """
+    prompt = _VIDEO_PROMPTS_INSTRUCTIONS.format(
+        count=len(VIDEO_PROMPT_TARGETS), durations=_prompt_targets_text(),
+        template=_VIDEO_PROMPT_TEMPLATE, diagnosis=_diagnosis_digest(v, summary, data),
+    )
+    result: dict = {}
+    for engine in ("gemini", "azure"):
+        try:
+            result = _generate_json([prompt], TEXT_MODELS) if engine == "gemini" else _prompts_json_fallback(prompt)
+        except Exception as exc:
+            print(f"[Coach TikTok] prompts vidéo ({engine}) : {str(exc)[:160]}")
+            continue
+        if isinstance(result, dict) and result.get("prompts"):
+            break
+        result = {}
+    prompts = []
+    for item in (result.get("prompts") or []) if isinstance(result, dict) else []:
+        if not isinstance(item, dict) or not str(item.get("prompt") or "").strip():
+            continue
+        prompts.append({
+            "target": str(item.get("target") or "").strip(),
+            "seconds": item.get("seconds"),
+            "prompt": str(item["prompt"]).strip(),
+        })
+    if not prompts:
+        return {}
+    # Les cibles sont imposées : on réaligne nom et durée sur l'ordre attendu.
+    for slot, (name, secs) in zip(prompts, VIDEO_PROMPT_TARGETS):
+        slot["target"], slot["seconds"] = name, secs
+    return {"rationale": str(result.get("rationale") or "").strip(), "prompts": prompts[:len(VIDEO_PROMPT_TARGETS)]}
+
+
+def _video_prompts_section(generated: dict) -> list[str]:
+    lines = ["## Prompts vidéo prêts à coller (Grok Imagine 15 s · Gemini Veo 10 s)", ""]
+    if not generated:
+        lines += ["_Les prompts n'ont pas pu être générés (modèle indisponible). Relance `tiktok_coach` action=report plus tard._", ""]
+        return lines
+    lines += [
+        "Chaque prompt applique les corrections ci-dessus et évite les défauts relevés. Copier-coller tel quel dans l'outil indiqué ; le texte à l'écran se rajoute au montage.",
+        "",
+    ]
+    if generated.get("rationale"):
+        lines += [f"**Ce que ces prompts corrigent :** {generated['rationale']}", ""]
+    for item in generated.get("prompts") or []:
+        lines += [f"### {item['target']} — {item['seconds']} s", "", "```text", item["prompt"], "```", ""]
+    return lines
+
+
 def create_last_diagnosis_report(query: str = "") -> str:
     """Écrit le rapport seulement après la confirmation explicite de l'utilisateur."""
     with _REPORT_LOCK:
@@ -753,7 +903,7 @@ def create_last_diagnosis_report(query: str = "") -> str:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
     path = REPORT_DIR / f"diagnostic-tiktok-{stamp}-{_markdown_safe_name(video.get('desc', 'video'))}.md"
-    content = _build_diagnosis_report(video, summary, data)
+    content = _build_diagnosis_report(video, summary, data, video_prompts=generate_video_prompts(video, summary, data))
     fd, tmp_name = tempfile.mkstemp(prefix=".diagnostic-", suffix=".md", dir=REPORT_DIR)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
