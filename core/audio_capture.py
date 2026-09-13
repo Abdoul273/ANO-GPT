@@ -163,6 +163,8 @@ class AudioCaptureStream:
             if self._is_running:
                 return self
             self._is_running = True
+            from core.thread_pool import register_shutdown_hook
+            register_shutdown_hook(f"audio-capture-{id(self)}", self.stop)
             self._frames_captured = 0
             self._overflow_count = 0
 

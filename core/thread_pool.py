@@ -1124,7 +1124,87 @@ def get_thread_pool() -> ANOThreadPool:
     return ANOThreadPool.get_instance()
 
 
+_SHUTDOWN_HOOKS: list[tuple[str, Callable[[], Any]]] = []
+_SHUTDOWN_HOOKS_LOCK = threading.Lock()
+
+
+def register_shutdown_hook(name: str, stop: Callable[[], Any]) -> None:
+    """Enregistre un ``stop()`` appelé par ``shutdown_all`` avant les pools.
+
+    Pour les threads persistants (lecteur d'événements Hyprland, capture
+    micro, enrichisseur sémantique, moniteur du lecteur) : ils sont daemon,
+    mais un thread bloqué dans un appel C (PortAudio, socket) peut retenir
+    l'extinction de l'interpréteur. Les arrêter explicitement d'abord rend la
+    fermeture déterministe. Idempotent par nom : un redémarrage du composant
+    remplace son ancien hook.
+    """
+    with _SHUTDOWN_HOOKS_LOCK:
+        _SHUTDOWN_HOOKS[:] = [(n, f) for n, f in _SHUTDOWN_HOOKS if n != name]
+        _SHUTDOWN_HOOKS.append((name, stop))
+
+
+def unregister_shutdown_hook(name: str) -> None:
+    with _SHUTDOWN_HOOKS_LOCK:
+        _SHUTDOWN_HOOKS[:] = [(n, f) for n, f in _SHUTDOWN_HOOKS if n != name]
+
+
+def run_shutdown_hooks() -> list[str]:
+    """Exécute chaque hook une seule fois ; renvoie les noms en échec."""
+    with _SHUTDOWN_HOOKS_LOCK:
+        hooks = list(reversed(_SHUTDOWN_HOOKS))
+        _SHUTDOWN_HOOKS.clear()
+    failed: list[str] = []
+    for name, stop in hooks:
+        try:
+            stop()
+        except Exception as exc:
+            failed.append(name)
+            logger.warning("Hook d'arrêt '%s' en échec : %s", name, exc)
+    return failed
+
+
 def shutdown_all(wait: bool = True, cancel_futures: bool = True, timeout: float = 3.0) -> None:
-    """Arrêt rapide de tous les pools du singleton ANOThreadPool."""
+    """Arrêt rapide : hooks des threads persistants, puis tous les pools."""
+    run_shutdown_hooks()
     if ANOThreadPool._instance is not None:
         ANOThreadPool._instance.shutdown(wait=wait, cancel_futures=cancel_futures, timeout=timeout)
+
+
+def lingering_threads() -> list[threading.Thread]:
+    """Threads non-daemon encore vivants (hors thread principal)."""
+    return [
+        t for t in threading.enumerate()
+        if t is not threading.main_thread() and t.is_alive() and not t.daemon
+    ]
+
+
+def exit_process_bounded(grace_s: float = 1.0, code: int = 0) -> None:
+    """Termine le processus même si un thread refuse de mourir.
+
+    À appeler en toute fin de ``main()`` : les hooks ``atexit`` sont exécutés
+    explicitement, les flux vidés, puis ``os._exit`` si un thread non-daemon
+    survit encore après ``grace_s``. Le verrou d'instance (``flock``) tombe
+    avec le processus et le socket de contrôle est nettoyé au prochain
+    démarrage : rien ne traîne.
+    """
+    deadline = time.monotonic() + max(0.0, grace_s)
+    while lingering_threads() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    stuck = lingering_threads()
+    if not stuck:
+        return
+    logger.warning(
+        "Fermeture forcée : %d thread(s) encore vivant(s) — %s",
+        len(stuck), ", ".join(t.name for t in stuck[:6]),
+    )
+    import atexit
+    try:
+        atexit._run_exitfuncs()
+    except Exception:
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    os._exit(code)

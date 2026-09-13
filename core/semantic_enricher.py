@@ -143,6 +143,8 @@ class _DaemonEnrichmentWorker:
             daemon=True,
         )
         self._thread.start()
+        from core.thread_pool import register_shutdown_hook
+        register_shutdown_hook("semantic-enricher", self.shutdown)
 
     def submit(self, func: Callable, *args) -> bool:
         try:

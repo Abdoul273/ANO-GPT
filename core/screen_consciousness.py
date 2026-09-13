@@ -695,6 +695,8 @@ class _HyprWake:
             target=self._run, name="ano-scrn-hypr", daemon=True
         )
         self._thread.start()
+        from core.thread_pool import register_shutdown_hook
+        register_shutdown_hook("screen-consciousness-hypr", self.stop)
         return True
 
     def stop(self) -> None:

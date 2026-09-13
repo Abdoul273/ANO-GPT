@@ -243,7 +243,7 @@ from core.event_bus import (
 )
 from core.memory_episode import EpisodeRecorder
 from core.plugin_registry import PluginRegistry
-from core.thread_pool import get_thread_pool, shutdown_all
+from core.thread_pool import exit_process_bounded, get_thread_pool, shutdown_all
 
 # `google.genai` prend ~7-8s à importer sur cette machine (pydantic + son
 # fichier types.py géant) — un import direct ici retarderait d'autant

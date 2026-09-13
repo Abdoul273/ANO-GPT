@@ -114,6 +114,8 @@ class FocusWatcher:
             target=self._run, name="hypr-focus", daemon=True
         )
         self._thread.start()
+        from core.thread_pool import register_shutdown_hook
+        register_shutdown_hook(f"hypr-focus-{id(self)}", self.stop)
         return True
 
     def stop(self) -> None:

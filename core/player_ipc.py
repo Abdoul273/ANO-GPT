@@ -69,6 +69,10 @@ class MPVPlayerIPC:
         self._lock = threading.Lock()
         self._monitor_thread: Optional[threading.Thread] = None
         self._running = False
+        # ``quit`` coupe les boucles de surveillance et ferme mpv : à
+        # l'extinction, aucun thread ne doit rester suspendu sur son socket.
+        from core.thread_pool import register_shutdown_hook
+        register_shutdown_hook(f"mpv-ipc-{id(self)}", self.quit)
 
         self._current_track = {
             "title": "Aucune lecture",
