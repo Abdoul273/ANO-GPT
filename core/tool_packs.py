@@ -116,6 +116,21 @@ PACKS: Mapping[str, ToolPack] = {
             r"\b(prends[- ]?moi en photo|filme|filmer|enregistre une video)\b",
         ),
     ),
+    "reconnaissance": ToolPack(
+        label="reconnaissance de personnes et d'objets",
+        tools=frozenset({"visual_recognition"}),
+        triggers=_triggers(
+            r"\b(c'est qui|cest qui|qui c'est|qui cest|qui est[- ]ce|qui est cette|qui est ce|qui est la)\b",
+            r"\b(tu (?:le|la|me|les) (?:connais|reconnais)|tu connais (?:cette|ce|la|le) (?:personne|gars|fille|type|mec|visage))\b",
+            r"\b(c'est quoi (?:ca|ce truc|cet objet|cette chose|ce machin)|cest quoi (?:ca|ce truc|cet objet))\b",
+            r"\b(regarde (?:ca|ce que je (?:te )?montre|qui|lui|elle)|je te montre|je vais te montrer)\b",
+            r"\b(retiens|memorise|souviens[- ]toi de|oublie)\b.{0,30}\b(visage|personne|lui|elle|tete|cet objet|ca)\b",
+            r"\b(c'est (?:mon|ma|mes) (?:frere|soeur|mere|pere|pote|ami|amie|collegue|cousin|cousine|femme|mari|copine|copain|fils|fille))\b",
+            r"\b(c'est moi|cest moi|reconnais[- ]moi|mon visage)\b",
+            r"\b(qui (?:tu )?connais[- ]tu|quels visages|veille (?:des )?visages|dis[- ]moi qui (?:arrive|entre|apparait))\b",
+            r"\b(reconnaissance (?:faciale|visuelle|de visage|d'objet)|identifie (?:cette|ce|cet|la|le|l'objet))\b",
+        ),
+    ),
     "bureautique": ToolPack(
         label="e-mail, agenda et messagerie",
         tools=frozenset({

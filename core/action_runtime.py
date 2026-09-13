@@ -78,6 +78,9 @@ _POLICIES: dict[str, ActionPolicy] = {
     "music_control": ActionPolicy(timeout_s=20.0),
     # Deux fenêtres d'écoute (9 s + 12 s) plus l'empreinte réseau.
     "music_recognition": ActionPolicy(timeout_s=50.0),
+    # Téléchargement des modèles au premier appel (37 Mo), puis Gemini et
+    # recherche web pour un objet : large, mais un seul à la fois.
+    "visual_recognition": ActionPolicy(timeout_s=60.0, max_concurrency=1),
     "download_music": ActionPolicy(timeout_s=90.0),
     # Une lecture TikTok ouvre un Chrome headless : dix à quinze secondes.
     "tiktok_tracker": ActionPolicy(timeout_s=60.0),
@@ -132,10 +135,16 @@ _ARG_ALIASES: dict[str, dict[str, str]] = {
     "deep_think": {"query": "question", "text": "question"},
     "simulate_decision": {"query": "decision", "text": "decision"},
     "file_controller": {"command": "action", "file": "path"},
+    "capability_guide": {
+        "phrase": "query", "text": "query", "demande": "query",
+        "mode": "action", "command": "action",
+    },
     "browser_control": {"command": "action"},
     "computer_control": {"command": "action"},
     "music_control": {"command": "action", "text": "query"},
     "music_recognition": {"command": "action", "source": "target", "platform": "target"},
+    "visual_recognition": {"command": "action", "text": "question", "who": "name",
+                           "person": "name", "angle": "source"},
     "youtube_video": {"command": "action", "text": "query"},
 }
 

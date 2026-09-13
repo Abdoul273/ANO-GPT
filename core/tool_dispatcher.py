@@ -1847,6 +1847,41 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "visual_recognition",
+        "description": (
+            "Reconnaissance de PERSONNES et d'OBJETS montrés à la caméra (ou à l'écran) avec mémoire "
+            "permanente des visages. OBLIGATOIRE pour : « c'est qui ? », « tu le/la connais ? », "
+            "« qui est cette personne », « c'est quoi ça / cet objet ? », « regarde ce que je te montre », "
+            "« retiens son visage », « c'est Karim, mon frère », « c'est moi », « oublie X », "
+            "« qui connais-tu ? ». action='identify' (défaut) : capture, reconnaît les visages avec la "
+            "mémoire locale (connu ⇒ nom + lien ; inconnu ⇒ dossier en attente, DEMANDE qui c'est) et, "
+            "sans visage, identifie l'objet (Gemini) puis lance une recherche web en temps réel. "
+            "Quand l'utilisateur répond au « c'est qui ? » ⇒ action='remember_person' avec name, relation "
+            "(frère, collègue, amie…), pending_id du dossier et notes éventuelles ; name='moi' pour "
+            "l'utilisateur lui-même. action='remember_object' (name, notes) retient le dernier objet identifié. "
+            "action='forget_person' (name), 'update_person' (name, new_name, relation, notes, alias), "
+            "'list_people', 'watch' / 'stop_watch' (annonce qui apparaît à la caméra), 'status'. "
+            "Le résultat est un compte-rendu terminé : réponds à partir de lui, ne rappelle pas l'outil."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "identify (défaut) | remember_person | remember_object | forget_person | update_person | list_people | watch | stop_watch | status"},
+                "source": {"type": "STRING", "description": "camera (défaut) | screen"},
+                "expect": {"type": "STRING", "description": "auto (défaut) | person | object — ce que l'utilisateur montre, si évident"},
+                "question": {"type": "STRING", "description": "La question exacte de l'utilisateur sur ce qu'il montre"},
+                "name": {"type": "STRING", "description": "Nom de la personne / de l'objet (remember, forget, update)"},
+                "relation": {"type": "STRING", "description": "Lien avec l'utilisateur : frère, mère, collègue, ami d'enfance…"},
+                "notes": {"type": "STRING", "description": "Détail à retenir sur la personne ou l'objet"},
+                "pending_id": {"type": "STRING", "description": "Dossier d'attente cité dans le compte-rendu (V1, V2…)"},
+                "new_name": {"type": "STRING", "description": "Pour update_person : nouveau nom"},
+                "alias": {"type": "STRING", "description": "Pour update_person : surnom supplémentaire"},
+                "is_owner": {"type": "BOOLEAN", "description": "Vrai si le visage est celui de l'utilisateur"},
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "music_recognition",
         "description": (
             "Reconnaît la musique qui joue EN CE MOMENT (Shazam intégré) : « tu connais cette musique ? », "
@@ -2189,6 +2224,7 @@ _TOOL_LABELS = {
     "file_controller": "Fichiers",
     "send_message": "Envoi de message",
     "shell_exec": "Commande",
+    "visual_recognition": "Reconnaissance visuelle",
     "music_recognition": "Reconnaissance musicale",
     "music_control": "Musique",
     "download_music": "Téléchargement musique",
@@ -3286,10 +3322,23 @@ class ToolDispatcher:
                                 except Exception as _vis_exc:
                                     print(f"[Vision] analyse experte échouée : {_vis_exc}")
                                     _spoken, _diag = "", None
+                                # À la caméra, la mémoire des visages dit qui est là :
+                                # le modèle ne devine jamais une identité.
+                                _faces = ""
+                                if angle == "camera":
+                                    try:
+                                        from core.face_memory import faces_block_for_vision
+                                        _faces = await loop.run_in_executor(
+                                            None, faces_block_for_vision, img_b
+                                        )
+                                    except Exception as _face_exc:
+                                        print(f"[Visages] bloc vision impossible : {_face_exc}")
                                 if _diag is not None and _diag.spoken_summary and "clé api" not in _diag.spoken_summary.casefold():
                                     self._pending_vision = None
                                     self._vision_busy = False
                                     result = _diag.as_tool_result(user_text)
+                                    if _faces:
+                                        result += "\n\n" + _faces
                                 else:
                                     self._pending_vision = (img_b, mime_t, user_text, angle)
                                     result = (
@@ -3323,6 +3372,11 @@ class ToolDispatcher:
                 )
 
             elif name == "close_camera":
+                try:
+                    from actions.visual_recognition import stop_watcher
+                    stop_watcher()
+                except Exception:
+                    pass
                 self.ui.stop_camera_stream()
                 if hasattr(self, "stop_continuous_vision"):
                     try:
@@ -3620,6 +3674,17 @@ class ToolDispatcher:
                                                 session_memory=self._tool_session_memory),
                     )
                     result = r or "Capture effectuée."
+
+            elif name == "visual_recognition":
+                from actions.visual_recognition import visual_recognition
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: visual_recognition(parameters=args, player=self.ui,
+                                               session_memory=self._tool_session_memory,
+                                               speak=self.speak,
+                                               grab_frame=self._grab_camera_still),
+                )
+                result = r or "Je n'ai rien reconnu."
 
             elif name == "music_recognition":
                 from actions.music_recognition import music_recognition
