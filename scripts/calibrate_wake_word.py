@@ -26,10 +26,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import numpy as np  # noqa: E402
-import sounddevice as sd  # noqa: E402
+import numpy as np
+import sounddevice as sd
 
-from core.wake_word import DEFAULT_MODEL, WakeWordDetector, _normalise  # noqa: E402
+from core.wake_word import DEFAULT_MODEL, WakeWordDetector, _normalise
 
 SAMPLE_RATE = 16000
 CHUNK = 1024

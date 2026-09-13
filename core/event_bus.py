@@ -393,7 +393,7 @@ class AsyncEventBus:
                     try:
                         delattr(host, "_event_bus")
                     except Exception:
-                        setattr(host, "_event_bus", None)
+                        host._event_bus = None
 
     @classmethod
     def reset_all(cls) -> None:
@@ -442,7 +442,7 @@ class AsyncEventBus:
             raise TypeError(f"callback doit être un callable, reçu: {type(callback)}")
 
         is_async = inspect.iscoroutinefunction(callback) or (
-            hasattr(callback, "__call__") and inspect.iscoroutinefunction(callback.__call__)
+            callable(callback) and inspect.iscoroutinefunction(callback.__call__)
         )
         prio_val = _normalize_priority(priority)
 

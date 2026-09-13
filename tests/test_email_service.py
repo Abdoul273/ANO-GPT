@@ -334,7 +334,7 @@ class _FakeApi:
     def users(self):
         return self
 
-    def getProfile(self, userId):  # noqa: N802 - nom imposé par l'API
+    def getProfile(self, userId):
         return _Exec({"emailAddress": "moi@example.com",
                       "historyId": self._history_id})
 
@@ -350,7 +350,7 @@ class _FakeApi:
             raise self._fail
         return _Exec({"historyId": "205", "history": self._history})
 
-    def get(self, userId, id, format=None, metadataHeaders=None):  # noqa: A002
+    def get(self, userId, id, format=None, metadataHeaders=None):
         self.fetched.append(id)
         return _Exec({
             "id": id, "threadId": "t", "labelIds": ["UNREAD"],

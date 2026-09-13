@@ -191,7 +191,7 @@ def test_nettoyage_aec_ne_supprime_pas_les_modules_du_systeme(monkeypatch):
             "11\tmodule-echo-cancel\tsource_name=anogpt_mic_aec\n"
         )
 
-    monkeypatch.setattr(audio_router.subprocess, "run", lambda *a, **k: Result())
+    monkeypatch.setattr(audio_router.kit, "run", lambda *a, **k: Result())
     assert audio_router._list_echo_cancel_module_ids() == ["11"]
 
 

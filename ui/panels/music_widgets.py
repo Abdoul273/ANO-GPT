@@ -83,7 +83,7 @@ class _CoverArt(QWidget):
             self._timer.stop()
         self.update()
 
-    def setPixmap(self, pixmap) -> None:      # noqa: N802 - imite QLabel
+    def setPixmap(self, pixmap) -> None:
         """Accepte une pochette réelle, si le lecteur en fournit une."""
         self._pix = pixmap if pixmap is not None and not pixmap.isNull() else None
         self._cache = None          # la pochette a changé : refaire le fond
@@ -319,7 +319,7 @@ class _Marquee(QLabel):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
 
-    def setText(self, text: str) -> None:     # noqa: N802 - imposé par QLabel
+    def setText(self, text: str) -> None:
         super().setText(text)
         self._offset = 0.0
         self._pause = 28          # laisser lire le début avant de défiler

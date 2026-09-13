@@ -28,8 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.llm_client import probe_azure_deployment  # noqa: E402
-from ui.paths import _read_full_config  # noqa: E402
+from core.llm_client import probe_azure_deployment
+from ui.paths import _read_full_config
 
 
 # Le nécessaire pour qu'ANO-GPT tourne : un cerveau, un second avis, du code,

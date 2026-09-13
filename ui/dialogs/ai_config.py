@@ -470,7 +470,7 @@ class AIConfigOverlay(FadeInWidget):
         btn.setText(QFontMetrics(btn.font()).elidedText(
             text, Qt.TextElideMode.ElideRight, available))
 
-    def resizeEvent(self, event):  # noqa: N802
+    def resizeEvent(self, event):
         # La largeur des pastilles ne se connaît qu'une fois le panneau posé.
         super().resizeEvent(event)
         for btn in self._provider_btns.values():

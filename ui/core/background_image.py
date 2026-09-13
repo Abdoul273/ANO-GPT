@@ -55,7 +55,7 @@ class BackgroundImage(QWidget):
         image = reader.read()
         return QPixmap.fromImage(image) if not image.isNull() else QPixmap()
 
-    def resizeEvent(self, event):  # noqa: N802
+    def resizeEvent(self, event):
         super().resizeEvent(event)
         self._refresh_scaled()
 
@@ -71,7 +71,7 @@ class BackgroundImage(QWidget):
         )
         self._scaled_for = target_size
 
-    def paintEvent(self, event):  # noqa: N802
+    def paintEvent(self, event):
         if self._pixmap.isNull() or self.width() < 1 or self.height() < 1:
             return
         self._refresh_scaled()

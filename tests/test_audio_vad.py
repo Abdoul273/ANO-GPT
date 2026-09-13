@@ -180,5 +180,5 @@ def test_one_loud_click_cannot_validate_a_whole_clip():
         ([0.0] * 8 + [0.85] * 5 + [0.0] * 8, True),
     ]:
         iterator = iter(scores)
-        vad._webrtc_prob = lambda _: next(iterator)
+        vad._webrtc_prob = lambda _, it=iterator: next(it)
         assert vad.is_speech(np.zeros(320 * len(scores), dtype=np.int16)) is expected

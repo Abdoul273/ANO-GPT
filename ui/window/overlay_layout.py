@@ -42,7 +42,7 @@ class HudOverlayLayout(QLayout):
         self._roles[role] = QWidgetItem(widget)
         self.invalidate()
 
-    def addItem(self, item):  # noqa: N802
+    def addItem(self, item):
         self._fill.append(item)
 
     def count(self) -> int:

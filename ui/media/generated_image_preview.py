@@ -54,7 +54,7 @@ class GeneratedImagePreview(QWidget):
         return {"title": self._prompt[:80] or "Image créée", "source": "Azure Foundry",
                 "source_url": "", "bytes": self._bytes, "path": self._path}
 
-    def paintEvent(self, event):  # noqa: N802
+    def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         # Plusieurs halos translucides donnent une bordure organique/fumée,
@@ -104,7 +104,7 @@ class GeneratedArtifactPreview(QWidget):
         self._timer.start(self._DISMISS_MS)
         self.update()
 
-    def paintEvent(self, event):  # noqa: N802
+    def paintEvent(self, event):
         painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(8, 6, self.width() - 16, self.height() - 12)
         for radius, alpha, color in ((0.84, 38, QColor(0, 220, 255)), (0.52, 48, QColor(220, 65, 255))):

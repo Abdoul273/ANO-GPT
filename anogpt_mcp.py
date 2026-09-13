@@ -35,13 +35,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 try:  # MCP SDK 1.x
-    from mcp.server.fastmcp import FastMCP  # type: ignore  # noqa: E402
+    from mcp.server.fastmcp import FastMCP  # type: ignore
 except ModuleNotFoundError:  # MCP SDK 2.x : FastMCP a été renommé
-    from mcp.server.mcpserver import MCPServer as FastMCP  # noqa: E402
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
-from core.agent_brain import LOOP_GUARD_ENV  # noqa: E402
-from core.ghost_agent import GHOST_MODE_ENV  # noqa: E402
-from core.tool_bridge import (  # noqa: E402
+from core.agent_brain import LOOP_GUARD_ENV
+from core.ghost_agent import GHOST_MODE_ENV
+from core.tool_bridge import (
     AppUnavailable,
     ToolError,
     app_running,

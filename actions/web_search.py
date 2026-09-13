@@ -694,7 +694,7 @@ def _social_profile_intent(text: str) -> Optional[Dict[str, str]]:
         match = re.search(r"[@#]([\w.-]{2,})", source)
         if match:
             handle = match.group(1)
-    handle = re.sub(r"^(?:le|la|un|une|de|du|des|d['’])\s+", "", handle).strip(" @#'\" ")
+    handle = re.sub(r"^(?:le|la|un|une|de|du|des|d['’])\s+", "", handle).strip(" @#'\"")
     if not handle or len(handle) > 80:
         return None
     return {"handle": handle, "platform": platform}

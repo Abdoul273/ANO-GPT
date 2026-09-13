@@ -1,13 +1,44 @@
 # Python 3.13+ (développé sur 3.14.7). Pas de table [project] : l'install
 # passe par requirements.txt / setup.py, ce n'est pas un paquet pip.
+
+# ── Ruff ─────────────────────────────────────────────────────────────────────
+# Deux niveaux (voir .claude/skills/ruff/SKILL.md) :
+#   • `ruff check .`            — la BARRIÈRE : doit rendre 0 erreur, toujours.
+#     Uniquement des règles qui détectent de vrais bugs (nom indéfini, variable
+#     de boucle capturée, appel dans un défaut, noqa mort…).
+#   • `ruff check --extend-select … --statistics` — l'AUDIT : règles de
+#     qualité à traiter au fil de l'eau sur les fichiers qu'on touche, jamais
+#     en masse (le dépôt est partagé entre plusieurs agents).
 [tool.ruff]
 target-version = "py314"
-extend-exclude = [".venv-tools", "build", "mobile"]
+line-length = 110
+extend-exclude = [".venv-tools", "build", "mobile", "development", "docs"]
 
 [tool.ruff.lint]
-select = ["F401", "F541", "F841"]
+select = [
+    "F",        # pyflakes : noms indéfinis, imports/variables inutilisés, f-string vide…
+    "E9",       # erreurs de syntaxe / d'E-S
+    "PLE",      # pylint : erreurs certaines (await hors async, format invalide…)
+    "B004", "B005", "B009", "B010", "B015", "B017", "B023", "B025", "B033",  # bugbear : bugs sûrs
+    "RUF100",   # `# noqa` qui ne sert plus
+    "RUF008",   # défaut mutable dans un dataclass
+    "S102", "S307",  # exec / eval : interdits hors bac à sable explicite
+]
+# F403/F405 : `from x import *` tolérés dans les paquets de ré-export ci-dessous.
+extend-safe-fixes = ["RUF100", "B009", "B010"]
 
 [tool.ruff.lint.per-file-ignores]
 # Ces paquets constituent volontairement une API de ré-export.
 "core/__init__.py" = ["F401"]
 "ui/__init__.py" = ["F401"]
+# Bac à sable Python du bureau : `exec` volontaire, `__builtins__` restreint.
+"actions/desktop.py" = ["S102"]
+# Les tests exécutent du code généré à dessein.
+"tests/*" = ["S102"]
+
+# Règles d'AUDIT (pas bloquantes) — passées par la commande du skill :
+#   ruff check --extend-select B,ASYNC,RUF006,RUF012,RUF013,RUF059,PLW1510,PGH003,SIM,UP --statistics .
+# B904  : raise … from exc dans un except        RUF006 : tâche asyncio jamais gardée
+# RUF012: attribut de classe mutable             RUF013 : Optional implicite
+# RUF059: dépaquetage inutilisé                  PLW1510: subprocess.run sans check=
+# ASYNC : sleep en boucle, appels bloquants dans une coroutine

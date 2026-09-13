@@ -630,7 +630,7 @@ class SessionManager:
         if player is not None and hasattr(player, "speak"):
             mod = self.get_tts_modulation()
             if hasattr(player, "_cfg"):
-                cfg = getattr(player, "_cfg")
+                cfg = player._cfg
                 if hasattr(cfg, "rate"):
                     cfg.rate = mod.tts_rate
                 if hasattr(cfg, "volume"):

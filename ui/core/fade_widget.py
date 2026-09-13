@@ -100,7 +100,7 @@ class FadeInWidget(QWidget):
         if self._scrim is not None:
             self._scrim.hide()
 
-    def keyPressEvent(self, event):  # noqa: N802
+    def keyPressEvent(self, event):
         # Filet de sécurité : si la croix se retrouve hors du cadre parce que le
         # contenu déborde, Échap ferme quand même le réglage.
         if event.key() == Qt.Key.Key_Escape:
@@ -109,7 +109,7 @@ class FadeInWidget(QWidget):
             return
         super().keyPressEvent(event)
 
-    def paintEvent(self, event):  # noqa: N802
+    def paintEvent(self, event):
         # Le fond propre à chaque réglage est conservé, puis le châssis commun
         # est peint par-dessus. Cela évite sept styles divergents de dialogues.
         super().paintEvent(event)

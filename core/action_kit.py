@@ -634,7 +634,7 @@ def invalidate(target: Any = None) -> None:
         _proc_cache.invalidate()
         return
     name = getattr(target, "_memo_name", target)
-    with _memo_cache._lock:  # noqa: SLF001 — accès interne assumé
+    with _memo_cache._lock:
         for k in [k for k in _memo_cache._data
                   if isinstance(k, tuple) and len(k) > 1 and k[1] == name]:
             del _memo_cache._data[k]

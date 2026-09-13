@@ -624,7 +624,7 @@ class GmailService:
     @staticmethod
     def dependencies_available() -> bool:
         try:
-            import google.auth.transport.requests  # noqa: F401
+            import google.auth.transport.requests
             import google.oauth2.credentials  # noqa: F401
             import google_auth_oauthlib.flow  # noqa: F401
             import googleapiclient.discovery  # noqa: F401

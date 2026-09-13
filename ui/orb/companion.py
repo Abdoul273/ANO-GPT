@@ -63,7 +63,7 @@ class CompanionOrb(QWidget):
             val = max(0.0, min(1.0, float(level)))
             self._direct_vol = val
             if self._source is not None:
-                setattr(self._source, '_direct_vol', val)
+                self._source._direct_vol = val
                 if hasattr(self._source, "set_volume"):
                     self._source.set_volume(val)
         except Exception:
@@ -115,7 +115,7 @@ class CompanionOrb(QWidget):
         p.fillRect(event.rect(), Qt.GlobalColor.transparent)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         if self._source is not None and self._direct_vol > 0.0:
-            setattr(self._source, '_direct_vol', self._direct_vol)
+            self._source._direct_vol = self._direct_vol
         paint_reactor(p, QRectF(self._orb_rect), self._source, time.monotonic() - self._started)
         if self._bubble_on:
             p.setRenderHint(QPainter.RenderHint.Antialiasing)

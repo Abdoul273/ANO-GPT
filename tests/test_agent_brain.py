@@ -35,7 +35,7 @@ def agent(monkeypatch):
         return _Completed(stdout="Réponse de l'agent.")
 
     monkeypatch.setattr(agent_brain, "agent_binary", lambda: "/faux/agy")
-    monkeypatch.setattr(agent_brain.subprocess, "run", _run)
+    monkeypatch.setattr(agent_brain.kit, "run", _run)
     return calls
 
 
@@ -66,7 +66,7 @@ def test_une_question_vide_ne_lance_pas_lagent(monkeypatch):
     def _explode(*a, **k):
         raise AssertionError("l'agent n'aurait pas dû être lancé")
 
-    monkeypatch.setattr(agent_brain.subprocess, "run", _explode)
+    monkeypatch.setattr(agent_brain.kit, "run", _explode)
     assert "vide" in agent_brain.think("   ")
 
 

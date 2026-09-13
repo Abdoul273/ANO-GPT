@@ -272,7 +272,7 @@ class MarqueeLabel(QLabel):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
 
-    def setText(self, text: str):  # noqa: N802
+    def setText(self, text: str):
         super().setText(text)
         self._text = text
         self._offset = 0.0
@@ -2523,7 +2523,7 @@ class CardManager(QWidget):
         for c in list(self._cards):
             self.dismiss_card(c)
 
-    def sizeHint(self) -> QSize:  # noqa: N802
+    def sizeHint(self) -> QSize:
         tot_h = self.MARGIN_TOP
         for c in self._cards:
             tot_h += (c.sizeHint().height() or c.height()) + self.CARD_SPACING
