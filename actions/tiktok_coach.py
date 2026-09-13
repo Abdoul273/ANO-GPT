@@ -36,14 +36,18 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from actions import tiktok_tracker as tt
+from core.live_model_policy import BALANCED_MODEL, FAST_MODEL
 
 CARD_TYPE = "tiktok"
+# Dossier où le créateur dépose ce qu'il s'apprête à publier : c'est la
+# première source de `draft` et de `list`, avant les dossiers génériques.
+TIKTOK_DIR = Path(os.environ.get("ANOGPT_TIKTOK_DIR") or Path.home() / "Vidéos" / "ANO-GPT" / "TIKTOK")
 CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "anogpt" / "tiktok"
 INLINE_LIMIT = 19 * 1024 * 1024        # au-delà, passage par l'API Files
 # Flash 3 en premier : c'est lui qui a le quota gratuit et qui digère une
 # vidéo de 90 s en moins d'une minute ; les alias « latest » servent de repli.
-VIDEO_MODELS = ("gemini-3-flash-preview", "gemini-flash-latest", "gemini-flash-lite-latest")
-TEXT_MODELS = ("gemini-3-flash-preview", "gemini-flash-latest", "gemini-flash-lite-latest")
+VIDEO_MODELS = (BALANCED_MODEL, FAST_MODEL)
+TEXT_MODELS = (BALANCED_MODEL, FAST_MODEL)
 TRANSIENT_RETRY_S = 8.0
 _ACTIVE_LOCK = threading.Lock()
 _ACTIVE: dict[str, float] = {}       # analyses en cours, par clé
@@ -173,7 +177,7 @@ def pick_video(items: list[dict], query: str) -> Optional[dict]:
 def heuristic_findings(v: dict, summary: dict) -> list[str]:
     """Lecture des chiffres à la lumière du fonctionnement de TikTok."""
     out: list[str] = []
-    plays, likes = v["plays"], v["likes"]
+    plays, _likes = v["plays"], v["likes"]
     median = summary.get("median_plays") or 0
     if v["age_h"] < 24:
         out.append("Elle a moins de 24 h : TikTok teste encore, le verdict n'est pas définitif.")
@@ -299,11 +303,22 @@ COACH_ROLE = (
     "Tu es un coach TikTok francophone de haut niveau, du calibre de Blow Up : direct, concret, "
     "sans langue de bois ni flatterie. Tu connais la mécanique de TikTok : premier lot de test de "
     "200 à 500 vues décidé sur le temps de visionnage et le taux de complétion, l'accroche décisive "
-    "dans les 1 à 2 premières secondes, le poids des partages, enregistrements et commentaires, la "
-    "cohérence de niche, le texte à l'écran, le son, la boucle (fin qui renvoie au début), l'appel à "
-    "l'action, la régularité de publication. Tu parles à un créateur qui construit un assistant IA "
-    "(ANO-GPT) en public. Tutoie-le. Ne récite pas de généralités : cite des moments précis de la "
-    "vidéo (secondes) et des chiffres. Réponds en JSON strict."
+    "dans la première seconde (image + texte + son), le poids des partages, enregistrements et "
+    "commentaires, le texte à l'écran et les sous-titres, le son tendance ou original, la boucle "
+    "(fin qui renvoie au début), l'appel à l'action, la régularité et les séries.\n"
+    "Le créateur publie PLUSIEURS genres de contenus sur le même compte : (a) la construction en "
+    "public de son assistant IA ANO-GPT (démos, coulisses), (b) des vidéos générées par IA — "
+    "sketches et mini-histoires avec des personnages (fruits animés à la Tentafruit, animaux, "
+    "objets), humour, situations absurdes, dialogues doublés — et (c) d'autres formats. "
+    "Commence TOUJOURS par identifier le genre de la vidéo que tu regardes et juge-la selon les "
+    "codes de CE genre et de ses comptes de référence. Ne reproche JAMAIS à une vidéo de ne pas "
+    "parler d'ANO-GPT ou de code : ce n'est pas une cause d'échec. Un sketch IA échoue pour des "
+    "raisons de sketch (gag pas lisible en 1 s, chute trop lente, doublage plat, texte absent, "
+    "personnage pas attachant, pas de boucle, son sans tendance, description sans accroche, "
+    "hashtags hors niche), pas parce qu'il ne montre pas un assistant. Explique la VRAIE raison, "
+    "vérifiable à l'écran, puis dis exactement comment faire pour que ça marche : ce qu'il faut "
+    "couper, ajouter, réécrire, à quelle seconde. Tutoie-le. Ne récite pas de généralités : cite "
+    "des moments précis (secondes) et des chiffres. Réponds en JSON strict."
 )
 
 
@@ -366,12 +381,17 @@ Voici une vidéo déjà publiée sur TikTok par ce créateur, et ses résultats.
 Ce que les chiffres suggèrent déjà :
 - {chr(10).join('- ' + f for f in findings) if findings else 'rien de particulier'}
 
-Regarde la vidéo et explique POURQUOI elle a obtenu ce résultat, en t'appuyant sur ce que tu vois
-et entends (accroche des 2 premières secondes, rythme, texte à l'écran, son, clarté du sujet,
-fin/boucle, appel à l'action). Puis dis exactement quoi changer.
+Regarde la vidéo. D'abord, dis de quel genre elle relève (sketch IA avec personnages, démo
+ANO-GPT, autre) et quels sont les codes de ce genre. Ensuite explique POURQUOI elle a obtenu ce
+résultat, en t'appuyant uniquement sur ce que tu vois et entends (accroche de la première seconde,
+lisibilité du gag ou du sujet, rythme et chute, texte à l'écran / sous-titres, doublage et son,
+personnages, fin/boucle, appel à l'action, description et hashtags par rapport à la niche). Le
+manque de lien avec ANO-GPT n'est pas une cause recevable. Puis dis exactement quoi changer pour
+que la PROCHAINE du même genre marche.
 
 JSON attendu :
 {{
+  "genre": "genre identifié en quelques mots",
   "spoken": "verdict de 4 à 6 phrases, prêt à être dit à voix haute, tutoiement, sans markdown",
   "hook_score": 0-10,
   "retention_score": 0-10,
@@ -448,13 +468,22 @@ Fichier : {info}.
 {_summary_facts(summary)}
 Points techniques déjà relevés : {'; '.join(findings) or 'aucun'}.
 
-Regarde-la comme le ferait un spectateur qui scrolle : est-ce que tu t'arrêtes dans la première
-seconde ? où décroches-tu ? Sois précis (secondes). Puis donne la recette exacte pour la publier.
+Identifie d'abord le genre (sketch IA à personnages, démo ANO-GPT, autre). Puis regarde-la comme
+le ferait un spectateur qui scrolle : est-ce que tu t'arrêtes dans la première seconde ? où
+décroches-tu ? le gag ou le sujet est-il compris sans le son ? la chute arrive-t-elle assez vite ?
+la fin renvoie-t-elle au début ? Sois précis (secondes). Ensuite donne la recette EXACTE pour
+qu'elle marche à fond : ce qu'il faut couper ou réordonner, le texte à afficher à la seconde 0,
+les sous-titres, le son à utiliser, la description avec accroche écrite, 5 hashtags de la niche
+réelle de la vidéo, la couverture, l'heure de publication, et le premier commentaire à épingler.
+Termine par un verdict franc : prête à publier, ou à corriger d'abord.
 
 JSON attendu :
 {{
-  "spoken": "avis de 4 à 6 phrases prêt à être dit à voix haute, tutoiement, sans markdown",
+  "genre": "genre identifié en quelques mots",
+  "verdict": "publie | corrige d'abord",
+  "spoken": "avis de 4 à 6 phrases prêt à être dit à voix haute, tutoiement, sans markdown, qui commence par le verdict",
   "hook_score": 0-10,
+  "viral_potential": 0-10,
   "predicted_retention": "faible | moyenne | bonne",
   "strengths": ["force 1", "force 2"],
   "weaknesses": ["faiblesse précise avec le moment (s)", "..."],
@@ -462,6 +491,8 @@ JSON attendu :
   "caption": "description prête à coller, avec une accroche écrite",
   "hashtags": ["5 hashtags de niche pertinents, sans #"],
   "on_screen_text": "texte à afficher sur la première image (court)",
+  "sound_advice": "son ou musique à utiliser et pourquoi (tendance, original, voix)",
+  "pinned_comment": "premier commentaire à épingler pour lancer la discussion",
   "cover_advice": "quelle image de couverture et quel texte dessus",
   "detailed_markdown": "rapport Markdown, 15 lignes max"
 }}"""
@@ -638,14 +669,17 @@ def find_video_file(query: str) -> Optional[Path]:
         p = Path(q).expanduser()
         if p.exists() and p.is_file():
             return p
-    roots = [Path.home() / d for d in ("Vidéos", "Videos", "Téléchargements", "Downloads", "Bureau", "Desktop")]
-    roots.append(Path.home() / "Vidéos" / "ANO-GPT")
-    candidates: list[Path] = []
-    for root in roots:
-        if root.is_dir():
-            for p in root.rglob("*"):
-                if p.suffix.lower() in _VIDEO_EXT and p.is_file() and not p.name.startswith("."):
-                    candidates.append(p)
+    # Le dossier TikTok du créateur passe en premier : s'il contient des
+    # vidéos, on ne va pas en chercher d'autres dans Téléchargements.
+    candidates = pending_videos()
+    if not candidates:
+        roots = [Path.home() / d for d in ("Vidéos", "Videos", "Téléchargements", "Downloads", "Bureau", "Desktop")]
+        roots.append(Path.home() / "Vidéos" / "ANO-GPT")
+        for root in roots:
+            if root.is_dir():
+                for p in root.rglob("*"):
+                    if p.suffix.lower() in _VIDEO_EXT and p.is_file() and not p.name.startswith("."):
+                        candidates.append(p)
     if not candidates:
         return None
     words = [w for w in re.findall(r"[a-zà-ÿ0-9]{3,}", q.lower()) if w not in {"vidéo", "video", "fichier"}]
@@ -657,10 +691,59 @@ def find_video_file(query: str) -> Optional[Path]:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+def pending_videos() -> list[Path]:
+    """Vidéos du dossier TikTok, de la plus récente à la plus ancienne."""
+    if not TIKTOK_DIR.is_dir():
+        return []
+    found = [p for p in TIKTOK_DIR.rglob("*")
+             if p.suffix.lower() in _VIDEO_EXT and p.is_file() and not p.name.startswith(".")]
+    found.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return found
+
+
+def list_pending(player: Any) -> str:
+    """Présente les vidéos prêtes à publier et demande laquelle analyser."""
+    videos = pending_videos()
+    if not videos:
+        return (f"Le dossier {TIKTOK_DIR} est vide. Dépose-y la vidéo que tu veux publier et "
+                "dis-moi « analyse-la ».")
+    lines = []
+    for i, p in enumerate(videos[:12], 1):
+        info = probe_file(p)
+        age_h = (time.time() - p.stat().st_mtime) / 3600
+        when = f"il y a {age_h:.0f} h" if age_h < 48 else datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m")
+        lines.append(f"{i}. **{p.name}** · {info.get('duration', '?')} s · "
+                     f"{info.get('width', '?')}x{info.get('height', '?')} · {when}")
+    _card(player, f"Vidéos prêtes à publier ({len(videos)})",
+          "\n".join(lines) + "\n\n_Dis-moi laquelle tu veux poster : je la regarde et je te "
+          "donne la recette complète._")
+    names = ", ".join(f"{i}. {p.stem[:30]}" for i, p in enumerate(videos[:5], 1))
+    more = f" et {len(videos) - 5} autre(s)" if len(videos) > 5 else ""
+    return (f"Tu as {len(videos)} vidéo(s) dans le dossier TikTok : {names}{more}. "
+            "Laquelle es-tu prêt à poster ? Je la visionne et je te dis exactement comment la faire marcher.")
+
+
+def _pick_pending(query: str) -> Optional[Path]:
+    """« la 2 », « la deuxième », « la dernière », ou des mots du nom."""
+    q = str(query or "").strip().lower()
+    videos = pending_videos()
+    if not videos:
+        return None
+    ordinals = {"première": 1, "premiere": 1, "deuxième": 2, "deuxieme": 2, "seconde": 2,
+                "troisième": 3, "troisieme": 3, "quatrième": 4, "quatrieme": 4, "cinquième": 5}
+    m = re.search(r"\b(\d{1,2})\b", q)
+    idx = int(m.group(1)) if m else next((n for w, n in ordinals.items() if w in q), 0)
+    if 1 <= idx <= len(videos):
+        return videos[idx - 1]
+    if "dernière" in q or "derniere" in q or "récente" in q or "recente" in q:
+        return videos[0]
+    return None
+
+
 def review_draft(query: str, note: str, player: Any, speak: Any) -> str:
-    path = find_video_file(query)
+    path = _pick_pending(query) or find_video_file(query)
     if path is None:
-        return "Je ne trouve pas de fichier vidéo. Dis-moi son chemin ou mets-le dans Vidéos."
+        return (f"Je ne trouve pas de fichier vidéo. Mets-la dans {TIKTOK_DIR} ou dis-moi son chemin.")
     try:
         _cur, items = dataset()
         summary = account_summary(items)
@@ -683,7 +766,9 @@ def review_draft(query: str, note: str, player: Any, speak: Any) -> str:
                              + (" ".join(findings) if findings else "le format est bon.")
                              + " " + best_posting_advice(summary))
             return
-        lines = [f"**{path.name}** — accroche **{data.get('hook_score', '?')}/10**, rétention prévue "
+        lines = [f"**{path.name}** — {data.get('genre', '')}",
+                 f"Verdict : **{data.get('verdict', '?')}** · accroche **{data.get('hook_score', '?')}/10** · "
+                 f"potentiel **{data.get('viral_potential', '?')}/10** · rétention prévue "
                  f"**{data.get('predicted_retention', '?')}**"]
         for label, key in (("Forces", "strengths"), ("Faiblesses", "weaknesses"), ("Montage", "edits")):
             if data.get(key):
@@ -694,8 +779,12 @@ def review_draft(query: str, note: str, player: Any, speak: Any) -> str:
             lines.append(" ".join("#" + str(t).lstrip("#") for t in data["hashtags"][:6]))
         if data.get("on_screen_text"):
             lines += ["", f"**Texte 1re image :** {data['on_screen_text']}"]
+        if data.get("sound_advice"):
+            lines.append(f"**Son :** {data['sound_advice']}")
         if data.get("cover_advice"):
             lines.append(f"**Couverture :** {data['cover_advice']}")
+        if data.get("pinned_comment"):
+            lines.append(f"**Commentaire à épingler :** {data['pinned_comment']}")
         lines += ["", f"⏰ {data.get('posting_time', '')}"]
         _card(player, title, "\n".join(lines))
         spoken = str(data.get("spoken") or "")
@@ -726,6 +815,8 @@ def tiktok_coach(parameters: dict | None = None, player: Any = None,
             return diagnose(query, player, speak)
         if action in {"review", "account", "bilan", "compte", "plan"}:
             return review_account(player)
+        if action in {"list", "pending", "folder", "dossier", "liste", "choose", "which"}:
+            return list_pending(player)
         if action in {"draft", "before_post", "pre_post", "file", "fichier", "avant"}:
             return review_draft(str(p.get("path") or query), str(p.get("note") or ""), player, speak)
         if action in {"best_time", "when", "quand", "heure"}:
@@ -735,4 +826,5 @@ def tiktok_coach(parameters: dict | None = None, player: Any = None,
         return str(exc)
     except Exception as exc:
         return f"Le coach TikTok n'a pas pu répondre : {exc}"
-    return "Actions du coach : diagnose (pourquoi une vidéo), review (bilan du compte), draft (vidéo à publier), best_time."
+    return ("Actions du coach : diagnose (pourquoi une vidéo), review (bilan du compte), "
+            "list (vidéos prêtes dans le dossier TikTok), draft (vidéo à publier), best_time.")

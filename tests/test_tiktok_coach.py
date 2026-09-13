@@ -1,3 +1,4 @@
+import os
 import time
 
 from actions import tiktok_coach as tc
@@ -100,3 +101,42 @@ def test_tools_are_declared_to_the_model():
     from core.tool_dispatcher import TOOL_DECLARATIONS
     names = {d["name"] for d in TOOL_DECLARATIONS}
     assert {"tiktok_tracker", "tiktok_coach"} <= names
+
+
+def test_list_pending_reads_the_tiktok_folder_and_asks_which(tmp_path, monkeypatch):
+    folder = tmp_path / "TIKTOK"
+    folder.mkdir()
+    old = folder / "tentafruit_citron.mp4"
+    old.write_bytes(b"x")
+    new = folder / "demo_anogpt.mp4"
+    new.write_bytes(b"y")
+    os.utime(old, (1, 1))
+    monkeypatch.setattr(tc, "TIKTOK_DIR", folder)
+    monkeypatch.setattr(tc, "probe_file", lambda p: {"duration": 12, "width": 1080, "height": 1920})
+    cards = []
+
+    class Player:
+        def show_card(self, kind, title, body):
+            cards.append((title, body))
+
+    text = tc.list_pending(Player())
+    assert "2 vidéo" in text and "Laquelle" in text
+    assert "1. demo_anogpt" in text and "2. tentafruit_citron" in text
+    assert cards and "prêtes à publier (2)" in cards[0][0]
+
+    assert tc._pick_pending("la 2") == old
+    assert tc._pick_pending("la deuxième") == old
+    assert tc._pick_pending("la dernière") == new
+    assert tc.find_video_file("citron") == old  # le dossier TikTok prime
+    assert tc.find_video_file("") == new
+
+
+def test_empty_tiktok_folder_tells_where_to_drop(tmp_path, monkeypatch):
+    monkeypatch.setattr(tc, "TIKTOK_DIR", tmp_path / "vide")
+    assert "Dépose" in tc.list_pending(None)
+
+
+def test_coach_role_never_blames_missing_link_with_anogpt():
+    assert "Tentafruit" in tc.COACH_ROLE
+    assert "Ne reproche JAMAIS" in tc.COACH_ROLE
+    assert "genre" in tc.COACH_ROLE

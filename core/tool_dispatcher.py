@@ -819,16 +819,22 @@ TOOL_DECLARATIONS = [
     {
         "name": "tiktok_coach",
         "description": (
-            "Coach TikTok personnel (comme Blow Up) pour aider l'utilisateur à percer. "
+            "Coach TikTok personnel (comme Blow Up) pour aider l'utilisateur à percer. Le compte "
+            "mélange plusieurs genres : coulisses d'ANO-GPT ET sketches générés par IA (personnages, "
+            "fruits animés, humour) — chaque vidéo est jugée selon les codes de son genre, jamais "
+            "sur son lien avec ANO-GPT. "
             "Actions : 'diagnose' — « pourquoi ma vidéo n'a pas marché », « pourquoi elle est bloquée à "
             "300 vues », « pourquoi si peu de likes sur ma dernière vidéo » : lit les chiffres, télécharge "
-            "la vidéo, la visionne et explique les causes + quoi changer (query = quelle vidéo : "
+            "la vidéo, la visionne et explique les vraies causes + quoi changer (query = quelle vidéo : "
             "« la dernière », « l'avant-dernière », « la plus vue », des mots du titre, ou une URL). "
             "'review' — bilan du compte : ce qui marche, ce qui bloque, plan et idées de vidéos. "
-            "'draft' — « analyse cette vidéo avant que je la poste », « regarde ma vidéo dans Vidéos » : "
-            "visionne un fichier local (path ou mots du nom ; par défaut la vidéo la plus récente), "
-            "juge l'accroche et la rétention, propose montage, description, hashtags, texte de "
-            "couverture et meilleure heure (note = précisions de l'utilisateur sur son intention). "
+            "'list' — « qu'est-ce que j'ai à poster », « quelles vidéos sont prêtes », « je veux poster » : "
+            "liste les vidéos du dossier ~/Vidéos/ANO-GPT/TIKTOK et demande laquelle publier. "
+            "'draft' — « analyse cette vidéo avant que je la poste », « la 2 », « la dernière du dossier » : "
+            "visionne le fichier choisi (query = numéro, ordinal, mots du nom ou chemin ; par défaut "
+            "la plus récente du dossier TikTok), donne un verdict publie/corrige, l'accroche, la "
+            "rétention, le montage, la description, les hashtags, le son, la couverture, le commentaire "
+            "à épingler et la meilleure heure (note = précisions de l'utilisateur sur son intention). "
             "'best_time' — meilleure heure pour poster. diagnose et draft lancent le visionnage EN FOND "
             "et rendent tout de suite un premier constat à dire ; l'avis complet est annoncé tout seul "
             "environ une minute plus tard : ne relance pas l'outil, ne dis pas que c'est fini."
@@ -836,8 +842,8 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "diagnose | review | draft | best_time"},
-                "query": {"type": "STRING", "description": "Vidéo visée (diagnose) ou fichier (draft), tel que dit"},
+                "action": {"type": "STRING", "description": "diagnose | review | list | draft | best_time"},
+                "query": {"type": "STRING", "description": "Vidéo visée (diagnose) ou fichier (draft : numéro de la liste, ordinal, mots du nom, chemin), tel que dit"},
                 "path": {"type": "STRING", "description": "Pour draft : chemin du fichier si connu"},
                 "note": {"type": "STRING", "description": "Pour draft : ce que l'utilisateur veut obtenir avec cette vidéo"},
             },
