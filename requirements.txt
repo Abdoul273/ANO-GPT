@@ -68,3 +68,7 @@ pypdf
 # Arch: pacman -S speexdsp | Debian: apt install libspeexdsp-dev | Fedora: dnf install speexdsp-devel
 
 aiohttp>=3.10,<4
+# Reconnaissance musicale (actions/music_recognition.py) : empreinte Shazam.
+# 0.6.x est en Python pur ; 0.7+ dépend de shazamio-core (Rust) qui plante à
+# l'import sous Python 3.14 sur cette machine (segfault). Secours : `songrec`.
+shazamio==0.6.0

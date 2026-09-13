@@ -86,9 +86,10 @@ PACKS: Mapping[str, ToolPack] = {
     ),
     "musique": ToolPack(
         label="musique et vidéo",
-        tools=frozenset({"music_control", "download_music", "youtube_video"}),
+        tools=frozenset({"music_control", "download_music", "youtube_video", "music_recognition"}),
         triggers=_triggers(
             r"\b(musique|chanson|morceau|album|playlist|artiste|son)\b",
+            r"\b(shazam|qui chante|c'est quoi (?:ce|cette) (?:son|musique|chanson|titre)|tu connais (?:ce|cette))\b",
             r"\b(joue|mets|lance|ecoute|ecouter|pause|volume|piste suivante)\b.{0,24}"
             r"\b(musique|chanson|son|titre|clip|video)\b",
             r"\b(youtube|clip|spotify|deezer|soundcloud)\b",

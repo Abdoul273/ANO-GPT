@@ -1847,6 +1847,29 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "music_recognition",
+        "description": (
+            "Reconnaît la musique qui joue EN CE MOMENT (Shazam intégré) : « tu connais cette musique ? », "
+            "« c'est quoi cette chanson », « qui chante ça », « c'est quel titre », « shazam ». "
+            "action='identify' (défaut) : lit d'abord le lecteur en cours (Spotify, mpv, navigateur), sinon "
+            "écoute ~10 s la sortie audio du PC puis le micro, compare l'empreinte à la base Shazam et donne "
+            "titre, artiste, album, année, genre, pochette. Réponds AVANT l'appel par une phrase courte du "
+            "type « J'écoute » puis reste silencieux : l'outil enregistre le son pendant quelques secondes. "
+            "Rends le résultat tel quel (il se termine par la proposition Spotify/YouTube). "
+            "action='play' avec target='spotify'|'youtube'|'local' : lance la dernière musique reconnue "
+            "(« oui, sur Spotify », « mets-la », « lance-la »). action='history' : dernières reconnues."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "identify (défaut) | play | history"},
+                "target": {"type": "STRING", "description": "Pour play : spotify (défaut) | youtube | local"},
+                "listen_only": {"type": "BOOLEAN", "description": "Ignorer le lecteur en cours et écouter vraiment le son (ex. musique dans la pièce)"},
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "music_control",
         "description": (
             "Recherche et lit la musique, les morceaux audio et les vidéos (en local ou en ligne). "
@@ -2166,6 +2189,7 @@ _TOOL_LABELS = {
     "file_controller": "Fichiers",
     "send_message": "Envoi de message",
     "shell_exec": "Commande",
+    "music_recognition": "Reconnaissance musicale",
     "music_control": "Musique",
     "download_music": "Téléchargement musique",
     "proactive_mode": "Mode proactif",
@@ -3596,6 +3620,15 @@ class ToolDispatcher:
                                                 session_memory=self._tool_session_memory),
                     )
                     result = r or "Capture effectuée."
+
+            elif name == "music_recognition":
+                from actions.music_recognition import music_recognition
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: music_recognition(parameters=args, player=self.ui,
+                                              session_memory=self._tool_session_memory),
+                )
+                result = r or "Je n'ai pas reconnu la musique."
 
             elif name == "music_control":
                 r = await loop.run_in_executor(

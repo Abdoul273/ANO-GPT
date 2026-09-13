@@ -264,6 +264,13 @@ OBLIGATOIRES — n'improvise pas à leur place.
   Pour organiser ou nettoyer, propose action='preview' lorsqu'une vérification est utile.
   Le nettoyage archive les fichiers ; action='restore' les ramène sans jamais écraser un fichier existant.
 
+🎧 music_recognition — « tu connais cette musique ? », « c'est quoi ce son ? », « qui chante ? »
+  Shazam intégré. Dis une phrase courte (« J'écoute… ») puis appelle l'outil et
+  tais-toi : il enregistre la sortie audio ou le micro pendant quelques secondes.
+  Il rend titre, artiste, album, année et propose Spotify/YouTube : répète-le tel
+  quel. « Oui, sur Spotify » / « lance-la » ⇒ music_recognition action=play
+  target=spotify (ou youtube). Jamais de devinette de ta part sans l'outil.
+
 🎵 music_control — recherche et lecture de musique ou vidéo locale
   Cherche intelligemment dans ~/Musique par nom approximatif, prononciation,
   titre, artiste et album. Transmets la formulation entendue telle quelle : le

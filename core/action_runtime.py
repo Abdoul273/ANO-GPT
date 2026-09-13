@@ -76,6 +76,8 @@ _POLICIES: dict[str, ActionPolicy] = {
     # Les contrôles de lecture restent synchrones : au-delà de vingt secondes,
     # il vaut mieux rendre l'écoute que laisser une commande MPRIS bloquée.
     "music_control": ActionPolicy(timeout_s=20.0),
+    # Deux fenêtres d'écoute (9 s + 12 s) plus l'empreinte réseau.
+    "music_recognition": ActionPolicy(timeout_s=50.0),
     "download_music": ActionPolicy(timeout_s=90.0),
     # Une lecture TikTok ouvre un Chrome headless : dix à quinze secondes.
     "tiktok_tracker": ActionPolicy(timeout_s=60.0),
@@ -133,6 +135,7 @@ _ARG_ALIASES: dict[str, dict[str, str]] = {
     "browser_control": {"command": "action"},
     "computer_control": {"command": "action"},
     "music_control": {"command": "action", "text": "query"},
+    "music_recognition": {"command": "action", "source": "target", "platform": "target"},
     "youtube_video": {"command": "action", "text": "query"},
 }
 
