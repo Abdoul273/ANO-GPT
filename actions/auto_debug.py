@@ -82,12 +82,25 @@ def auto_debug_action(
         except Exception:
             pass
 
-    spoken_msg, diag = auto_debug_live(
-        user_query=query,
-        target_window=target,
-        input_text=input_text,
-        player=player,
-    )
+    try:
+        spoken_msg, diag = auto_debug_live(
+            user_query=query,
+            target_window=target,
+            input_text=input_text,
+            player=player,
+        )
+    except Exception as exc:
+        from core.observability import tool_failure
+        tool_failure(
+            "live_auto_debug",
+            exc,
+            message=str(exc)[:300],
+            args={"query": query[:80], "target": target},
+        )
+        return (
+            f"Je n'ai pas pu analyser l'erreur ({type(exc).__name__}). "
+            "Montre-moi le terminal et redemande."
+        )
 
     # L'application reste un opt-in explicite. Le modèle doit fournir un patch
     # unifié qui passe d'abord un dry-run ; un bloc de code complet ne peut plus

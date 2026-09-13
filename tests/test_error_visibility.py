@@ -101,6 +101,8 @@ def test_le_journal_est_du_jsonl_qui_garde_la_trace_separee():
     # illisible pour un script de diagnostic.
     assert "panne simulée" not in echec["msg"]
     assert "ValueError: panne simulée" in echec["exc"]
+    assert echec["error_type"] == "ValueError"
+    assert "panne simulée" in echec["error"]
     assert echec["tool"] == "phone_sms" and echec["duration_ms"] == 42.0
     assert echec["arg_keys"] == ["target"], "les valeurs restent privées, les clés suffisent"
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import threading
 import time
 from collections import defaultdict
@@ -23,6 +24,21 @@ from pathlib import Path
 LOG_PATH = Path(__file__).resolve().parent.parent / "memory" / "tool_usage.jsonl"
 
 _lock = threading.Lock()
+_EXC_NAME_RE = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_]{1,40}(?:Error|Exception|Warning|Exit|Timeout))\b"
+)
+
+
+def _error_category(error: str) -> str:
+    """Nom d'exception seulement — jamais le message (clés, URL, contenu)."""
+    text = str(error or "").strip()
+    match = _EXC_NAME_RE.search(text)
+    if match:
+        return match.group(1)[:80]
+    head = text.split(":", 1)[0].strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,78}", head):
+        return head[:80]
+    return "tool_execution_failed"
 
 # Au-delà de ce seuil, l'appel est compté comme « lent » : c'est ce qui déclenche
 # déjà la carte « tâche en cours » dans l'UI (latence perçue > 1 s).
@@ -42,8 +58,9 @@ def record(name: str, *, ok: bool, duration_ms: float, error: str = "") -> None:
         }
         if error:
             # Les messages d'exception peuvent contenir URL, jetons ou contenu
-            # personnel. Le diagnostic persistant garde seulement la catégorie.
-            entry["error"] = "tool_execution_failed"
+            # personnel. On ne conserve que le nom de l'exception, jamais le
+            # détail (sinon tool_usage.jsonl ne disait que « tool_execution_failed »).
+            entry["error"] = _error_category(error)
         line = json.dumps(entry, ensure_ascii=False)
         with _lock:
             LOG_PATH.parent.mkdir(parents=True, exist_ok=True)

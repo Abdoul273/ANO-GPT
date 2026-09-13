@@ -188,19 +188,127 @@ def test_auto_debug_action():
         assert res == "Division par zéro corrigée."
 
 
-def test_auto_debug_is_pinned_to_terra_and_parses_structured_response(monkeypatch):
+def test_auto_debug_falls_back_to_configured_brain_when_azure_missing(monkeypatch):
     import core.auto_debug as debug
-    monkeypatch.setattr("core.llm_client.get_api_key_for", lambda provider: "key")
+    monkeypatch.setattr("core.llm_client.provider_is_usable", lambda provider: provider == "deepseek")
+    monkeypatch.setattr("core.llm_client.resolve_brain_provider", lambda: "deepseek")
+    monkeypatch.setattr(
+        "core.llm_client.get_api_key_for",
+        lambda provider: "key" if provider == "deepseek" else "",
+    )
+    monkeypatch.setattr(
+        "core.llm_client._load_config",
+        lambda: {"deepseek_model": "deepseek-chat"},
+    )
     captured = {}
+
     def fake_call(messages, tools, timeout, **kwargs):
         captured.update(kwargs)
-        return {"content": '{"root_cause":"x","spoken_summary":"x","code_diff":"","fix_command":"","verification_commands":["pytest -q"],"evidence":["trace"],"risks":[],"confidence":"high","full_explanation":"detail"}'}
+        return {"content": '{"root_cause":"div0","spoken_summary":"Le dénominateur est zéro.","code_diff":"","fix_command":"","verification_commands":["pytest -q"],"evidence":["trace"],"risks":[],"confidence":"high","full_explanation":"detail"}'}
+
     monkeypatch.setattr("core.llm_client._call_openai_compat", fake_call)
     diag = debug.generate_debug_diagnostic(parse_error_snippet("ZeroDivisionError: division by zero"))
-    assert captured["provider"] == "openai"
-    assert captured["model"] == "gpt-5.6-terra"
+    assert captured["provider"] == "deepseek"
+    assert captured["model"] == "deepseek-chat"
     assert diag.confidence == "high"
     assert diag.verification_commands == ["pytest -q"]
+    assert not diag.spoken_summary.casefold().startswith("erreur")
+
+
+def test_auto_debug_prefers_azure_deployment_name(monkeypatch):
+    import core.auto_debug as debug
+    monkeypatch.setattr(
+        "core.llm_client.provider_is_usable",
+        lambda provider: provider == "azure_openai",
+    )
+    monkeypatch.setattr("core.llm_client.resolve_brain_provider", lambda: "azure_openai")
+    monkeypatch.setattr(
+        "core.llm_client.get_api_key_for",
+        lambda provider: "key" if provider == "azure_openai" else "",
+    )
+    monkeypatch.setattr(
+        "core.llm_client._load_config",
+        lambda: {
+            "azure_openai_model": "anogpt-brain",
+            "azure_code_model": "",
+            "azure_openai_endpoint": "https://ano.openai.azure.com",
+        },
+    )
+    captured = {}
+
+    def fake_azure(messages, tools, timeout, **kwargs):
+        captured.update(kwargs)
+        return {"content": '{"root_cause":"x","spoken_summary":"Cause trouvée.","code_diff":"","fix_command":"","verification_commands":[],"evidence":[],"risks":[],"confidence":"medium","full_explanation":"detail"}'}
+
+    monkeypatch.setattr("core.llm_client._call_azure_openai", fake_azure)
+    diag = debug.generate_debug_diagnostic(parse_error_snippet("ZeroDivisionError: division by zero"))
+    assert captured.get("model") == "anogpt-brain"
+    assert diag.model == "anogpt-brain"
+    assert diag.confidence == "medium"
+
+
+def test_auto_debug_accepts_free_text_when_json_missing(monkeypatch):
+    import core.auto_debug as debug
+    monkeypatch.setattr("core.llm_client.provider_is_usable", lambda provider: provider == "openai")
+    monkeypatch.setattr("core.llm_client.resolve_brain_provider", lambda: "openai")
+    monkeypatch.setattr(
+        "core.llm_client.get_api_key_for",
+        lambda provider: "key" if provider == "openai" else "",
+    )
+    monkeypatch.setattr("core.llm_client._load_config", lambda: {"openai_model": "gpt-5.6-terra"})
+
+    def fake_call(messages, tools, timeout, **kwargs):
+        return {"content": "Le dénominateur est zéro. Vérifie la variable count avant la division."}
+
+    monkeypatch.setattr("core.llm_client._call_openai_compat", fake_call)
+    diag = debug.generate_debug_diagnostic(parse_error_snippet("ZeroDivisionError: division by zero"))
+    assert "dénominateur" in diag.spoken_summary.casefold() or "dénominateur" in diag.root_cause.casefold()
+    assert diag.full_explanation
+    assert "texte libre" in " ".join(diag.risks).casefold()
+
+
+def test_auto_debug_logs_real_exception_and_stays_voice_safe(monkeypatch):
+    import core.auto_debug as debug
+    from core.action_runtime import ActionRuntime
+
+    monkeypatch.setattr("core.llm_client.provider_is_usable", lambda provider: provider == "openai")
+    monkeypatch.setattr("core.llm_client.resolve_brain_provider", lambda: "openai")
+    monkeypatch.setattr(
+        "core.llm_client.get_api_key_for",
+        lambda provider: "key" if provider == "openai" else "",
+    )
+    monkeypatch.setattr("core.llm_client._load_config", lambda: {"openai_model": "gpt-5.6-terra"})
+
+    def fake_call(messages, tools, timeout, **kwargs):
+        raise RuntimeError("401 unauthorized")
+
+    captured = {}
+
+    def fake_failure(tool, exc, **kwargs):
+        captured["tool"] = tool
+        captured["exc"] = exc
+        captured["message"] = kwargs.get("message", "")
+
+    monkeypatch.setattr("core.llm_client._call_openai_compat", fake_call)
+    monkeypatch.setattr("core.observability.tool_failure", fake_failure)
+    diag = debug.generate_debug_diagnostic(parse_error_snippet("ZeroDivisionError: division by zero"))
+    assert captured["tool"] == "live_auto_debug"
+    assert isinstance(captured["exc"], RuntimeError)
+    assert "401" in str(captured["exc"])
+    assert not ActionRuntime.looks_failed(diag.spoken_summary)
+    assert "RuntimeError" in " ".join(diag.risks)
+
+
+def test_auto_debug_without_brain_does_not_look_failed():
+    from core.action_runtime import ActionRuntime
+    import core.auto_debug as debug
+
+    with patch("core.auto_debug.debug_brain_candidates", return_value=[]):
+        diag = debug.generate_debug_diagnostic(
+            parse_error_snippet("ZeroDivisionError: division by zero")
+        )
+    assert "aucun cerveau" in diag.spoken_summary.casefold()
+    assert not ActionRuntime.looks_failed(diag.spoken_summary)
 
 
 def test_auto_apply_rejects_non_patch_and_applies_valid_patch(tmp_path):

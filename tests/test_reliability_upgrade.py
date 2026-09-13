@@ -120,6 +120,21 @@ def test_stats_ignore_corrupt_records_and_measure_tail_latency(tmp_path):
     assert row["errors"] == 1
 
 
+def test_stats_keep_exception_class_without_message(tmp_path, monkeypatch):
+    from core import tool_stats
+    path = tmp_path / "usage.jsonl"
+    monkeypatch.setattr(tool_stats, "LOG_PATH", path)
+    tool_stats.record(
+        "live_auto_debug",
+        ok=False,
+        duration_ms=1900,
+        error="Échec contrôlé de live_auto_debug : ValueError: token=secret",
+    )
+    row = json.loads(path.read_text(encoding="utf-8"))
+    assert row["error"] == "ValueError"
+    assert "secret" not in path.read_text()
+
+
 def test_stats_rotation_and_error_privacy(tmp_path, monkeypatch):
     from core import tool_stats
     path = tmp_path / "usage.jsonl"
@@ -130,6 +145,7 @@ def test_stats_rotation_and_error_privacy(tmp_path, monkeypatch):
     backup = path.with_suffix(".jsonl.1")
     assert backup.exists()
     assert "very-secret" not in backup.read_text()
+    assert "tool_execution_failed" in backup.read_text()
     monkeypatch.setattr(tool_stats, "MAX_LOG_BYTES", 5 * 1024 * 1024)
     assert len(tool_stats.load(path)) == 1
 

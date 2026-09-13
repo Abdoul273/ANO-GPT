@@ -216,8 +216,13 @@ def tool_failure(tool: str, exc: BaseException, *, message: str = "",
         # n'aurait pas de sens (rien à corriger dans le code).
         transient = isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or \
             type(exc).__name__ in {"ActionCircuitOpen", "ActionQueueTimeout", "ActionRuntimeError"}
-        incident_log.record(tool, exc, message=message, announce=not transient,
-                            extra={"arg_keys": sorted(args) if isinstance(args, dict) else None})
+        incident_log.record(
+            tool, exc, message=message, announce=not transient,
+            extra={
+                "arg_keys": sorted(args) if isinstance(args, dict) else None,
+                "error_type": type(exc).__name__,
+            },
+        )
     except Exception:
         pass
     logging.getLogger("anogpt.tools").error(
@@ -226,6 +231,8 @@ def tool_failure(tool: str, exc: BaseException, *, message: str = "",
         extra={
             "tool": tool,
             "spoken": message[:300],
+            "error_type": type(exc).__name__,
+            "error": " ".join(str(exc).split())[:400],
             "duration_ms": round(duration_ms, 1) if duration_ms is not None else None,
             "arg_keys": sorted(args) if isinstance(args, dict) else None,
         },
