@@ -47,6 +47,11 @@ CORE: frozenset[str] = frozenset({
     "system_status", "open_app", "close_app", "shell_exec", "undo_action",
     # Cadre de session
     "report_capability_gap", "shutdown_jarvis", "voice_style",
+    # TikTok de l'utilisateur : toujours à portée. Le modèle agit souvent sur
+    # l'audio avant que la transcription n'ouvre un paquet ; sans ces outils
+    # dans le noyau, « combien de vues a fait ma dernière vidéo » partait en
+    # recherche web d'un pseudo inventé.
+    "tiktok_tracker", "tiktok_coach",
 })
 
 
@@ -151,16 +156,6 @@ PACKS: Mapping[str, ToolPack] = {
             r"\b(luminosite|volume systeme|wifi|bluetooth|veille|verrouille)\b",
             r"\b(repare|repare[- ]?toi|auto[- ]?diagnostic|scan securite|vulnerabilit)\b",
             r"\b(corrige|corriger|corrige[- ]?toi|redemarre|redemarre[- ]?toi|plante|a plante|c'etait quoi l'erreur)\b",
-        ),
-    ),
-    "reseaux": ToolPack(
-        label="réseaux sociaux",
-        tools=frozenset({"tiktok_tracker", "tiktok_coach"}),
-        triggers=_triggers(
-            r"\b(tiktok|tik tok|abonnes|abonne|followers|follower|vues|likes)\b",
-            r"\b(mon compte|ma video|mes videos|ma derniere video)\b",
-            r"\b(blow|ca monte|ca decolle|viral|virale|percer|coach)\b",
-            r"\b(pourquoi|analyse|regarde|avant de (?:la )?poster|publier)\b.{0,30}\b(video|vues|likes|tiktok)\b",
         ),
     ),
     "assistanat": ToolPack(

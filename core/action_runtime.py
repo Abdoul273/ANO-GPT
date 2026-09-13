@@ -40,7 +40,11 @@ class ActionQueueFull(ActionRuntimeError):
 
 @dataclass(frozen=True)
 class ActionPolicy:
-    timeout_s: float = 35.0
+    # Un outil qui ne rend rien en vingt secondes bloque la voix ET le micro
+    # (half-duplex) : passé ce délai il est annulé, l'utilisateur en est
+    # informé et l'écoute reprend. Les outils longs déclarent leur propre
+    # plafond ci-dessous.
+    timeout_s: float = 20.0
     max_concurrency: int = 1
     failure_threshold: int = 3
     cooldown_s: float = 30.0
@@ -52,7 +56,7 @@ _POLICIES: dict[str, ActionPolicy] = {
     # Un tour Live reste bloqué tant que son outil ne revient pas. Une minute
     # de recherche en cascade donne l'impression que l'assistant est mort et
     # empêche toute nouvelle phrase dans le mode half-duplex.
-    "web_search": ActionPolicy(timeout_s=20.0, max_concurrency=1),
+    "web_search": ActionPolicy(timeout_s=15.0, max_concurrency=1),
     "image_search": ActionPolicy(timeout_s=55.0),
     # GPT-Image peut prendre plus d'une minute, notamment au premier appel de
     # la ressource Foundry. Le couper à 55 s abandonnait le tour vocal alors
@@ -427,9 +431,9 @@ class ActionRuntime:
 def friendly_runtime_error(name: str, exc: BaseException) -> str:
     if isinstance(exc, asyncio.TimeoutError):
         return (
-            f"L’action {name} a dépassé son délai de sécurité. "
-            "L’attente a été interrompue ; une opération externe peut encore "
-            "se terminer. Vérifie son état avant de la relancer."
+            f"L’action {name} n'a rien rendu dans le délai imparti : elle a été annulée. "
+            "Dis-le à l'utilisateur en une phrase, sans relancer l'action, et "
+            "demande-lui s'il veut réessayer."
         )
     if isinstance(exc, ActionValidationError):
         return str(exc) + ". Corrige les paramètres puis appelle l’action une seule fois."

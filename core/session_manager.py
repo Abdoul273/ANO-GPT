@@ -100,7 +100,7 @@ LIVE_FALLBACK_MODEL = DEFAULT_FALLBACK_MODEL
 _STALE_AUDIO_TURN_S = 8.0
 # Silence serveur toléré après une demande (voix, texte, réponse d'outil)
 # avant de tenir la session pour morte et de la rouvrir.
-_LIVE_REPLY_TIMEOUT_S = 30.0
+_LIVE_REPLY_TIMEOUT_S = 15.0
 _TIME_PARTICLE_RE = re.compile(
     r"\b(?:quelle?\s+heure|heure\s+est.il|l['’]heure|heure\s+actuelle|"
     r"il\s+est(?:\s+actuellement)?\s+\d{1,2}(?:\s*(?:h|:)\s*\d{0,2}|\s+heures?)?|"

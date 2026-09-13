@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import asyncio
 import logging
 import logging.handlers
 import queue
@@ -210,7 +211,12 @@ def tool_failure(tool: str, exc: BaseException, *, message: str = "",
     """
     try:
         from core import incident_log
-        incident_log.record(tool, exc, message=message,
+        # Un délai dépassé ou un circuit ouvert est déjà dit par la voix au
+        # moment même ; l'annoncer une seconde fois avec « dis corrige »
+        # n'aurait pas de sens (rien à corriger dans le code).
+        transient = isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or \
+            type(exc).__name__ in {"ActionCircuitOpen", "ActionQueueTimeout", "ActionRuntimeError"}
+        incident_log.record(tool, exc, message=message, announce=not transient,
                             extra={"arg_keys": sorted(args) if isinstance(args, dict) else None})
     except Exception:
         pass

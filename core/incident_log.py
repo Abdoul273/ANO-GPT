@@ -106,7 +106,7 @@ def _save() -> None:
 
 
 def record(source: str, exc: Optional[BaseException] = None, *, message: str = "",
-           tb: str = "", extra: Optional[dict] = None) -> Incident:
+           tb: str = "", extra: Optional[dict] = None, announce: bool = True) -> Incident:
     """Enregistre une erreur et programme son annonce."""
     with _LOCK:
         _load()
@@ -121,7 +121,8 @@ def record(source: str, exc: Optional[BaseException] = None, *, message: str = "
         _INCIDENTS.append(inc)
         del _INCIDENTS[:-KEEP]
         _save()
-        _schedule_announce(inc)
+        if announce:
+            _schedule_announce(inc)
         return inc
 
 

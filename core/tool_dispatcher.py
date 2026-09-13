@@ -292,9 +292,11 @@ TOOL_DECLARATIONS = [
         "description": (
             "Searches the web. Use for ANY question about current facts, events, prices, "
             "or topics — always prefer this over guessing. "
-            "For a creator, influencer, tiktoker, YouTuber or account handle, use mode='social' "
+            "For SOMEONE ELSE's creator/influencer account handle, use mode='social' "
             "with the exact handle and platform. This performs a site-restricted profile lookup "
             "and only reports publicly indexed profile URLs; never guess an account. "
+            "NEVER use it for the user's OWN TikTok (« mon TikTok », « ma dernière vidéo », "
+            "« mes abonnés », « combien de vues ») → tiktok_tracker / tiktok_coach. "
             "Modes: 'search' (default), 'news' (latest headlines on a topic), "
             "'research' (deep comprehensive answer), 'price' (product cost lookup), "
             "'nearby' (a physical place/service near the user — 'closest hospital', "
