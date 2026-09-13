@@ -748,6 +748,9 @@ class GmailService:
 
     def connect(self, interactive: bool = True):
         """Connecte Gmail ; ouvre le navigateur uniquement si explicitement demandé."""
+        if interactive:
+            # Une reconnexion explicite rouvre la porte à la veille.
+            self._setup_required = ""
         with self._lock:
             if not self.dependencies_available():
                 raise GmailSetupRequired(
@@ -1337,6 +1340,8 @@ class GmailService:
         boucler sur une autorisation absente ne ferait qu'imprimer la même
         erreur toutes les vingt-cinq secondes.
         """
+        if getattr(self, "_setup_required", ""):
+            return False
         with self._lock:
             if self._polling_active:
                 return False
@@ -1356,6 +1361,9 @@ class GmailService:
                                 print(f"[GmailService] Notification : {exc}",
                                       file=sys.stderr)
                     except GmailSetupRequired as exc:
+                        # Autorisation expirée : inutile de relancer la veille à
+                        # chaque reconnexion vocale, elle échouerait pareil.
+                        self._setup_required = str(exc)
                         print(f"[GmailService] Veille arrêtée : {exc}",
                               file=sys.stderr)
                         return

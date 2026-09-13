@@ -29,7 +29,7 @@ pyautogui
 pyperclip
 pygetwindow
 opencv-python
-numpy
+numpy>=2,<2.8
 onnxruntime
 mss
 psutil

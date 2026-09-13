@@ -138,6 +138,12 @@ def setup_logging(level: int = logging.INFO, *, console_level: int = logging.WAR
 
         for name in _NOISY:
             logging.getLogger(name).setLevel(logging.WARNING)
+        # Le SDK google-genai avertit à chaque generate_content que l'appel
+        # automatique de fonctions (AFC) devrait passer par Chat : nous ne
+        # déclarons aucune fonction, l'avertissement est sans objet.
+        logging.getLogger("google_genai.models").addFilter(
+            lambda record: "automatic function calling" not in str(record.getMessage()).lower()
+        )
 
         _install_exception_hooks()
         atexit.register(shutdown_logging)

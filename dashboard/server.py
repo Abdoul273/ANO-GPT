@@ -1098,12 +1098,21 @@ class DashboardServer:
         self._history.append(msg)
         if len(self._history) > 300:
             self._history = self._history[-300:]
-        dead: set[WebSocket] = set()
-        for ws in list(self._clients):
+        clients = list(self._clients)
+        if not clients:
+            return
+
+        async def _send(ws: WebSocket) -> bool:
+            # Un téléphone en veille n'acquitte plus ses paquets : sans borne,
+            # l'envoi retenait la boucle vocale entière.
             try:
-                await ws.send_json(msg)
+                await asyncio.wait_for(ws.send_json(msg), timeout=2.0)
+                return True
             except Exception:
-                dead.add(ws)
+                return False
+
+        results = await asyncio.gather(*(_send(ws) for ws in clients), return_exceptions=True)
+        dead = {ws for ws, ok in zip(clients, results) if ok is not True}
         self._clients -= dead
 
     async def request_fresh_location(self, timeout: float = 10.0) -> bool:

@@ -1202,10 +1202,12 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
 
     def _flush_episode(self, reason: str, *, allow_agent: bool = True) -> None:
         """Lance l'écriture du résumé sans jamais faire attendre la voix."""
+        # Le résumé passe par un agent externe (jusqu'à 60 s) : c'est du
+        # réseau, pas du disque, et le seuil d'alerte doit dépasser son délai.
         get_thread_pool().submit(
-            "disk-io", self._episode.flush,
+            "network-heavy", self._episode.flush,
             reason=reason, allow_agent=allow_agent,
-            task_name="flush-episode", stall_timeout=30.0,
+            task_name="flush-episode", stall_timeout=75.0,
         )
 
     def _probe_ambient(self) -> None:
@@ -1472,6 +1474,44 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
             # que la boucle audio ne soit prête.
             self.interrupt()
 
+    # Délai accordé au TaskGroup pour se refermer une fois l'arrêt demandé.
+    _TEARDOWN_GRACE_S = 8.0
+
+    async def _session_teardown_watchdog(self) -> None:
+        """Force la fin d'un TaskGroup de session qui traîne à se fermer."""
+        from core import freeze_watch
+        aborting_since: float | None = None
+        seen_tg = None
+        while True:
+            await asyncio.sleep(1.0)
+            tg = getattr(self, "_session_tg", None)
+            if tg is None:
+                aborting_since = None
+                continue
+            if tg is not seen_tg:
+                seen_tg, aborting_since = tg, None
+            tasks = {t for t in getattr(tg, "_tasks", ()) if not t.done()}
+            if not (getattr(tg, "_aborting", False) or getattr(tg, "_exiting", False)) or not tasks:
+                aborting_since = None
+                continue
+            now = time.monotonic()
+            if aborting_since is None:
+                aborting_since = now
+                continue
+            # Le cœur bat encore : c'est la fermeture qui coince, pas la boucle.
+            freeze_watch.beat("boucle audio")
+            if now - aborting_since < self._TEARDOWN_GRACE_S:
+                continue
+            names = ", ".join(sorted(t.get_name() for t in tasks))
+            print(f"[JARVIS] ⚠️ Fermeture de session bloquée par : {names} — annulation forcée.")
+            try:
+                self.ui.write_log(f"SYS : fermeture de session forcée ({names}).")
+            except Exception:
+                pass
+            for t in tasks:
+                t.cancel()
+            aborting_since = now - self._TEARDOWN_GRACE_S + 2.0  # relance toutes les 2 s
+
     # ── main loop ───────────────────────────────────────────────────────────
 
     async def run(self):
@@ -1486,6 +1526,11 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         )
         self._event_bus.set_loop(self._loop)
         self._voice_change_event = asyncio.Event()
+        # Hors du TaskGroup de session : surveille sa fermeture. Une tâche
+        # enfant qui n'obéit pas à l'annulation retenait la reconnexion pour
+        # toujours (boucle au repos, plus de voix, plus de texte).
+        self._session_tg = None
+        asyncio.create_task(self._session_teardown_watchdog(), name="session-teardown-watchdog")
 
         # Initialisation paresseuse des fonctionnalités vision/RAG terminées.
         # Elles tournent hors de la boucle audio et restent dormantes tant que
@@ -1702,6 +1747,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 ):
                     self.session          = session
                     session_connected     = True
+                    self._session_tg      = tg
                     # Quatre secondes de PCM suffisent pour absorber une rafale
                     # réseau sans autoriser une latence et une RAM illimitées.
                     self.audio_in_queue   = asyncio.Queue(maxsize=80)
@@ -1937,6 +1983,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 self._last_disconnect_was_net_err = is_net_err
             finally:
                 self.session = None
+                self._session_tg = None
                 # Une poignée capturée pendant ou juste après une longue
                 # réponse peut demander à Gemini de rejouer ce tour à la
                 # reconnexion (le briefing observé deux fois). Dans cette

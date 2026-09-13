@@ -472,7 +472,7 @@ class ProactiveEngine:
     async def _run_prayer_watch(self) -> None:
         """Surveille les heures de prière (Adhan) et déclenche l'annonce à l'heure exacte."""
         try:
-            from core.prayer_times import get_prayer_manager
+            from actions.prayer import get_prayer_manager
         except ImportError as exc:
             print(f"[PrayerWatch] Dépendance manquante : {exc}")
             return
@@ -525,6 +525,14 @@ class ProactiveEngine:
             return
 
         service = get_gmail_service()
+        blocked = str(getattr(service, "_setup_required", "") or "")
+        if blocked:
+            # Déjà signalé lors de l'arrêt de la veille : une reconnexion vocale
+            # ne doit pas le répéter à chaque fois.
+            if not getattr(self, "_gmail_block_logged", False):
+                self._gmail_block_logged = True
+                self.ui.write_log(f"SYS: Veille Gmail inactive — {blocked}")
+            return
         status = await asyncio.to_thread(service.status)
         if not status.authenticated:
             # Sans autorisation, la veille n'a rien à surveiller. Le diagnostic
@@ -661,7 +669,7 @@ class ProactiveEngine:
                     is_fajr_allowed = False
                     if event.topic == "prayer" and event.data.get("prayer") == "fajr":
                         try:
-                            from core.prayer_times import get_prayer_manager
+                            from actions.prayer import get_prayer_manager
                             cfg = get_prayer_manager().config
                             if cfg.allow_fajr_in_quiet_hours and cfg.prayers.get("fajr", True):
                                 is_fajr_allowed = True
