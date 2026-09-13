@@ -1269,7 +1269,20 @@ class SessionManager:
                             # Le serveur a lui-même coupé le tour précédent :
                             # ce qui suit appartient à un nouveau tour.
                             self._end_discarded_turn()
-                            if not self._interrupted:
+                            if self._interrupted:
+                                # L'utilisateur avait cliqué « Interrompre »
+                                # puis reparlé : le serveur confirme que le
+                                # tour coupé est fini. Sans cette remise à
+                                # zéro, `_model_turn_active` restait vrai (pas
+                                # de turn_complete pour un tour interrompu) et
+                                # la réponse suivante était jetée : l'orbe
+                                # était vert, l'assistant muet.
+                                self._model_turn_active = False
+                                self._is_thinking = False
+                                self._audio_turn_active = False
+                                self._clear_interrupted()
+                                out_buf = []
+                            else:
                                 print("[STT] activité serveur ignorée — mot-clé d'arrêt requis")
 
                         if (not self.discard_model_audio()) and sc.output_transcription and sc.output_transcription.text:

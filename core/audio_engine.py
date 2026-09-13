@@ -496,6 +496,11 @@ class AudioEngine:
             # lecture repartait avec les paquets arrivés juste après.
             self._interrupted = True
         self._is_thinking = False
+        # Un tour audio « en attente de réponse » n'a plus lieu d'être : il
+        # retenait la prochaine commande texte jusqu'à un turn_complete qui ne
+        # viendrait pas.
+        self._audio_turn_pending = False
+        self._audio_turn_active = False
 
         if hasattr(self, "thought_streamer"):
             try:
@@ -551,6 +556,33 @@ class AudioEngine:
                 ui.write_log("SYS: Interrupted — écoute du téléphone...")
             elif not getattr(ui, "muted", False):
                 ui.write_log("SYS: Interrupted — listening...")
+        # Filet : si ni turn_complete ni `interrupted` serveur ne viennent clore
+        # le tour coupé, on le déclare fini nous-mêmes. Sinon « écoute » restait
+        # affiché alors que tout ce que le modèle renvoyait ensuite était jeté.
+        loop = getattr(self, "_loop", None)
+        epoch = self._speech_output_epoch
+        if loop is not None and loop.is_running():
+            try:
+                loop.call_later(self._INTERRUPT_RELEASE_S, self._release_stuck_interrupt, epoch)
+            except Exception:
+                pass
+
+    _INTERRUPT_RELEASE_S = 2.5
+
+    def _release_stuck_interrupt(self, epoch: int) -> None:
+        if epoch != getattr(self, "_speech_output_epoch", 0):
+            return  # une autre interruption a pris le relais
+        if not getattr(self, "_interrupted", False):
+            return  # le tour coupé s'est clos normalement
+        print("[JARVIS] ✋ Tour interrompu sans fin annoncée — libéré de force.")
+        self._model_turn_active = False
+        self._is_thinking = False
+        self._audio_turn_active = False
+        self._audio_turn_pending = False
+        self._end_discarded_turn()
+        self._clear_interrupted()
+        if self._turn_done_event:
+            self._turn_done_event.set()
 
     def reset_audio_and_turn_state(self, source: str = "unknown") -> None:
         """Réinitialise complètement l'état du tour et débloque le micro.
@@ -788,11 +820,15 @@ class AudioEngine:
         # brève fenêtre entre la génération et le démarrage de PortAudio pouvait
         # ouvrir un tour STT fantôme, puis déstabiliser la session Live.
         submit_lock = getattr(self, "_turn_submit_lock", None)
+        # Après « Interrompre », le tour coupé peut ne jamais recevoir de
+        # turn_complete : son `_model_turn_active` ne doit pas empêcher la
+        # parole suivante d'ouvrir un tour, sinon le micro reste vert et mort.
+        interrupted = bool(getattr(self, "_interrupted", False))
         if (
             getattr(self, "_is_speaking", False)
-            or getattr(self, "_is_thinking", False)
-            or getattr(self, "_model_turn_active", False)
-            or getattr(self, "_audio_turn_active", False)
+            or (not interrupted and getattr(self, "_is_thinking", False))
+            or (not interrupted and getattr(self, "_model_turn_active", False))
+            or (not interrupted and getattr(self, "_audio_turn_active", False))
             or (submit_lock is not None and submit_lock.locked())
         ):
             return
