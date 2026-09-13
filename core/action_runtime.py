@@ -104,13 +104,15 @@ _ARG_ALIASES: dict[str, dict[str, str]] = {
     "hypr_orchestrator": {"command": "action", "app": "target", "ws": "workspace"},
     "second_brain": {"text": "query", "search": "query", "q": "query", "cmd": "command", "cmd_text": "command"},
     "send_message": {
-        "recipient": "receiver", "destinataire": "receiver",
-        "message": "message_text", "text": "message_text",
-        "service": "platform",
+        "recipient": "receiver", "destinataire": "receiver", "contact": "receiver", "to": "receiver",
+        "message": "message_text", "text": "message_text", "content": "message_text",
+        "body": "message_text", "msg": "message_text", "contenu": "message_text",
+        "service": "platform", "app": "platform",
     },
     "whatsapp_control": {
-        "contact": "receiver", "recipient": "receiver", "destinataire": "receiver",
-        "text": "message", "message_text": "message", "command": "action",
+        "contact": "receiver", "recipient": "receiver", "destinataire": "receiver", "to": "receiver",
+        "text": "message", "message_text": "message", "content": "message", "body": "message",
+        "msg": "message", "contenu": "message", "command": "action",
     },
     "email_control": {
         "recipient": "to", "destinataire": "to", "recipients": "to",
@@ -316,17 +318,24 @@ class ActionRuntime:
 
         aliases = _ARG_ALIASES.get(name, {})
         for source, target in aliases.items():
-            if source in raw and target not in raw:
+            # Un alias l'emporte aussi sur un champ cible présent mais vide :
+            # le modèle envoie parfois `message_text=""` et le texte dans `text`.
+            if source in raw and (target not in raw or raw[target] in (None, "")):
                 raw[target] = raw.pop(source)
 
         schema = self._schemas[name]
         properties = schema.get("properties") or {}
         prepared: dict[str, Any] = {}
         problems: list[str] = []
+        # Champs inventés porteurs d'un texte : ils servent de repli quand un
+        # champ requis est vide (le modèle a mis le message au mauvais endroit).
+        stray_text: dict[str, str] = {}
         for field, value in raw.items():
             if field not in properties:
                 # Supprimer les champs inventés : les transmettre aux actions
                 # rend leur comportement imprévisible et brouille les suivis.
+                if isinstance(value, str) and value.strip():
+                    stray_text[str(field)] = value.strip()
                 continue
             try:
                 field_schema = properties.get(field) or {}
@@ -343,8 +352,30 @@ class ActionRuntime:
             field for field in (schema.get("required") or [])
             if field not in prepared or prepared[field] in (None, "", [])
         ]
+        if missing and stray_text:
+            # Récupération sans second tour : un seul champ texte requis vide et
+            # un seul texte égaré → c'est lui, sans ambiguïté possible.
+            missing_text = [
+                f for f in missing
+                if str((properties.get(f) or {}).get("type", "")).upper() in ("STRING", "")
+            ]
+            if len(missing_text) == 1 and len(stray_text) == 1:
+                stray_field, stray_value = next(iter(stray_text.items()))
+                prepared[missing_text[0]] = stray_value
+                missing.remove(missing_text[0])
+                print(
+                    f"[Actions] {name} : `{missing_text[0]}` repris depuis le champ "
+                    f"non déclaré `{stray_field}`."
+                )
         if missing:
-            problems.append("paramètres requis manquants : " + ", ".join(missing))
+            hint = ""
+            if stray_text:
+                hint = (
+                    " (texte reçu dans des champs non déclarés : "
+                    + ", ".join(f"`{k}`" for k in stray_text)
+                    + " — utilise " + ", ".join(f"`{m}`" for m in missing) + ")"
+                )
+            problems.append("paramètres requis manquants : " + ", ".join(missing) + hint)
         if problems:
             raise ActionValidationError(
                 f"Arguments invalides pour {name} — " + "; ".join(problems)
