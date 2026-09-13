@@ -848,6 +848,38 @@ class GlassCard(QFrame):
         """Compatibilité avec l'ancienne API ``RichCardWidget``."""
         self.dismiss()
 
+    def set_header(self, title: str | None = None, category: str | None = None,
+                   icon_name: str | None = None, accent_color: str | None = None) -> None:
+        """Change titre, catégorie, icône ou couleur d'accent d'une carte en place."""
+        if title is not None:
+            self.card_title = title
+            self._title_label.setText(title[:40])
+        if category is not None:
+            self.category = category
+            self.card_type = category.lower()
+            self._cat_label.setText(category.upper())
+        if accent_color is not None:
+            self.accent_color = accent_color
+            self._accent = qcol(accent_color)
+            self._live_indicator._color = qcol(accent_color)
+        if icon_name is not None:
+            self.icon_name = icon_name
+        if icon_name is not None or accent_color is not None:
+            self._icon_label.setPixmap(render_icon(self.icon_name, self.accent_color, 16))
+            self._icon_label.setStyleSheet(
+                f"background: rgba({self._accent.red()}, {self._accent.green()}, {self._accent.blue()}, 0.16);"
+                f"border: 1px solid rgba({self._accent.red()}, {self._accent.green()}, {self._accent.blue()}, 0.45);"
+                "border-radius: 5px;"
+            )
+        self.update()
+
+    def start_auto_dismiss(self, seconds: float) -> None:
+        """Arme (ou réarme) la disparition automatique."""
+        self.auto_dismiss_s = max(0.0, float(seconds))
+        self._dismiss_remaining = self.auto_dismiss_s
+        if self.auto_dismiss_s > 0 and not self._is_closing and not self._hovered:
+            self._dismiss_timer.start()
+
     def set_live_text(self, text: str, active: bool = True):
         self._live_indicator._label = text
         self._live_indicator.set_active(active)
@@ -2346,6 +2378,56 @@ class CardManager(QWidget):
         group.start()
 
         self._update_container_geometry()
+        self._reorganize_remaining_cards()
+        return card
+
+    # Une carte par tâche : « <Tâche> en cours » dès le départ, puis
+    # « <Tâche> terminée » (ou « — échec ») avec le résultat, avant de s'effacer.
+    TASK_DONE_DISMISS_S = 6.0
+    TASK_ERROR_DISMISS_S = 14.0
+
+    def upsert_task_card(self, task_id: str, title: str, body: str, status: str) -> Optional[GlassCard]:
+        task_id = str(task_id or "")
+        status = (status or "running").lower()
+        cards = getattr(self, "_task_cards", None)
+        if cards is None:
+            cards = self._task_cards = {}
+        card = cards.get(task_id)
+        if card is not None and (card not in self._cards or getattr(card, "_is_closing", False)):
+            cards.pop(task_id, None)
+            card = None
+        if status == "running":
+            if card is None:
+                card = GlassCard(category="TÂCHE", title=title, icon_name="clock",
+                                 accent_color=Theme.NEON_AMBER, parent=self)
+                card.set_live_text("EN COURS", True)
+                if body:
+                    card.set_body(body)
+                if task_id:
+                    cards[task_id] = card
+                self.add_card(card)
+            else:
+                card.set_header(title=title)
+                if body:
+                    card.set_body(body)
+                self._reorganize_remaining_cards()
+            return card
+        # done / error
+        if card is None:
+            # La tâche a été trop rapide pour avoir eu sa carte « en cours » :
+            # on montre quand même son résultat, brièvement.
+            card = GlassCard(category="TÂCHE", title=title, icon_name="check",
+                             accent_color=Theme.GREEN, parent=self)
+            self.add_card(card)
+        cards.pop(task_id, None)
+        ok = status != "error"
+        card.set_header(title=title, category="TÂCHE TERMINÉE" if ok else "TÂCHE EN ÉCHEC",
+                        icon_name="check" if ok else "alert-triangle",
+                        accent_color=Theme.GREEN if ok else Theme.RED)
+        card.set_live_text("TERMINÉ" if ok else "ÉCHEC", False)
+        if body:
+            card.set_body(body)
+        card.start_auto_dismiss(self.TASK_DONE_DISMISS_S if ok else self.TASK_ERROR_DISMISS_S)
         self._reorganize_remaining_cards()
         return card
 

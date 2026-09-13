@@ -349,6 +349,9 @@ class JarvisUI:
     def show_music_download(self, payload: dict) -> None:
         self._win.show_music_download(payload or {})
 
+    def task_card(self, task_id: str, title: str, body: str = "", status: str = "running") -> None:
+        self._win.task_card(task_id, title, body, status)
+
     def update_card(self, card_type: str, title: str, body: str) -> None:
         self._win._update_card_sig.emit(card_type, title, body)
 

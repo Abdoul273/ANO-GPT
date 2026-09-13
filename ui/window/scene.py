@@ -366,6 +366,7 @@ class SceneMixin:
         self._update_card_sig.connect(self._on_update_card)
         self._dismiss_cards_sig.connect(self._on_dismiss_cards)
         self._download_card_sig.connect(self._on_music_download)
+        self._task_card_sig.connect(self._on_task_card)
         self._transcript_sig.connect(self._on_user_transcript)
         self._audio_pcm_sig.connect(self._on_audio_pcm)
         self._gesture_sig.connect(self._on_gesture_sig)

@@ -55,6 +55,7 @@ class MainWindow(
     _update_card_sig = pyqtSignal(str, str, str)
     _dismiss_cards_sig = pyqtSignal(str, str)
     _download_card_sig = pyqtSignal(dict)
+    _task_card_sig  = pyqtSignal(str, str, str, str)
     _music_status_sig = pyqtSignal(dict)
     _nearby_map_sig = pyqtSignal(str, float, float, list)
     _live_pos_sig   = pyqtSignal(float, float, object, object, object)

@@ -64,6 +64,20 @@ class PositionsMixin:
                 self._card_scroll.show()
                 self._card_scroll.raise_()
 
+    def task_card(self, task_id: str, title: str, body: str = "", status: str = "running"):
+        """Carte propre à une tâche : « <Tâche> en cours » puis son résultat.
+
+        Thread-safe. `status` : running | done | error.
+        """
+        self._task_card_sig.emit(str(task_id), str(title), str(body or ""), str(status or "running"))
+
+    def _on_task_card(self, task_id: str, title: str, body: str, status: str):
+        stack = getattr(self, "_card_stack", None)
+        if stack is None or not hasattr(stack, "upsert_task_card"):
+            return
+        stack.upsert_task_card(task_id, title, body, status)
+        self._position_card_stack()
+
     def _on_update_card(self, card_type: str, title: str, body: str):
         if hasattr(self, "_card_stack"):
             self._card_stack.update_card(card_type, title, body)

@@ -2262,6 +2262,44 @@ def _is_destructive(name: str, args: dict) -> bool:
     return name in _DESTRUCTIVE_TOOLS
 
 
+_FAILURE_MARKERS = ("failed", "échec", "echec", "a échoué", "erreur", "error:", "impossible", "introuvable")
+
+
+def _looks_like_failure(result: Any) -> bool:
+    head = " ".join(str(result or "").split())[:160].casefold()
+    return head.startswith(("tool '", "erreur", "échec", "echec")) or any(
+        m in head[:60] for m in _FAILURE_MARKERS
+    )
+
+
+def _task_result_excerpt(result: Any, limit: int = 220) -> str:
+    """Première ligne utile du résultat, sans balisage ni consigne au modèle."""
+    text = str(result or "").strip()
+    if not text:
+        return ""
+    # Les blocs [VISION…] / [AGENT] et les consignes « dis-le à l'utilisateur »
+    # s'adressent au modèle, pas à l'œil.
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    keep = [ln for ln in lines if not ln.startswith(("[", "{", "```"))] or lines
+    excerpt = " ".join(keep[:3])
+    excerpt = re.sub(r"[*_`#>]+", "", excerpt)
+    excerpt = re.sub(r"\s+", " ", excerpt).strip()
+    return excerpt[: limit - 1] + "…" if len(excerpt) > limit else excerpt
+
+
+def _task_card_summary(name: str, args: Any) -> str:
+    """Ce que fait la tâche, en une ligne, d'après ses arguments."""
+    if not isinstance(args, dict):
+        return ""
+    for key in ("query", "question", "text", "app_name", "path", "file", "url", "title",
+                "message", "prompt", "command", "recipient", "to", "action"):
+        val = args.get(key)
+        if isinstance(val, str) and val.strip():
+            val = " ".join(val.split())
+            return val[:119] + "…" if len(val) > 120 else val
+    return ""
+
+
 _TOOL_LABELS = {
     "consult_brain": "Réflexion",
     "web_search": "Recherche web",
@@ -2710,8 +2748,8 @@ class ToolDispatcher:
 
     async def _deliver_deep_research(self, question: str, context: str = "") -> None:
         """Calcule puis livre le résultat sans retenir un tool call Live."""
-        self._ui_card("show_card", "task", "Réflexion approfondie",
-                      f"Recherche en cours…\n\n{question[:500]}")
+        task_id = f"deep-research-{time.monotonic_ns()}"
+        self._task_card(task_id, "Réflexion approfondie en cours", question[:200], "running")
 
         try:
             if hasattr(self, "thought_streamer"):
@@ -2730,7 +2768,7 @@ class ToolDispatcher:
         # Une sortie anormalement énorme peut elle aussi faire refuser le tour
         # Live. La réponse vocale reste dense ; la carte conserve l'essentiel.
         result = result[:12000]
-        self._ui_card("dismiss_cards", "task", "Réflexion approfondie")
+        self._task_card(task_id, "Réflexion approfondie terminée", _task_result_excerpt(result), "done")
         self._ui_card("show_card", "result", "Réflexion approfondie", result)
 
         # Session absente (reconnexion en cours) : `_submit_text_turn`
@@ -2769,7 +2807,8 @@ class ToolDispatcher:
     async def _deliver_deferred_tool(self, name: str, args: dict) -> None:
         """Travail long hors du tool call, puis restitution dans un nouveau tour."""
         title = _TOOL_LABELS.get(name, name)
-        self._ui_card("show_card", "task", title, f"{title} en cours…")
+        task_id = f"deferred-{name}-{time.monotonic_ns()}"
+        self._task_card(task_id, f"{title} en cours", _task_card_summary(name, args), "running")
         try:
             if name == "consult_brain":
                 from core import brain_relay
@@ -2795,9 +2834,11 @@ class ToolDispatcher:
                 return
         except Exception as exc:
             result = f"{title} a échoué : {str(exc)[:300]}"
+            self._task_card(task_id, f"{title} — échec", _task_result_excerpt(result), "error")
+        else:
+            self._task_card(task_id, f"{title} terminée", _task_result_excerpt(result), "done")
 
         result = str(result or f"{title} terminé.").strip()
-        self._ui_card("dismiss_cards", "task", title)
         self._ui_card("show_card", "result", title, result[:12_000])
         if self.session is not None:
             try:
@@ -2830,7 +2871,8 @@ class ToolDispatcher:
         from actions.image_generation import generate_image
 
         prompt = str(args.get("prompt") or "")
-        self._ui_card("show_card", "task", "Création d'image", "Génération Azure en cours…")
+        task_id = f"image-{time.monotonic_ns()}"
+        self._task_card(task_id, "Création d'image en cours", prompt[:200], "running")
         worker = asyncio.create_task(
             asyncio.to_thread(generate_image, args, self.ui),
             name="azure-image-worker",
@@ -2856,7 +2898,9 @@ class ToolDispatcher:
             result = f"Génération Azure échouée : {exc}"
 
         result = str(result or "La génération d'image n'a rien renvoyé.").strip()
-        self._ui_card("dismiss_cards", "task", "Création d'image")
+        failed = _looks_like_failure(result)
+        self._task_card(task_id, "Création d'image — échec" if failed else "Création d'image terminée",
+                        _task_result_excerpt(result), "error" if failed else "done")
         self._ui_card("show_card", "result", "Création d'image", result)
         # Pas de test `self.session is not None` : si la connexion est en
         # reprise, le tour est conservé puis livré après la reconnexion.
@@ -2891,15 +2935,12 @@ class ToolDispatcher:
 
         prompt = str(args.get("prompt") or "")
         title = "Création vidéo"
-        self._ui_card("show_card", "task", title, "Génération Azure Sora en cours…")
-
-        loop = asyncio.get_running_loop()
+        task_id = f"video-{time.monotonic_ns()}"
+        self._task_card(task_id, f"{title} en cours", prompt[:200] or "Génération Azure Sora…", "running")
 
         def progress(status: str) -> None:
-            # Appelé depuis le thread worker : on repasse par la boucle Qt.
-            loop.call_soon_threadsafe(
-                lambda: self._safe_update_card("task", title, f"Sora : {status}…")
-            )
+            # Le signal Qt est thread-safe : pas besoin de repasser par la boucle.
+            self._task_card(task_id, f"{title} en cours", f"Sora : {status}…", "running")
 
         worker = asyncio.create_task(
             asyncio.to_thread(generate_video, args, self.ui, progress),
@@ -2923,7 +2964,9 @@ class ToolDispatcher:
             result = f"Génération vidéo Azure échouée : {exc}"
 
         result = str(result or "La génération vidéo n'a rien renvoyé.").strip()
-        self._ui_card("dismiss_cards", "task", title)
+        failed = _looks_like_failure(result)
+        self._task_card(task_id, f"{title} — échec" if failed else f"{title} terminée",
+                        _task_result_excerpt(result), "error" if failed else "done")
         self._ui_card("show_card", "result", title, result)
         delivered = await self._submit_text_turn(
             "[RÉSULTAT DE GÉNÉRATION VIDÉO]\n"
@@ -2935,6 +2978,19 @@ class ToolDispatcher:
         )
         if not delivered:
             self.ui.write_log("WARN: vidéo prête ; annonce vocale différée (carte disponible).")
+
+    def _task_card(self, task_id: str, title: str, body: str, status: str) -> None:
+        """Carte de tâche ; sans interface compatible, retombe sur show_card."""
+        ui = getattr(self, "ui", None)
+        if ui is None:
+            return
+        try:
+            if hasattr(ui, "task_card"):
+                ui.task_card(task_id, title, body, status)
+            elif status == "running" and hasattr(ui, "show_card"):
+                ui.show_card("task", title, body)
+        except Exception as exc:
+            print(f"[Dispatcher] Carte de tâche ignorée : {type(exc).__name__}: {exc}")
 
     def _ui_card(self, method: str, *args) -> None:
         """Appelle `show_card` / `update_card` / `dismiss_cards` sans jamais
@@ -3082,26 +3138,13 @@ class ToolDispatcher:
         loop = asyncio.get_running_loop()
         result = "Done."
 
-        # Latence perçue : si l'outil prend plus d'1 s, une carte « tâche »
-        # apparaît — l'utilisateur ne doit jamais se demander si ça a marché.
+        # Chaque tâche a sa propre carte, dès son départ : « <Tâche> en
+        # cours », puis « terminée » avec le résultat, ou « échec ». Une clé
+        # par appel : deux outils en parallèle ne se marchent pas dessus.
         label = _TOOL_LABELS.get(name, name)
-
-        tool_finished = False
-
-        async def _slow_task_card():
-            try:
-                await asyncio.sleep(1.0)
-                # Le résultat peut arriver exactement à la frontière d'une
-                # seconde. Ne jamais ajouter une carte « en cours » après la
-                # fin de l'outil : elle ne recevrait plus de mise à jour et
-                # resterait visuellement bloquée.
-                if tool_finished:
-                    return
-                self.ui.show_card("task", label, f"{label} en cours…")
-            except asyncio.CancelledError:
-                pass
-
-        slow_card_task = asyncio.ensure_future(_slow_task_card())
+        task_id = str(getattr(fc, "id", "") or "") or f"{name}-{id(fc)}"
+        task_ok = True
+        self._task_card(task_id, f"{label} en cours", _task_card_summary(name, args), "running")
         try:
             if name == "consult_brain":
                 if self._start_deferred_tool(name, args):
@@ -3986,23 +4029,23 @@ class ToolDispatcher:
                     result = f"Outil inconnu: {name}"
 
         except asyncio.CancelledError:
+            self._task_card(task_id, f"{label} annulée", "Interrompue par l'utilisateur.", "error")
             raise
         except Exception as e:
+            task_ok = False
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()
             self.speak_error(name, e)
         finally:
-            tool_finished = True
-            slow_card_task.cancel()
-            # Attend la fin effective de la petite tâche : sans cela, son
-            # signal Qt pouvait être traité après dismiss_cards et recréer une
-            # carte périmée (« Capture d'écran en cours… »).
-            await asyncio.gather(slow_card_task, return_exceptions=True)
-            # Une carte « tâche » décrit uniquement l'opération en cours. Dès
-            # que l'outil rend la main — succès, erreur ou annulation — elle
-            # doit quitter l'interface. Les cartes de résultat/confirmation
-            # restent, elles, disponibles pour être lues ou actionnées.
-            self._ui_card("dismiss_cards", "task")
+            if task_ok:
+                failed = _looks_like_failure(result)
+                self._task_card(
+                    task_id,
+                    f"{label} — échec" if failed else f"{label} terminée",
+                    _task_result_excerpt(result), "error" if failed else "done",
+                )
+            else:
+                self._task_card(task_id, f"{label} — échec", _task_result_excerpt(result), "error")
 
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
