@@ -157,8 +157,8 @@ The morning briefing can now be turned on or off with one click from the setting
 ## ⚡ Quick Start
 
 ```bash
-git clone https://github.com/FatihMakes/Mark-XLIX.git
-cd Mark-XLIX
+git clone https://github.com/Abdoul273/ANO-GPT.git
+cd ANO-GPT
 pip install -r requirements.txt
 python main.py
 ```
@@ -171,45 +171,53 @@ python main.py
 
 | Requirement | Details |
 | --- | --- |
-| **OS** | Windows 10/11, macOS, or Linux |
-| **Python** | 3.11 or 3.12 |
+| **OS** | Windows 10/11, macOS, or Linux (Arch / EndeavourOS + Hyprland on this machine) |
+| **Python** | **3.13 or newer** (developed on **3.14.7**) |
 | **Microphone** | Required for voice interaction |
 | **API Key** | Free Gemini API key (`config/api_keys.json`) |
+
+### Voice activity (VAD)
+
+`webrtcvad-wheels` is a **legacy fallback**. It imports `pkg_resources` (setuptools), which recent Python versions remove. The intended detector is **Silero VAD ONNX** (`core/vad_silero.py`, model `models/silero_vad.onnx` via `onnxruntime`) — already in the tree, no PyTorch.
+
+- Python **3.13** : Silero is used by default.
+- Python **3.14+** : Silero is **opt-in** (`ANOGPT_ENABLE_ONNX_VAD=1`) so ONNX Runtime does not run inside the PortAudio callback (glibc heap corruption observed here). Without the flag, WebRTC VAD is used until it disappears.
+
+Do **not** `pip install silero-vad` : that package pulls PyTorch, too heavy for a 2-core / 11 GB machine.
 
 ---
 
 ## 🗂️ Project Structure
 
 ```
-Mark XLIX/
-├── main.py                  # Core loop — Gemini Live session, audio I/O, tool dispatch
-├── ui.py                    # PyQt6 HUD — waveform, log panel, interrupt button, camera feed
-├── setup.py                 # First-run configuration wizard
-├── actions/
-│   ├── web_search.py        # Gemini + DDG parallel search (news, research, price, compare)
-│   ├── screen_processor.py  # Screen capture & webcam vision via Gemini Live
-│   ├── reminder.py          # OS-native scheduled notifications
-│   ├── system_monitor.py    # CPU / RAM / GPU / temperature telemetry
-│   ├── computer_settings.py # Volume, brightness, WiFi, power
-│   ├── computer_control.py  # Keyboard shortcuts, mouse, window management
-│   ├── open_app.py          # Application launcher
-│   ├── browser_control.py   # Web browser control
-│   ├── file_controller.py   # File system operations
-│   ├── file_processor.py    # Document reading and summarization
-│   ├── send_message.py      # Messaging integration
-│   ├── weather_report.py    # Live weather data
-│   ├── flight_finder.py     # Flight search
-│   ├── youtube_video.py     # YouTube playback control
-│   ├── game_updater.py      # Game update management (Steam / Epic)
-│   ├── code_helper.py       # Code review and generation
-│   ├── dev_agent.py         # Developer task agent
-│   ├── desktop.py           # Desktop and taskbar control
-│   └── proactive.py         # Proactive silence-break suggestions
-├── memory/                  # Persistent key-value memory store
+ANO-GPT/
+├── main.py                  # Boucle Live — Gemini, audio, répartition d'outils
+├── anogpt-ctl               # Socket de contrôle (toggle, ask, doctor)
+├── anogpt_mcp.py            # Pont MCP vers les agents (Antigravity, Claude, Codex)
+├── setup.py                 # Première installation (pip + Playwright)
+├── ui/                      # HUD PyQt6 — plus de ui.py monolithique
+│   ├── jarvis_ui.py         # Façade publique JarvisUI
+│   ├── main_window.py       # Fenêtre principale
+│   ├── orb/                 # Orbe, waveform radial, mini-orbe
+│   ├── panels/              # Journal, cartes, musique, télémétrie
+│   ├── dialogs/             # Réglages IA, audio, mémoire, plugins
+│   ├── media/               # Caméra, galerie, carte, vidéo
+│   └── window/              # Chrome, tiroir, scène
+├── actions/                 # Outils vocaux (recherche, bureau, mail, code, …)
 ├── core/
-│   └── prompt.txt           # Assistant personality and tool-routing rules
+│   ├── audio_engine.py      # Capture / lecture, half-duplex
+│   ├── audio_vad.py         # Silero ONNX (opt-in 3.14) ; webrtcvad en repli
+│   ├── vad_silero.py        # models/silero_vad.onnx via onnxruntime
+│   ├── map_render.py        # Carte unique plein cadre
+│   ├── llm_client.py        # Cerveau (Azure, OpenRouter, DeepSeek, …)
+│   └── prompt.txt           # Personnalité et routage d'outils
+├── dashboard/               # Serveur HTTPS + app téléphone (ANO Remote)
+├── memory/                  # RAG, habitudes, journal d'outils, config
+├── models/                  # silero_vad.onnx, embeddings
+├── plugins/                 # Extensions utilisateur
+├── tests/
 └── config/
-    └── api_keys.json        # API key, OS setting, assistant name, user name
+    └── api_keys.json        # Clés, cerveau, nom de l'assistant
 ```
 
 ---

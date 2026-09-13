@@ -2,14 +2,17 @@ PyQt6
 PyQt6-WebEngine
 sounddevice
 miniaudio
-webrtcvad-wheels
-# Pipeline audio studio-grade (capture 16 kHz, VAD, débruitage) :
-#   - sounddevice : capture PortAudio → PipeWire, format forcé 16 kHz mono int16
-#   - webrtcvad-wheels : VAD de repli si Silero ONNX est désactivé (Python 3.14)
-#   - onnxruntime + models/silero_vad.onnx : Silero VAD (opt-in ANOGPT_ENABLE_ONNX_VAD=1)
-# Paquets système Arch (à installer à la main, voir docs/audio_setup_arch.md) :
+# Pipeline audio (capture 16 kHz, VAD, débruitage) — Python 3.13+
+#   - sounddevice : PortAudio → PipeWire, 16 kHz mono int16
+#   - Silero VAD ONNX : models/silero_vad.onnx + onnxruntime (core/vad_silero.py)
+#     Nominal sous 3.13. Sous 3.14, opt-in ANOGPT_ENABLE_ONNX_VAD=1 (ONNX dans
+#     le callback PortAudio a corrompu le tas glibc ici).
+#   - webrtcvad-wheels : repli uniquement. Importe pkg_resources (setuptools),
+#     retiré des Python récents — ne plus en dépendre pour un VAD neuf.
+# Paquets système Arch (à la main, docs/audio_setup_arch.md) :
 #   sudo pacman -S pipewire pipewire-pulse pipewire-alsa pipewire-audio wireplumber rnnoise webrtc-audio-processing
 # Ne PAS pip-install silero-vad (PyTorch) ni compiler RNNoise à la main.
+webrtcvad-wheels
 vosk
 google-genai>=2.20.0
 google-generativeai

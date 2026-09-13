@@ -23,14 +23,16 @@ sudo pacman -S pipewire pipewire-pulse pipewire-alsa pipewire-audio \
 | `pipewire-audio` | Codecs et modules audio PipeWire. |
 | `wireplumber` | Session manager / routage. |
 | `rnnoise` | `librnnoise.so` — débruitage neuronal temps réel (ctypes dans `core/audio_denoise.py`). |
-| `webrtc-audio-processing` | Bibliothèque C WebRTC (AGC / AEC). Le VAD Python utilise le paquet pip `webrtcvad-wheels`, déjà dans `requirements.txt`. |
+| `webrtc-audio-processing` | Bibliothèque C WebRTC (AGC / AEC Speex). Ce n'est **pas** le VAD Python. |
 
-Python (déjà listé dans `requirements.txt`) :
+Python **3.13+** (cette machine : **3.14.7**), déjà listé dans `requirements.txt` :
 
 - `sounddevice` — capture 16 kHz mono PCM 16-bit
-- `webrtcvad-wheels` — VAD de repli
-- `onnxruntime` + `models/silero_vad.onnx` — Silero VAD (opt-in sous Python 3.14)
+- `onnxruntime` + `models/silero_vad.onnx` — **Silero VAD**, remplaçant de `webrtcvad-wheels`
+- `webrtcvad-wheels` — repli seulement ; importe `pkg_resources` (setuptools), retiré des Python récents
 - `numpy`
+
+Sous Python 3.13, Silero est le VAD par défaut. Sous **3.14+** il est **opt-in** (`ANOGPT_ENABLE_ONNX_VAD=1`) : ONNX Runtime dans le callback PortAudio a corrompu le tas glibc ici.
 
 **Ne pas installer** `silero-vad` via pip : ce paquet tire PyTorch, trop lourd pour une machine 2 cœurs / 11 Go. Le modèle ONNX local suffit.
 
@@ -127,8 +129,8 @@ l'AGC logiciel d'ANO-GPT vise ensuite **-18 dBFS**).
               │
               ▼
    [ VoiceActivityDetector ]    core/audio_vad.py
-       ├─ Silero VAD v5 ONNX (si autorisé)
-       ├─ sinon webrtcvad (10/20/30 ms)
+       ├─ Silero VAD v5 ONNX (nominal 3.13 ; opt-in 3.14)
+       ├─ sinon webrtcvad (repli, pkg_resources — à abandonner)
        ├─ preroll 250 ms / hangover 350 ms
        └─ repli énergie + planéité spectrale
               │
@@ -157,14 +159,18 @@ capturés sans flux de référence.
 
 ---
 
-## 5. Python 3.14 et Silero ONNX
+## 5. Python 3.13+ et Silero ONNX
 
-Sur cette machine, ONNX Runtime a provoqué une corruption du tas glibc
-lorsqu'il tournait dans le **callback PortAudio**. Silero VAD ONNX est donc
-**désactivé par défaut** sous Python ≥ 3.14. Le repli `webrtcvad` prend le
-relais (déjà installé).
+`webrtcvad-wheels` n'est plus le VAD visé : il importe `pkg_resources`,
+API setuptools en cours de suppression. Le remplacement est **Silero VAD
+ONNX** (`core/vad_silero.py`, `models/silero_vad.onnx`), déjà dans le dépôt.
 
-Pour forcer Silero, uniquement hors callback micro, dans un shell de test :
+Sur **cette** machine (Python 3.14.7), ONNX Runtime a corrompu le tas glibc
+dans le **callback PortAudio**. Silero est donc **opt-in** sous 3.14+
+(`ANOGPT_ENABLE_ONNX_VAD=1`). Sans le drapeau, le repli `webrtcvad` tourne
+tant qu'il s'installe encore.
+
+Sous 3.13, Silero est actif par défaut.
 
 ```bash
 export ANOGPT_ENABLE_ONNX_VAD=1
