@@ -985,6 +985,23 @@ class AudioEngine:
                     # Le téléphone possède alors le tour audio. Ne surtout pas
                     # le fermer depuis le callback PC : cela tronquait ANO
                     # Remote quelques millisecondes après son activity_start.
+                    # Mais si l'utilisateur parle fort dans le micro du PC
+                    # pendant ce temps, il doit savoir pourquoi rien ne part.
+                    raw_channel = indata[:, 0] if indata.ndim > 1 else indata
+                    rms_pc = float(np.sqrt(np.mean((raw_channel.astype(np.float32) / 32768.0) ** 2))) if raw_channel.size else 0.0
+                    if rms_pc >= 0.03:
+                        _cb_state["phone_loud"] = _cb_state.get("phone_loud", 0) + 1
+                    else:
+                        _cb_state["phone_loud"] = max(0, _cb_state.get("phone_loud", 0) - 1)
+                    now_p = time.monotonic()
+                    if (_cb_state["phone_loud"] >= 30
+                            and now_p - _cb_state.get("phone_loud_at", 0.0) >= 30.0):
+                        _cb_state["phone_loud_at"] = now_p
+                        _cb_state["phone_loud"] = 0
+                        self.ui.write_log(
+                            "SYS : le micro d'ANO Remote (téléphone) est actif — le micro "
+                            "du PC est ignoré tant qu'il diffuse. Coupe le micro sur le téléphone."
+                        )
                     return
 
                 if getattr(status, "input_overflow", False):

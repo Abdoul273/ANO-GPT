@@ -385,6 +385,7 @@ from core.gemini_connection    import (
 )
 from core.speech_sync          import split_caption_units, caption_targets
 from core.wake_word            import WakeWordDetector
+from core import freeze_watch
 from core.barge_in             import InterruptPhraseDetector, LocalBargeInListener
 from core.continuous_conversation import (
     ContinuousConversationManager,
@@ -1761,6 +1762,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     tg.create_task(self._run_auto_extension_watch())
                     tg.create_task(self._watch_live_voice_change())
                     tg.create_task(self._run_live_liveness_watch())
+                    tg.create_task(freeze_watch.asyncio_heartbeat(), name="freeze-heartbeat")
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
@@ -1969,6 +1971,10 @@ def main():
     journal = setup_logging()
     ui = JarvisUI("face.png")
     ui.write_log(f"SYS : journal — {journal}")
+    # Un gel du thread Qt ou de la boucle audio laisse le journal muet : ce
+    # détecteur écrit alors la pile de tous les threads dans logs/freeze-*.txt.
+    from core import freeze_watch
+    freeze_watch.install_qt_heartbeat()
     # La fenêtre est désormais visible ; le SDK lourd peut se charger pendant
     # que l'utilisateur termine la configuration, sans retarder le premier
     # rendu ni entrer en concurrence avec les imports de l'application.
