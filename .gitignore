@@ -66,3 +66,17 @@ config/plugin_states.json
 # Builds Flutter du téléphone.
 mobile/ano_remote/build/
 mobile/ano_remote/.dart_tool/
+
+# ── Binaires et médias — jamais dans l'historique Git ────────────────────────
+# Fonds d'écran personnels : l'utilisateur dépose les siens (voir background/README.md).
+background/*
+!background/README.md
+# Archives de dépendances (pip les réinstalle) et binaires natifs.
+*.whl
+*.tar.gz
+*.so
+!core/libdf.so
+# Sorties audio de test et sauvegardes d'anciens fichiers.
+*.wav
+docs/archive/*.bak
+docs/archive/*.bak.old

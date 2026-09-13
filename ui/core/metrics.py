@@ -1,47 +1,110 @@
 from __future__ import annotations
 
+import platform
 import threading
 import time
+from typing import Callable, Optional
 
 import psutil
 
-from ui.core.qtflags import _OS
+_OS = platform.system()
 
-_nvml_lib: object = None
-_nvml_ok:  object = None
+# Un tick trop serré rechargeait NVML (échec) toutes les 1,5 s sur une
+# machine sans NVIDIA : deux CDLL ratés, GIL disputé avec la voix.
+INTERVAL_S = 3.0
 
-def _nvml_gpu_windows() -> float:
-    global _nvml_lib, _nvml_ok
-    if _nvml_ok is False:
-        return -1.0
+_nvml_ok: Optional[bool] = None
+_nvml_read: Optional[Callable[[], float]] = None
+_probe_lock = threading.Lock()
+
+
+def reset_gpu_probe() -> None:
+    """Remet le cache NVML à zéro (tests)."""
+    global _nvml_ok, _nvml_read
+    with _probe_lock:
+        _nvml_ok = None
+        _nvml_read = None
+
+
+def _open_nvml() -> Optional[Callable[[], float]]:
+    """Ouvre NVML une fois. ``None`` = pas de GPU NVIDIA sur cette machine."""
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+
+        def _read_pynvml() -> float:
+            return float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
+
+        return _read_pynvml
+    except Exception:
+        pass
+
     try:
         import ctypes
-        class _Util(ctypes.Structure):
-            _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
-        if _nvml_lib is None:
+
+        if _OS == "Windows":
+            lib = None
             for dll_name in ("nvml", r"C:\Windows\System32\nvml.dll"):
                 try:
-                    lib = ctypes.WinDLL(dll_name)
-                    lib.nvmlInit_v2()
-                    _nvml_lib = lib
+                    candidate = ctypes.WinDLL(dll_name)
+                    candidate.nvmlInit_v2()
+                    lib = candidate
                     break
                 except Exception:
                     continue
-        if _nvml_lib is None:
-            import pynvml
-            pynvml.nvmlInit()
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            _nvml_ok = True
-            return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
-        dev = ctypes.c_void_p()
-        _nvml_lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
-        util = _Util()
-        _nvml_lib.nvmlDeviceGetUtilizationRates(dev, ctypes.byref(util))
-        _nvml_ok = True
-        return float(util.gpu)
+            if lib is None:
+                return None
+        else:
+            soname = "libnvidia-ml.so.1" if _OS == "Linux" else "libnvidia-ml.dylib"
+            lib = ctypes.CDLL(soname)
+            lib.nvmlInit_v2()
+
+        class _Util(ctypes.Structure):
+            _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
+
+        def _read_ctypes() -> float:
+            dev = ctypes.c_void_p()
+            lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
+            util = _Util()
+            lib.nvmlDeviceGetUtilizationRates(dev, ctypes.byref(util))
+            return float(util.gpu)
+
+        return _read_ctypes
     except Exception:
-        _nvml_ok = False
-        return -1.0
+        return None
+
+
+def _gpu_util() -> float:
+    """Utilisation GPU 0–100, ou -1. L'absence de NVIDIA n'est sondée qu'une fois."""
+    global _nvml_ok, _nvml_read
+    with _probe_lock:
+        if _nvml_ok is False:
+            return -1.0
+        if _nvml_read is not None:
+            try:
+                return float(_nvml_read())
+            except Exception:
+                _nvml_ok = False
+                _nvml_read = None
+                return -1.0
+        reader = _open_nvml()
+        if reader is None:
+            _nvml_ok = False
+            return -1.0
+        try:
+            value = float(reader())
+        except Exception:
+            _nvml_ok = False
+            return -1.0
+        _nvml_ok = True
+        _nvml_read = reader
+        return value
+
+
+def _nvml_gpu_windows() -> float:
+    """Ancien nom conservé : le cache NVML vaut pour Linux aussi."""
+    return _gpu_util()
 
 
 class _SysMetrics:
@@ -55,8 +118,13 @@ class _SysMetrics:
         self._last_net = psutil.net_io_counters()
         self._last_net_t = time.time()
         self._running = True
-        t = threading.Thread(target=self._loop, daemon=True)
-        t.start()
+        self._thread = threading.Thread(
+            target=self._loop, name="ano-sys-metrics", daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
 
     def _loop(self):
         while self._running:
@@ -64,7 +132,7 @@ class _SysMetrics:
                 self._update()
             except Exception:
                 pass
-            time.sleep(1.5)
+            time.sleep(INTERVAL_S)
 
     def _update(self):
         cpu = psutil.cpu_percent(interval=None)
@@ -90,30 +158,7 @@ class _SysMetrics:
             self.tmp = tmp
 
     def _get_gpu(self) -> float:
-        try:
-            import pynvml
-            pynvml.nvmlInit()
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
-        except Exception:
-            pass
-        if _OS == "Windows":
-            return _nvml_gpu_windows()
-        try:
-            import ctypes
-            _lib = "libnvidia-ml.so.1" if _OS == "Linux" else "libnvidia-ml.dylib"
-            class _Util(ctypes.Structure):
-                _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
-            nv = ctypes.CDLL(_lib)
-            nv.nvmlInit_v2()
-            dev = ctypes.c_void_p()
-            nv.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
-            u = _Util()
-            nv.nvmlDeviceGetUtilizationRates(dev, ctypes.byref(u))
-            return float(u.gpu)
-        except Exception:
-            pass
-        return -1.0
+        return _gpu_util()
 
     def _get_temp(self) -> float:
         try:
