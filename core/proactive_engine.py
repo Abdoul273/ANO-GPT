@@ -364,6 +364,48 @@ class ProactiveEngine:
                 print(f"[AutoExtension] ⚠️ surveillance ignorée : {exc}")
             await asyncio.sleep(600.0)
 
+    # ── Veille TikTok (compteurs « à la Blow ») ───────────────────────────────
+
+    async def _run_tiktok_watch(self) -> None:
+        """Relit le profil TikTok configuré à intervalle régulier.
+
+        Chaque lecture ouvre un Chrome headless pendant une dizaine de
+        secondes : elle part dans un thread et l'intervalle ne descend jamais
+        sous 45 s. Les nouveaux abonnés, paliers et vidéos qui décollent sont
+        annoncés par le canal proactif ; la carte est mise à jour sans bruit.
+        """
+        from actions import tiktok_tracker as tt
+
+        announced_idle = False
+        while True:
+            state = await asyncio.to_thread(tt.load_state)
+            if not state.get("enabled") or not state.get("handle"):
+                if not announced_idle:
+                    announced_idle = True
+                await asyncio.sleep(15.0)
+                continue
+            if announced_idle:
+                announced_idle = False
+                self.ui.write_log(f"SYS : veille TikTok active — @{state['handle']}.")
+            snaps = state.get("snapshots") or []
+            # L'outil vient peut-être de lire : ne pas rouvrir Chrome pour rien.
+            if snaps and time.time() - snaps[-1]["ts"] < tt.MIN_INTERVAL_S:
+                await asyncio.sleep(tt.MIN_INTERVAL_S)
+                continue
+            try:
+                cur, prev, state = await asyncio.to_thread(tt.poll_once, self.ui, state)
+                for key, message, priority in tt.notable_events(prev, cur):
+                    self._proactive.publish(
+                        "tiktok", message, dedupe_key=key, priority=priority,
+                        data={"handle": cur.get("handle"), "followers": cur.get("followers")},
+                    )
+                    self.ui.write_log(f"SYS : TikTok — {message}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"[TikTok] ⚠️ lecture ignorée : {exc}")
+            await asyncio.sleep(tt.next_delay(state))
+
     # ── Veille Calendrier (anticipation réunions) ──────────────────────────────
 
     async def _run_calendar_watch(self) -> None:

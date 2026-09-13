@@ -152,6 +152,15 @@ PACKS: Mapping[str, ToolPack] = {
             r"\b(repare|repare[- ]?toi|auto[- ]?diagnostic|scan securite|vulnerabilit)\b",
         ),
     ),
+    "reseaux": ToolPack(
+        label="réseaux sociaux",
+        tools=frozenset({"tiktok_tracker"}),
+        triggers=_triggers(
+            r"\b(tiktok|tik tok|abonnes|abonne|followers|follower|vues|likes)\b",
+            r"\b(mon compte|ma video|mes videos|ma derniere video)\b",
+            r"\b(blow|ca monte|ca decolle|viral|virale)\b",
+        ),
+    ),
     "assistanat": ToolPack(
         label="veilles, routines et entraînement",
         tools=frozenset({

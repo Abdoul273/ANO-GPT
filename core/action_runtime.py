@@ -68,6 +68,8 @@ _POLICIES: dict[str, ActionPolicy] = {
     "youtube_video": ActionPolicy(timeout_s=70.0),
     "music_control": ActionPolicy(timeout_s=70.0),
     "download_music": ActionPolicy(timeout_s=90.0),
+    # Une lecture TikTok ouvre un Chrome headless : dix à quinze secondes.
+    "tiktok_tracker": ActionPolicy(timeout_s=60.0),
     "file_controller": ActionPolicy(timeout_s=75.0),
     "browser_control": ActionPolicy(timeout_s=60.0),
     "screen_process": ActionPolicy(timeout_s=35.0),

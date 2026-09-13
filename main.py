@@ -597,6 +597,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
     _run_auto_extension_watch = ProactiveEngine._run_auto_extension_watch
     _run_gmail_watch = ProactiveEngine._run_gmail_watch
     _run_system_monitor = ProactiveEngine._run_system_monitor
+    _run_tiktok_watch = ProactiveEngine._run_tiktok_watch
     _run_proactive_mode = ProactiveEngine._run_proactive_mode
     _run_habit_model = ProactiveEngine._run_habit_model
     _maybe_routine = ProactiveEngine._maybe_routine
@@ -706,6 +707,12 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # avec une référence forte pour survivre jusqu'à la livraison du résultat.
         self._deep_research_tasks: set[asyncio.Task] = set()
         self._image_generation_tasks: set[asyncio.Task] = set()
+        # Les vidéos Sora suivent exactement le même contrat que les images :
+        # elles vivent hors du tour Live, mais empêchent la veille automatique
+        # afin que l'utilisateur puisse continuer la conversation et recevoir
+        # le résultat final. L'attribut doit exister dès le démarrage (et non
+        # seulement après la première demande vidéo).
+        self._video_generation_tasks: set[asyncio.Task] = set()
         self._decision_simulation_tasks: set[asyncio.Task] = set()
         # Mémoire longue durée : l'enregistreur d'épisodes accumule les tours,
         # et l'ensemble des identifiants déjà injectés évite de redire au
@@ -831,13 +838,14 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self._pending_phone_frame = None  # image reçue avant l'ouverture du studio
         self._wake_enabled     = True
         def _on_conversation_idle(reason: str) -> None:
-            # Une génération Azure continue hors du tour Live. Ne jamais
-            # mettre la conversation en veille pendant ce travail : l'utilisateur
-            # doit pouvoir demander autre chose et recevoir l'annonce finale.
-            image_tasks = getattr(self, "_image_generation_tasks", set())
-            if any(not task.done() for task in image_tasks):
+            # Les travaux longs vivent hors du tour Live. Ne jamais mettre la
+            # conversation en veille pendant l'un d'eux : le micro doit rester
+            # disponible pour discuter, demander l'avancement ou lancer une
+            # autre action, et le résultat final doit pouvoir être annoncé.
+            if self._has_active_long_task():
                 self.ui.write_log(
-                    "SYS : veille différée — création d'image toujours en cours."
+                    "SYS : veille différée — tâche longue toujours en cours ; "
+                    "vous pouvez continuer à parler ou écrire."
                 )
                 return
             if self._loop and self._loop.is_running():
@@ -862,12 +870,35 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self.proactive_engine = ProactiveEngine()
         self.phone = PhoneRelay()
 
+    def _has_active_long_task(self) -> bool:
+        """Indique si une action durable doit garder la conversation éveillée."""
+        long_task_sets = (
+            getattr(self, "_image_generation_tasks", set()),
+            getattr(self, "_video_generation_tasks", set()),
+            getattr(self, "_deep_research_tasks", set()),
+            getattr(self, "_decision_simulation_tasks", set()),
+        )
+        return any(
+            not task.done()
+            for task_set in long_task_sets
+            for task in task_set
+        )
+
     def _on_text_command(self, text: str):
+        text = str(text or "").strip()
+        if not text:
+            return
         # « Mets-toi en veille » concerne l'assistant, jamais le processus.
         # Le traiter avant le modèle interdit un shutdown_jarvis accidentel.
         if is_assistant_sleep_request(text):
             self._sleep("commande vocale")
             return
+        # Écrire dans le chat est une action explicite de l'utilisateur : elle
+        # doit réveiller l'assistant au même titre que le mot « ANO ». Sans ce
+        # réveil, Gemini pouvait recevoir le texte alors que la sortie restait
+        # muette après la veille, donnant l'impression qu'il ne répondait plus.
+        if getattr(self.ui, "muted", False):
+            self._wake_up("commande texte")
         if self._try_switch_conversation_language(text):
             return
         # Cette commande ne doit jamais être déléguée au modèle : elle doit
@@ -1709,6 +1740,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     tg.create_task(self._run_focus_guard_watch())
                     tg.create_task(self._run_calendar_watch())
                     tg.create_task(self._run_prayer_watch())
+                    tg.create_task(self._run_tiktok_watch())
                     tg.create_task(self._run_github_backup_watch())
                     tg.create_task(self._run_auto_extension_watch())
                     tg.create_task(self._watch_live_voice_change())

@@ -72,6 +72,7 @@ from actions.email import email_control
 from actions.calendar import calendar_control
 from actions.cloud_integrations import cloud_integrations_control
 from actions.prayer import prayer_control
+from actions.tiktok_tracker import tiktok_tracker
 from actions.github import github_control
 from actions.contacts import contacts_control
 from actions.sparring_partner import sparring_partner, observe_sparring_utterance
@@ -763,6 +764,35 @@ TOOL_DECLARATIONS = [
             "query": {"type": "STRING"}, "title": {"type": "STRING"}, "content": {"type": "STRING"},
             "parent_id": {"type": "STRING"}, "file_key": {"type": "STRING"}},
             "required": ["service", "action"]},
+    },
+    {
+        "name": "tiktok_tracker",
+        "description": (
+            "Suit le compte TikTok de l'utilisateur en quasi temps réel, comme l'application Blow : "
+            "abonnés, j'aime, nombre de vidéos, vues/likes/commentaires des dernières vidéos, avec "
+            "les variations depuis la lecture précédente et depuis le début de la journée. "
+            "Actions : 'status' (chiffres actuels — défaut ; « où en est mon TikTok », « combien "
+            "d'abonnés », « ça monte ? »), 'start' (« suis mon TikTok », « surveille mon compte » : "
+            "lance la veille continue, carte à l'écran, annonces automatiques des nouveaux abonnés, "
+            "paliers et vidéos qui décollent), 'stop', 'history' (évolution sur N heures, param hours), "
+            "'videos' (détail des dernières vidéos), 'set_handle' (changer de compte, param handle), "
+            "'set_interval' (param interval_s, minimum 45 s). Une lecture prend une dizaine de secondes : "
+            "prévenir l'utilisateur que tu regardes. Les chiffres viennent de la page publique, pas "
+            "d'un accès privé au compte."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "status | start | stop | history | videos | set_handle | set_interval",
+                },
+                "handle": {"type": "STRING", "description": "@ TikTok (sans le @) ou URL du profil"},
+                "hours": {"type": "NUMBER", "description": "Pour history : fenêtre en heures (défaut 24)"},
+                "interval_s": {"type": "NUMBER", "description": "Pour set_interval : secondes entre deux lectures"},
+            },
+            "required": [],
+        },
     },
     {
         "name": "prayer_control",
@@ -2088,6 +2118,7 @@ _TOOL_LABELS = {
     "calendar_control": "Agenda",
     "cloud_integrations_control": "Intégration cloud",
     "prayer_control": "Prière",
+    "tiktok_tracker": "TikTok",
     "github_control": "GitHub",
     "simulate_decision": "Simulation stratégique",
     "auto_extension_control": "Extensions autonomes",
@@ -2827,9 +2858,17 @@ class ToolDispatcher:
         # apparaît — l'utilisateur ne doit jamais se demander si ça a marché.
         label = _TOOL_LABELS.get(name, name)
 
+        tool_finished = False
+
         async def _slow_task_card():
             try:
                 await asyncio.sleep(1.0)
+                # Le résultat peut arriver exactement à la frontière d'une
+                # seconde. Ne jamais ajouter une carte « en cours » après la
+                # fin de l'outil : elle ne recevrait plus de mise à jour et
+                # resterait visuellement bloquée.
+                if tool_finished:
+                    return
                 self.ui.show_card("task", label, f"{label} en cours…")
             except asyncio.CancelledError:
                 pass
@@ -3266,6 +3305,12 @@ class ToolDispatcher:
             elif name == "cloud_integrations_control":
                 result = await loop.run_in_executor(None, lambda: cloud_integrations_control(args))
 
+            elif name == "tiktok_tracker":
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: tiktok_tracker(parameters=args, player=self.ui, speak=self.speak),
+                )
+
             elif name in ("prayer", "prayer_control"):
                 result = await loop.run_in_executor(None, lambda: prayer_control(args))
 
@@ -3659,7 +3704,12 @@ class ToolDispatcher:
             traceback.print_exc()
             self.speak_error(name, e)
         finally:
+            tool_finished = True
             slow_card_task.cancel()
+            # Attend la fin effective de la petite tâche : sans cela, son
+            # signal Qt pouvait être traité après dismiss_cards et recréer une
+            # carte périmée (« Capture d'écran en cours… »).
+            await asyncio.gather(slow_card_task, return_exceptions=True)
             # Une carte « tâche » décrit uniquement l'opération en cours. Dès
             # que l'outil rend la main — succès, erreur ou annulation — elle
             # doit quitter l'interface. Les cartes de résultat/confirmation

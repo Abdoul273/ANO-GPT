@@ -9,9 +9,16 @@ Voir les [changements et vérifications de septembre 2026](docs/MISE_A_JOUR_FIAB
 ## Choisir le cerveau
 
 Réglages → **Configuration IA**. Le fournisseur sélectionné (« Appliquer ce
-fournisseur ») devient le cerveau de *tout* : compréhension, décision, appels
-d'outils, rédaction des réponses. Le modèle se choisit dans la liste ou se
-saisit librement — n'importe quel identifiant que le fournisseur accepte.
+fournisseur ») devient le cerveau conversationnel : compréhension, décision,
+appels d'outils et rédaction des réponses. **OpenRouter** accepte sa clé API et
+charge automatiquement son catalogue complet de modèles ; le choix se fait
+dans cette liste, sans avoir à connaître ni saisir les identifiants techniques.
+
+Gemini Live conserve le micro et la voix, sauf si vous choisissez explicitement
+ElevenLabs pour la synthèse. Les rôles Azure spécialisés restent séparés : les
+modèles Azure configurés pour la réflexion approfondie, les documents, les
+images et les vidéos ne sont pas remplacés lorsque vous choisissez OpenRouter
+ou un autre cerveau conversationnel.
 
 Gemini Live garde le micro et la voix, quel que soit le cerveau : c'est lui qui
 entend et qui parle, il transmet chaque demande au cerveau choisi et prononce sa
@@ -69,6 +76,7 @@ MARK XLIX deepens the personal assistant foundation. Rather than adding more too
 | 🖱️ Desktop Control | Taskbar, window management, and desktop-level operations |
 | 🧑‍💻 Silent Language Memory | Detects spoken language on first use and saves it — all future sessions adapt automatically |
 | 📱 Remote Dashboard | Control the assistant from your phone via QR code pairing |
+| 📈 TikTok Tracker | « Suis mon TikTok » : abonnés, j'aime, vues par vidéo relus toutes les deux minutes (page publique via Chrome headless, comme Blow) ; carte à l'écran et annonces vocales des nouveaux abonnés, paliers et vidéos qui décollent |
 
 ---
 
