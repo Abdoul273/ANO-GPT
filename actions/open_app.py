@@ -429,6 +429,12 @@ _MEDIA_EXTS = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv",
 }
 
+# Les notes Markdown sont un format de travail à part entière dans ANO-GPT :
+# lorsqu'aucune application n'est demandée, elles doivent toujours s'ouvrir
+# dans Markdown Studio, indépendamment de l'association MIME de xdg-open.
+_MARKDOWN_STUDIO_SUFFIXES = {".md"}
+_MARKDOWN_STUDIO_COMMAND = "markdown-studio"
+
 
 def _norm_text(s: str) -> str:
     s = unicodedata.normalize("NFKD", s or "")
@@ -701,8 +707,16 @@ def _launch_with_target(app_name: str, target: Path) -> bool:
     before = _snapshot_pids()
     normalized = _normalize(app_name) if app_name else ""
     try:
-        # Pas d'app demandée : lecteur média direct, sinon programme par défaut.
+        # Pas d'app demandée : Markdown Studio pour les notes Markdown,
+        # lecteur média direct pour les médias, sinon programme par défaut.
         if not app_name or not normalized:
+            if (_SYSTEM == "Linux" and
+                    target.suffix.lower() in _MARKDOWN_STUDIO_SUFFIXES):
+                markdown_studio = kit.which(_MARKDOWN_STUDIO_COMMAND)
+                if markdown_studio:
+                    proc = _popen_detached([markdown_studio, str(target)])
+                    return _confirm_started(proc)
+                print("[open_app] Markdown Studio est introuvable ; repli xdg-open.")
             if _SYSTEM == "Linux" and target.suffix.lower() in _MEDIA_EXTS:
                 for player in ("vlc", "mpv"):
                     if kit.which(player):

@@ -159,6 +159,26 @@ def _azure_ready() -> bool:
         return False
 
 
+# Au-delà de ce délai, Gemini (quota, cascade, reprises du SDK) ne mérite plus
+# d'attente : Azure répond en quelques secondes et l'utilisateur attend déjà.
+_GEMINI_BUDGET_S = 9.0
+
+
+def _run_bounded(fn: Callable[[], Any], budget_s: float, label: str) -> Any:
+    """Exécute ``fn`` dans un thread et n'attend pas au-delà de ``budget_s``.
+
+    Le thread abandonné termine seul en arrière-plan ; son résultat est ignoré.
+    """
+    import concurrent.futures
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"vr-{label}")
+    fut = pool.submit(fn)
+    pool.shutdown(wait=False)
+    try:
+        return fut.result(timeout=budget_s)
+    except concurrent.futures.TimeoutError:
+        raise TimeoutError(f"{label} : pas de réponse en {budget_s:.0f} s") from None
+
+
 def identify_object(image_bytes: bytes, mime: str, question: str = "") -> dict:
     """Ce que montre l'image : Gemini d'abord, Azure dès que le quota Gemini est
     atteint (ou que Gemini ne répond pas). Dict avec ``error`` si tout échoue."""
@@ -179,7 +199,8 @@ def identify_object(image_bytes: bytes, mime: str, question: str = "") -> dict:
             continue
         try:
             if engine == "gemini":
-                data = _identify_gemini(image_bytes, mime, prompt)
+                data = _run_bounded(lambda: _identify_gemini(image_bytes, mime, prompt),
+                                    _GEMINI_BUDGET_S if azure_ok else 60.0, "gemini")
                 if str(data.get("model_used", "")).startswith("azure:"):
                     # La cascade Gemini a déjà passé la main à Azure : on
                     # évite de refrapper Gemini pour les prochains objets.
@@ -187,7 +208,7 @@ def identify_object(image_bytes: bytes, mime: str, question: str = "") -> dict:
                 return data
             return _identify_azure(image_bytes, mime, prompt)
         except Exception as exc:
-            if engine == "gemini" and _is_quota(exc):
+            if engine == "gemini" and (_is_quota(exc) or isinstance(exc, TimeoutError)):
                 _gemini_quota_until = time.monotonic() + _GEMINI_QUOTA_HOLD_S
                 print("[VisualRecognition] quota Gemini atteint — relais Azure pendant 10 min.")
             errors.append(f"{engine} : {str(exc)[:160]}")
@@ -202,7 +223,10 @@ def _search_object(query: str, budget_s: float = _SEARCH_BUDGET_S) -> str:
         return ""
     try:
         from actions.web_search import web_search
-        text = web_search({"query": query, "mode": "research", "_budget_s": budget_s, "count": 4})
+        text = _run_bounded(
+            lambda: web_search({"query": query, "mode": "research", "_budget_s": budget_s, "count": 4}),
+            budget_s + 2.0, "recherche",
+        )
         text = (text or "").strip()
         if not text or text.lower().startswith(("veuillez", "aucun résultat", "erreur")):
             return ""

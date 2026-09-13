@@ -840,13 +840,14 @@ TOOL_DECLARATIONS = [
             "environ une minute plus tard : ne relance pas l'outil, ne dis pas que c'est fini. Après un "
             "diagnostic terminé, l'utilisateur se voit proposer un rapport complet. S'il répond oui ou "
             "demande le fichier, appelle tiktok_coach avec action='report' (query facultative) : cela crée "
-            "un .md ultra-complet dans ~/Documents/ANO-GPT/Diagnostics TikTok. Ne crée jamais ce fichier "
-            "avant cet accord explicite."
+            "un .md ultra-complet dans ~/Documents/ANO-GPT/Diagnostics TikTok et L'OUVRE aussitôt dans "
+            "Markdown Studio (ne jamais l'ouvrir toi-même via shell_exec ou un éditeur). Ne crée jamais ce "
+            "fichier avant cet accord explicite. « Ouvre le rapport » ⇒ action='open_report'."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "diagnose | report (après oui explicite) | review | list | draft | best_time"},
+                "action": {"type": "STRING", "description": "diagnose | report (après oui explicite, crée ET ouvre le .md) | open_report | review | list | draft | best_time"},
                 "query": {"type": "STRING", "description": "Vidéo visée (diagnose) ou fichier (draft : numéro de la liste, ordinal, mots du nom, chemin), tel que dit"},
                 "path": {"type": "STRING", "description": "Pour draft : chemin du fichier si connu"},
                 "note": {"type": "STRING", "description": "Pour draft : ce que l'utilisateur veut obtenir avec cette vidéo"},

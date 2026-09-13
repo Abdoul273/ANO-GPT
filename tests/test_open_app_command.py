@@ -22,6 +22,32 @@ from actions.open_app import _parse_open_command_locally, open_app
 import actions.computer_control as cc
 
 
+def test_markdown_file_uses_markdown_studio_without_explicit_app(monkeypatch, tmp_path):
+    """Un .md ouvert sans application explicite est confié à Markdown Studio."""
+    note = tmp_path / "note de projet.md"
+    note.write_text("# Une note\n", encoding="utf-8")
+    launches = []
+
+    monkeypatch.setattr(oa, "_SYSTEM", "Linux")
+    monkeypatch.setattr(
+        oa.kit,
+        "which",
+        lambda command: "/home/anonymous/.local/bin/markdown-studio"
+        if command == "markdown-studio" else None,
+    )
+    monkeypatch.setattr(
+        oa,
+        "_popen_detached",
+        lambda argv, cwd=None: launches.append((argv, cwd)) or MagicMock(),
+    )
+    monkeypatch.setattr(oa, "_confirm_started", lambda proc: True)
+
+    assert oa._launch_with_target("", note)
+    assert launches == [
+        (["/home/anonymous/.local/bin/markdown-studio", str(note)], None)
+    ]
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # a) Tests unitaires du parsing local (_parse_open_command_locally)
 # ════════════════════════════════════════════════════════════════════════════

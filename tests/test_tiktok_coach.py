@@ -59,6 +59,42 @@ def test_file_findings_flag_horizontal_and_silent():
     assert tc.file_findings({"width": 1080, "height": 1920, "duration": 22.0, "audio": True, "size_mb": 30}) == []
 
 
+def test_draft_analysis_requires_timestamped_evidence_and_uses_hd_keyframes(tmp_path, monkeypatch):
+    """Un brouillon est jugé sur son contenu, pas sur des conseils passe-partout."""
+    video = tmp_path / "sketch.mp4"
+    video.write_bytes(b"not-read-by-the-mocks")
+    captured = {}
+    monkeypatch.setattr(tc, "probe_file", lambda path: {
+        "duration": 24.0, "width": 1080, "height": 1920, "audio": True,
+        "size_mb": 8.0, "bitrate_mbps": 12.0, "video_codec": "h264",
+    })
+    monkeypatch.setattr(tc, "_video_part", lambda path: "full-video")
+    monkeypatch.setattr(tc, "_draft_frame_parts", lambda path, duration: ["frame-0", "frame-1"])
+
+    def fake_generate(contents, models, *, low_res):
+        captured.update(contents=contents, models=models, low_res=low_res)
+        return {"verdict": "corrige d'abord"}
+
+    monkeypatch.setattr(tc, "_generate_json", fake_generate)
+    result = tc.analyze_draft(video, {})
+
+    prompt = captured["contents"][0]
+    assert result["file"]["duration"] == 24.0
+    assert captured["low_res"] is False
+    assert "full-video" in captured["contents"] and "frame-0" in captured["contents"]
+    assert "RÈGLES DE PREUVE ABSOLUES" in prompt
+    assert "timecode précis" in prompt
+    assert "P0 bloque la publication" in prompt
+    assert "trois ouvertures alternatives" in prompt
+
+
+def test_draft_sample_times_prioritise_the_first_seconds_and_cover_the_rest():
+    times = tc._draft_sample_times(30)
+    assert times[:4] == [0.0, 0.35, 0.8, 1.5]
+    assert any(t >= 20 for t in times)
+    assert len(times) <= 11
+
+
 def test_find_video_file_prefers_name_match_then_newest(tmp_path, monkeypatch):
     monkeypatch.setattr(tc.Path, "home", staticmethod(lambda: tmp_path))
     vids = tmp_path / "Vidéos"
@@ -91,10 +127,42 @@ def test_diagnose_returns_first_verdict_and_announces_in_background(monkeypatch)
             cards.append((t, b))
 
     text = tc.diagnose("la dernière", P(), lambda x: said.append(x))
-    assert "404 vues" in text and "verdict complet" in text
+    assert "rapport Markdown complet" in text
     assert done == ["diag:1"]
     assert said and "accroche molle" in said[0] and "[COACH TIKTOK]" in said[0]
+    assert "rapport Markdown complet" in said[0]
     assert "Accroche **3/10**" in cards[-1][1]
+
+
+def test_confirmed_report_creates_an_actionable_markdown_file(tmp_path, monkeypatch):
+    """Le fichier complet n'est créé qu'après un diagnostic déjà terminé."""
+    items = _items()
+    video = items[0]
+    monkeypatch.setattr(tc, "REPORT_DIR", tmp_path)
+    with tc._REPORT_LOCK:
+        tc._READY_REPORTS.clear()
+        tc._LAST_REPORT_ID = ""
+    tc._remember_report(video, tc.account_summary(items), {
+        "spoken": "Le début ne crée pas assez d'attente pour passer le premier test.",
+        "hook_score": 3,
+        "retention_score": 4,
+        "why": ["La promesse arrive après l'introduction."],
+        "improvements": ["Afficher le conflit dès la première image."],
+        "rewrite": {"caption": "Attends la chute.", "hashtags": ["sketchia", "humour"]},
+        "repost_idea": "Reprendre le même gag en 20 secondes.",
+        "detailed_markdown": "- **0:00 :** le contexte reste flou.\n- **0:03 :** la chute doit arriver plus vite.",
+    })
+
+    result = tc.tiktok_coach({"action": "report"})
+    reports = list(tmp_path.glob("*.md"))
+
+    assert "créé" in result and len(reports) == 1
+    content = reports[0].read_text(encoding="utf-8")
+    assert "# Diagnostic TikTok complet" in content
+    assert "## Données mesurées" in content
+    assert "## Plan de montage, seconde par seconde" in content
+    assert "## Tests A/B à faire avant de conclure" in content
+    assert "## Limites du diagnostic" in content
 
 
 def test_tools_are_declared_to_the_model():

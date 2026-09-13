@@ -31,6 +31,7 @@ import statistics
 import subprocess
 import threading
 import time
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -51,6 +52,11 @@ TEXT_MODELS = (BALANCED_MODEL, FAST_MODEL)
 TRANSIENT_RETRY_S = 8.0
 _ACTIVE_LOCK = threading.Lock()
 _ACTIVE: dict[str, float] = {}       # analyses en cours, par clé
+_REPORT_LOCK = threading.Lock()
+_READY_REPORTS: dict[str, dict[str, Any]] = {}
+_LAST_REPORT_ID = ""
+REPORT_DIR = Path(os.environ.get("ANOGPT_TIKTOK_REPORT_DIR") or
+                  Path.home() / "Documents" / "ANO-GPT" / "Diagnostics TikTok")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -299,6 +305,49 @@ def _video_part(path: Path):
     raise RuntimeError("TikTok : traitement du fichier vidéo trop long.")
 
 
+def _draft_sample_times(duration: float) -> list[float]:
+    """Instants qui donnent au modèle des preuves nettes, surtout au hook."""
+    if duration <= 0:
+        return [0.0, 0.4, 1.0, 2.0]
+    anchors = [0.0, min(0.35, duration), min(0.8, duration), min(1.5, duration), min(3.0, duration)]
+    if duration > 5:
+        anchors.extend(duration * fraction for fraction in (0.12, 0.28, 0.45, 0.62, 0.8, 0.95))
+    picked: list[float] = []
+    for instant in sorted(anchors):
+        instant = round(min(max(0.0, instant), duration), 2)
+        if not picked or instant - picked[-1] >= 0.28:
+            picked.append(instant)
+    return picked[:11]
+
+
+def _draft_frame_parts(path: Path, duration: float) -> list[Any]:
+    """Extrait des images repères sans écrire de médias permanents sur disque."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return []
+    try:
+        _client, gtypes = _gemini()
+    except Exception:
+        return []
+    parts: list[Any] = []
+    for instant in _draft_sample_times(duration):
+        try:
+            result = subprocess.run(
+                [ffmpeg, "-v", "error", "-ss", str(instant), "-i", str(path), "-frames:v", "1",
+                 "-vf", "scale='min(720,iw)':-2", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"],
+                capture_output=True, timeout=20, check=True,
+            )
+            if len(result.stdout) >= 1_000:
+                parts.extend([
+                    f"Image repère à {instant:.2f} s (à examiner comme une preuve visuelle) :",
+                    gtypes.Part.from_bytes(data=result.stdout, mime_type="image/jpeg"),
+                ])
+        except Exception:
+            # La vidéo entière reste analysable même si une vignette échoue.
+            continue
+    return parts
+
+
 COACH_ROLE = (
     "Tu es un coach TikTok francophone de haut niveau, du calibre de Blow Up : direct, concret, "
     "sans langue de bois ni flatterie. Tu connais la mécanique de TikTok : premier lot de test de "
@@ -392,14 +441,14 @@ que la PROCHAINE du même genre marche.
 JSON attendu :
 {{
   "genre": "genre identifié en quelques mots",
-  "spoken": "verdict de 4 à 6 phrases, prêt à être dit à voix haute, tutoiement, sans markdown",
+  "spoken": "verdict très bref : au plus 2 phrases et 55 mots, prêt à être dit à voix haute, tutoiement, sans markdown",
   "hook_score": 0-10,
   "retention_score": 0-10,
   "why": ["cause 1 précise", "cause 2", "cause 3"],
   "improvements": ["action concrète 1", "action 2", "action 3", "action 4"],
   "rewrite": {{"caption": "nouvelle description proposée", "hashtags": ["tag1", "tag2", "tag3", "tag4"]}},
   "repost_idea": "comment re-tourner ou re-monter cette idée pour qu'elle marche",
-  "detailed_markdown": "rapport structuré en Markdown (titres, puces), 15 lignes max"
+  "detailed_markdown": "audit approfondi en Markdown : observations écran/son avec timestamps, causes classées par impact, et corrections concrètes. 70 lignes max. Ne rien inventer : distingue observation et hypothèse."
 }}"""
     data = _generate_json([_video_part(path), prompt], VIDEO_MODELS, low_res=True)
     data["findings"] = findings
@@ -418,10 +467,16 @@ def probe_file(path: Path) -> dict:
             capture_output=True, text=True, timeout=30, check=True,
         ).stdout
         data = json.loads(out)
-        info["duration"] = round(float(data.get("format", {}).get("duration") or 0), 1)
+        container = data.get("format", {})
+        info["duration"] = round(float(container.get("duration") or 0), 1)
+        if container.get("bit_rate"):
+            info["bitrate_mbps"] = round(float(container["bit_rate"]) / 1_000_000, 2)
+        info["container"] = str(container.get("format_name") or "")
         for st in data.get("streams") or []:
             if st.get("codec_type") == "video" and "width" not in info:
                 info["width"], info["height"] = st.get("width"), st.get("height")
+                info["video_codec"] = st.get("codec_name") or ""
+                info["pixel_format"] = st.get("pix_fmt") or ""
                 num, _, den = str(st.get("avg_frame_rate") or "0/1").partition("/")
                 try:
                     info["fps"] = round(float(num) / float(den or 1), 1)
@@ -429,6 +484,9 @@ def probe_file(path: Path) -> dict:
                     pass
             if st.get("codec_type") == "audio":
                 info["audio"] = True
+                info["audio_codec"] = st.get("codec_name") or ""
+                info["audio_rate"] = st.get("sample_rate") or ""
+                info["audio_channels"] = st.get("channels") or ""
         info.setdefault("audio", False)
     except Exception as exc:
         info["probe_error"] = str(exc)[:120]
@@ -454,6 +512,11 @@ def file_findings(info: dict) -> list[str]:
         out.append("Pas de piste audio : sans son ni voix, la vidéo est quasi invisible sur TikTok.")
     if info.get("size_mb", 0) > 280:
         out.append("Fichier très lourd : TikTok le recompressera, exporte en H.264 autour de 10–15 Mbit/s.")
+    bitrate = info.get("bitrate_mbps") or 0
+    if bitrate and bitrate < 3 and h >= 1080:
+        out.append(f"Débit {bitrate:.1f} Mbit/s pour du 1080p : des artefacts peuvent apparaître après la recompression TikTok.")
+    if info.get("video_codec") and info.get("video_codec") not in {"h264", "hevc", "av1"}:
+        out.append(f"Codec {info['video_codec']} : fais un export H.264/AAC pour éviter un transcodage imprévisible.")
     return out
 
 
@@ -468,35 +531,54 @@ Fichier : {info}.
 {_summary_facts(summary)}
 Points techniques déjà relevés : {'; '.join(findings) or 'aucun'}.
 
-Identifie d'abord le genre (sketch IA à personnages, démo ANO-GPT, autre). Puis regarde-la comme
-le ferait un spectateur qui scrolle : est-ce que tu t'arrêtes dans la première seconde ? où
-décroches-tu ? le gag ou le sujet est-il compris sans le son ? la chute arrive-t-elle assez vite ?
-la fin renvoie-t-elle au début ? Sois précis (secondes). Ensuite donne la recette EXACTE pour
-qu'elle marche à fond : ce qu'il faut couper ou réordonner, le texte à afficher à la seconde 0,
-les sous-titres, le son à utiliser, la description avec accroche écrite, 5 hashtags de la niche
-réelle de la vidéo, la couverture, l'heure de publication, et le premier commentaire à épingler.
-Termine par un verdict franc : prête à publier, ou à corriger d'abord.
+Identifie d'abord le genre (sketch IA à personnages, démo ANO-GPT, autre) et juge-la avec les
+codes de CE genre. Visionne la vidéo entière et les images repères fournies. Tu es un analyste de
+montage exigeant, pas un générateur de conseils TikTok génériques.
+
+RÈGLES DE PREUVE ABSOLUES :
+- Chaque défaut, qualité ou conseil de montage doit citer un timecode précis (ex. 00:01.2) ou une
+  donnée locale de fichier. Si tu ne peux pas l'établir en regardant, écris « non vérifiable ».
+- N'invente jamais de transcription, de texte à l'écran, de son tendance, de statistiques de
+  rétention ou de comportement d'audience. Sépare clairement observation, hypothèse et test.
+- Analyse au minimum : 0–1 s (arrêt du scroll), promesse et compréhension sans son, premier payoff,
+  rythme/coupes/temps mort, lisibilité mobile du texte, cadrage et hiérarchie visuelle, voix/mixage,
+  sous-titres, émotion ou curiosité, chute, boucle et CTA. Pour un sketch, juge spécifiquement la
+  préparation du gag, l'escalade et la chute ; pour une démo, le problème, la preuve et le résultat.
+- Classe les corrections : P0 bloque la publication, P1 augmente fortement les chances, P2 est une
+  amélioration facultative. Donne le changement exact à faire, où et pourquoi il corrige ce moment.
+- Produis trois ouvertures alternatives réellement filmables : plan exact à 0 s + texte écran +
+  première phrase/son. Elles doivent être propres au contenu vu, jamais des slogans interchangeables.
+
+Termine par un verdict franc : publie, publie après retouche légère, ou corrige d'abord.
 
 JSON attendu :
 {{
   "genre": "genre identifié en quelques mots",
-  "verdict": "publie | corrige d'abord",
-  "spoken": "avis de 4 à 6 phrases prêt à être dit à voix haute, tutoiement, sans markdown, qui commence par le verdict",
+  "verdict": "publie | publie après retouche légère | corrige d'abord",
+  "spoken": "avis oral concis de 2 à 4 phrases, fondé sur 2 preuves avec timecodes, tutoiement, sans markdown, qui commence par le verdict",
   "hook_score": 0-10,
   "viral_potential": 0-10,
   "predicted_retention": "faible | moyenne | bonne",
-  "strengths": ["force 1", "force 2"],
-  "weaknesses": ["faiblesse précise avec le moment (s)", "..."],
-  "edits": ["modification de montage concrète 1", "2", "3"],
+  "scorecard": {{"hook": "x/10 + preuve", "clarity": "x/10 + preuve", "pacing": "x/10 + preuve", "audio": "x/10 + preuve ou non vérifiable", "payoff": "x/10 + preuve", "loop_cta": "x/10 + preuve"}},
+  "timeline": [{{"time": "00:00.0–00:01.0", "observation": "fait visible/audible", "viewer_effect": "effet probable", "action": "correction exacte ou conserver", "evidence": "observation | hypothèse"}}],
+  "strengths": ["force prouvée par un timecode"],
+  "weaknesses": ["faiblesse précise avec timecode + impact"],
+  "publish_blockers": ["P0 : blocage précis, ou [] si aucun"],
+  "edits": ["P0/P1/P2 — timecode — modification de montage concrète — pourquoi"],
+  "alternative_hooks": [{{"first_shot": "plan exact à 0 s", "on_screen_text": "texte", "first_line_or_sound": "phrase ou instruction son", "why": "raison propre à cette vidéo"}}],
   "caption": "description prête à coller, avec une accroche écrite",
   "hashtags": ["5 hashtags de niche pertinents, sans #"],
   "on_screen_text": "texte à afficher sur la première image (court)",
   "sound_advice": "son ou musique à utiliser et pourquoi (tendance, original, voix)",
   "pinned_comment": "premier commentaire à épingler pour lancer la discussion",
   "cover_advice": "quelle image de couverture et quel texte dessus",
-  "detailed_markdown": "rapport Markdown, 15 lignes max"
+  "detailed_markdown": "audit Markdown approfondi, 40 à 90 lignes : sections Observations prouvées, Hypothèses à tester, déroulé horodaté, décisions P0/P1/P2, 3 hooks, package de publication. Chaque ligne de conseil doit être rattachée à un timecode ou une donnée de fichier."
 }}"""
-    data = _generate_json([_video_part(path), prompt], VIDEO_MODELS, low_res=True)
+    visual_evidence = _draft_frame_parts(path, float(info.get("duration") or 0))
+    contents: list[Any] = [prompt, _video_part(path)]
+    if visual_evidence:
+        contents.extend(["Images repères HD : elles complètent la vidéo entière et servent à vérifier les détails.", *visual_evidence])
+    data = _generate_json(contents, VIDEO_MODELS, low_res=False)
     data["findings"] = findings
     data["file"] = info
     data["posting_time"] = best_posting_advice(summary)
@@ -551,6 +633,174 @@ def _announce(speak: Any, text: str) -> None:
               f"moindre outil : {text}")
     except Exception:
         pass
+
+
+def _remember_report(v: dict, summary: dict, data: dict) -> None:
+    """Conserve le dernier diagnostic fini jusqu'à l'accord d'export."""
+    global _LAST_REPORT_ID
+    report_id = str(v.get("id") or "latest")
+    with _REPORT_LOCK:
+        _READY_REPORTS[report_id] = {
+            "video": dict(v), "summary": dict(summary), "data": dict(data),
+            "created_at": time.time(),
+        }
+        _LAST_REPORT_ID = report_id
+
+
+def _markdown_safe_name(value: str) -> str:
+    value = re.sub(r"[^a-zA-Z0-9à-ÿÀ-Ÿ._-]+", "-", value or "video")
+    return value.strip(".-")[:72] or "video"
+
+
+def _bullet_section(title: str, values: Any) -> list[str]:
+    rows = [str(value).strip() for value in (values or []) if str(value).strip()]
+    return [f"## {title}", "", *(f"- {row}" for row in rows), ""] if rows else []
+
+
+def _build_diagnosis_report(v: dict, summary: dict, data: dict) -> str:
+    """Rapport actionnable : chiffres mesurés, regard vidéo et protocole de test."""
+    created = v.get("posted_at") or "date indisponible"
+    desc = str(v.get("desc") or "Sans titre")
+    lines = [
+        f"# Diagnostic TikTok complet — {desc[:90]}",
+        "",
+        f"> Rapport généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')} · Vidéo publiée {created}.",
+        "> Les chiffres viennent du suivi public TikTok. Les constats visuels/sonores viennent du visionnage ; les causes non mesurables restent des hypothèses à tester.",
+        "",
+        "## Résumé exécutif",
+        "",
+        str(data.get("spoken") or "Diagnostic détaillé ci-dessous."),
+        "",
+        "## Données mesurées",
+        "",
+        "| Indicateur | Valeur |",
+        "|---|---:|",
+        f"| Vues | {v.get('plays', 0)} |",
+        f"| J'aime | {v.get('likes', 0)} ({float(v.get('like_rate', 0)) * 100:.1f} %) |",
+        f"| Commentaires | {v.get('comments', 0)} ({float(v.get('comment_rate', 0)) * 100:.2f} %) |",
+        f"| Partages | {v.get('shares', 0)} ({float(v.get('share_rate', 0)) * 100:.2f} %) |",
+        f"| Enregistrements | {v.get('saves', 0)} ({float(v.get('save_rate', 0)) * 100:.2f} %) |",
+        f"| Durée | {v.get('duration', '?')} s |",
+        f"| Publication | {created} |",
+        f"| Médiane du compte | {int(summary.get('median_plays') or 0)} vues |",
+        f"| Accroche / rétention estimées | {data.get('hook_score', '?')}/10 / {data.get('retention_score', '?')}/10 |",
+        "",
+        "## Ce que ces chiffres permettent réellement de conclure",
+        "",
+    ]
+    findings = data.get("findings") or heuristic_findings(v, summary)
+    lines += [f"- {finding}" for finding in findings] or ["- Données insuffisantes pour isoler une cause statistique."]
+    lines += [""]
+    lines += _bullet_section("Causes probables, classées par impact", data.get("why"))
+    lines += _bullet_section("Corrections précises pour la prochaine version", data.get("improvements"))
+
+    detailed = str(data.get("detailed_markdown") or "").strip()
+    if detailed:
+        lines += ["## Audit du contenu : image, rythme, texte et son", "", detailed, ""]
+
+    rewrite = data.get("rewrite") or {}
+    lines += ["## Pack de republication / nouvelle version", ""]
+    if data.get("repost_idea"):
+        lines += [f"**Angle à refaire :** {data['repost_idea']}", ""]
+    if rewrite.get("caption"):
+        lines += ["**Description proposée :**", "", str(rewrite["caption"]), ""]
+    hashtags = [str(tag).lstrip("#") for tag in rewrite.get("hashtags") or [] if str(tag).strip()]
+    if hashtags:
+        lines += ["**Hashtags ciblés :** " + " ".join("#" + tag for tag in hashtags), ""]
+    lines += [
+        "## Plan de montage, seconde par seconde",
+        "",
+        "1. **0,0–1,0 s — promesse visible :** montrer le conflit, le résultat ou la phrase qui intrigue avant toute introduction ; ajouter une phrase lisible sans le son.",
+        "2. **1–3 s — contexte minimal :** une seule information qui rend la promesse compréhensible. Couper les silences, logos et explications préparatoires.",
+        "3. **3 s jusqu'à la chute — escalade :** changer de plan, de cadrage, de texte ou d'information dès que l'idée stagne ; chaque seconde doit faire avancer le gag ou la démonstration.",
+        "4. **Chute + boucle :** livrer le payoff sans le diluer, puis terminer sur une image/phrase qui donne envie de revoir le début.",
+        "5. **Dernière image :** poser une question spécifique liée à la vidéo pour obtenir des réponses, sans réclamer vaguement des abonnements.",
+        "",
+        "## Tests A/B à faire avant de conclure",
+        "",
+        "- Tester deux accroches réellement différentes pour la même idée, pas seulement une autre description.",
+        "- Comparer une version courte (15–35 s) et la version actuelle si la rétention est le frein probable.",
+        "- Tester un texte d'écran qui explique le contexte dès l'image 1 contre une ouverture sans texte.",
+        "- Changer un seul paramètre par essai et noter vues, complétion, partages, enregistrements et commentaires après 24 h puis 72 h.",
+        "",
+        "## Décision de publication et suivi",
+        "",
+        f"- {best_posting_advice(summary)}",
+        "- Ne supprime pas une vidéo encore jeune uniquement à cause des premières heures : observe-la au moins 24 h, sauf erreur technique ou problème de contenu.",
+        "- Si les J'aime sont bons mais les vues faibles, priorise l'accroche et le ciblage. Si les vues existent mais pas les partages/commentaires, retravaille l'utilité, l'émotion ou le débat.",
+        "",
+        "## Limites du diagnostic",
+        "",
+        "TikTok ne fournit pas ici la courbe de rétention, les sources de trafic, le taux de complétion ni l'audience exacte. Ce rapport ne les invente pas : les recommandations sont donc des priorités de test, pas des certitudes absolues.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def create_last_diagnosis_report(query: str = "") -> str:
+    """Écrit le rapport seulement après la confirmation explicite de l'utilisateur."""
+    with _REPORT_LOCK:
+        report_id = _LAST_REPORT_ID
+        if query:
+            wanted = re.search(r"(?:/video/)?(\d{5,})", query)
+            if wanted and wanted.group(1) in _READY_REPORTS:
+                report_id = wanted.group(1)
+        report = _READY_REPORTS.get(report_id)
+    if not report:
+        return ("Le diagnostic complet n'est pas encore prêt. Je te proposerai le rapport Markdown "
+                "dès que le visionnage sera terminé.")
+    video, summary, data = report["video"], report["summary"], report["data"]
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    path = REPORT_DIR / f"diagnostic-tiktok-{stamp}-{_markdown_safe_name(video.get('desc', 'video'))}.md"
+    content = _build_diagnosis_report(video, summary, data)
+    fd, tmp_name = tempfile.mkstemp(prefix=".diagnostic-", suffix=".md", dir=REPORT_DIR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        Path(tmp_name).replace(path)
+    except Exception:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    global _LAST_REPORT_PATH
+    _LAST_REPORT_PATH = path
+    opened = _open_report(path)
+    if opened:
+        return (f"Rapport TikTok complet créé et OUVERT dans Markdown Studio : {path}. "
+                "Il est déjà à l'écran : dis-le à l'utilisateur, n'appelle ni shell_exec ni open_app.")
+    return (f"Rapport TikTok complet créé : {path}. Je n'ai pas pu l'ouvrir automatiquement ; "
+            "si l'utilisateur veut le voir, appelle open_app avec ce chemin (jamais shell_exec).")
+
+
+_LAST_REPORT_PATH: Path | None = None
+
+
+def _open_report(path: Path) -> bool:
+    """Ouvre le rapport dans Markdown Studio (ou l'application par défaut).
+
+    L'utilisateur qui demande le rapport veut le lire, pas apprendre où il est
+    rangé : sans ça le modèle improvisait un `code …` sous shell_exec, bloqué
+    par la confirmation, et ne l'ouvrait jamais.
+    """
+    try:
+        from actions.open_app import _launch_with_target
+        return bool(_launch_with_target("", path))
+    except Exception as exc:
+        print(f"[TikTokCoach] ouverture du rapport impossible : {exc}")
+        return False
+
+
+def open_last_report() -> str:
+    """« Ouvre le rapport » : le dernier rapport écrit, ou le plus récent du dossier."""
+    path = _LAST_REPORT_PATH
+    if path is None or not path.exists():
+        candidates = sorted(REPORT_DIR.glob("diagnostic-tiktok-*.md"), key=lambda q: q.stat().st_mtime)
+        path = candidates[-1] if candidates else None
+    if path is None:
+        return "Aucun rapport TikTok n'a encore été créé : demande d'abord le diagnostic d'une vidéo."
+    if _open_report(path):
+        return f"Rapport ouvert dans Markdown Studio : {path}. N'appelle aucun autre outil."
+    return f"Je n'ai pas pu ouvrir {path} ; appelle open_app avec ce chemin (jamais shell_exec)."
 
 
 def _diagnosis_markdown(v: dict, data: dict) -> str:
@@ -622,15 +872,16 @@ def diagnose(query: str, player: Any, speak: Any) -> str:
             _announce(speak, "Je n'ai pas pu regarder la vidéo elle-même, mais d'après les chiffres : "
                              + _heuristic_spoken(v, findings))
             return
+        _remember_report(v, summary, data)
         _card(player, title, _diagnosis_markdown(v, data))
-        _announce(speak, str(data.get("spoken") or _heuristic_spoken(v, findings)))
+        spoken = str(data.get("spoken") or _heuristic_spoken(v, findings)).strip()
+        _announce(speak, spoken + " Veux-tu que je crée le rapport Markdown complet avec le diagnostic, "
+                  "les corrections et le plan d'action ?")
 
     if not _run_background(f"diag:{v['id']}", _work):
         return "J'analyse déjà cette vidéo, le verdict arrive."
-    return (f"Je regarde ta vidéo « {v.get('desc', '')[:40] or 'sans titre'} » ({v['plays']} vues, "
-            f"{v['likes']} J'aime). Premier constat sur les chiffres : "
-            + (findings[0] if findings else "rien d'anormal.")
-            + " Je te donne le verdict complet dans une minute, après l'avoir visionnée.")
+    return (f"Je regarde ta vidéo « {v.get('desc', '')[:40] or 'sans titre'} » et ses chiffres. "
+            "Je te donne un verdict bref après le visionnage, puis je te proposerai le rapport Markdown complet.")
 
 
 def review_account(player: Any) -> str:
@@ -773,6 +1024,26 @@ def review_draft(query: str, note: str, player: Any, speak: Any) -> str:
         for label, key in (("Forces", "strengths"), ("Faiblesses", "weaknesses"), ("Montage", "edits")):
             if data.get(key):
                 lines += ["", f"**{label} :**"] + [f"• {x}" for x in data[key][:4]]
+        if data.get("publish_blockers"):
+            lines += ["", "**À corriger avant publication (P0) :**"] + [
+                f"• {x}" for x in data["publish_blockers"][:4]
+            ]
+        if data.get("timeline"):
+            lines += ["", "**Déroulé vérifié :**"]
+            for moment in data["timeline"][:7]:
+                if isinstance(moment, dict):
+                    lines.append(
+                        f"• **{moment.get('time', '?')}** — {moment.get('observation', '')} "
+                        f"→ {moment.get('action', '')}"
+                    )
+        if data.get("alternative_hooks"):
+            lines += ["", "**3 accroches à tester :**"]
+            for hook in data["alternative_hooks"][:3]:
+                if isinstance(hook, dict):
+                    lines.append(
+                        f"• **Plan 0 s :** {hook.get('first_shot', '')} — "
+                        f"« {hook.get('on_screen_text', '')} »"
+                    )
         if data.get("caption"):
             lines += ["", f"**Description :** {data['caption']}"]
         if data.get("hashtags"):
@@ -785,6 +1056,8 @@ def review_draft(query: str, note: str, player: Any, speak: Any) -> str:
             lines.append(f"**Couverture :** {data['cover_advice']}")
         if data.get("pinned_comment"):
             lines.append(f"**Commentaire à épingler :** {data['pinned_comment']}")
+        if data.get("detailed_markdown"):
+            lines += ["", "**Audit détaillé :**", str(data["detailed_markdown"]).strip()]
         lines += ["", f"⏰ {data.get('posting_time', '')}"]
         _card(player, title, "\n".join(lines))
         spoken = str(data.get("spoken") or "")
@@ -811,6 +1084,10 @@ def tiktok_coach(parameters: dict | None = None, player: Any = None,
     action = str(p.get("action") or "diagnose").strip().lower()
     query = str(p.get("query") or p.get("video") or "")
     try:
+        if action in {"report", "rapport", "export", "markdown", "md"}:
+            return create_last_diagnosis_report(query)
+        if action in {"open_report", "open", "ouvre", "show_report", "ouvrir"}:
+            return open_last_report()
         if action in {"diagnose", "why", "pourquoi", "analyse", "analyze", "video"}:
             return diagnose(query, player, speak)
         if action in {"review", "account", "bilan", "compte", "plan"}:
@@ -826,5 +1103,5 @@ def tiktok_coach(parameters: dict | None = None, player: Any = None,
         return str(exc)
     except Exception as exc:
         return f"Le coach TikTok n'a pas pu répondre : {exc}"
-    return ("Actions du coach : diagnose (pourquoi une vidéo), review (bilan du compte), "
-            "list (vidéos prêtes dans le dossier TikTok), draft (vidéo à publier), best_time.")
+    return ("Actions du coach : diagnose (pourquoi une vidéo), report (export Markdown après accord), "
+            "review (bilan du compte), list (vidéos prêtes à publier), draft, best_time.")
