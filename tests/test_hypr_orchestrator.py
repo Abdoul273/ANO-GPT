@@ -1,6 +1,5 @@
 """Tests unitaires et d'intégration pour actions/hypr_orchestrator.py."""
 
-import pytest
 from actions.hypr_orchestrator import (
     HyprOrchestrator,
     parse_hypr_orchestrator_intent,

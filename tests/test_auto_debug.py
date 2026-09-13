@@ -1,12 +1,10 @@
 """tests/test_auto_debug.py — Tests unitaires pour core/auto_debug.py et actions/auto_debug.py."""
 
-import pytest
 from unittest.mock import patch, MagicMock
 from core.auto_debug import (
     clean_ansi,
     parse_error_snippet,
     resolve_local_source_context,
-    ParsedError,
     auto_debug_live,
 )
 from actions.auto_debug import auto_debug_action

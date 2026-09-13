@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +19,7 @@ import pytest
 from actions import youtube_video as youtube_action
 from core import youtube_service
 from core.email_service import GmailService
-from core.youtube_service import YouTubeResult, YouTubeUnavailable
+from core.youtube_service import YouTubeResult
 
 
 MOCK_YOUTUBE_SCRAPE_HTML = (
@@ -163,7 +162,7 @@ def test_youtube_video_play_opens_in_chrome(monkeypatch: pytest.MonkeyPatch) -> 
 
     qt_player = MockIntegratedPlayer()
     popen_calls.clear()
-    res_player = youtube_action.youtube_video(
+    youtube_action.youtube_video(
         {"action": "play", "query": "kanda bongo", "browser": "chrome"},
         player=qt_player,
         session_memory={},
@@ -225,7 +224,7 @@ def test_youtube_control_routes_to_media_control_when_browser_active(
 
     inactive_player = MockInactivePlayer()
     recorded_media_calls.clear()
-    res_inactive = youtube_action.youtube_video(
+    youtube_action.youtube_video(
         {"action": "pause"},
         player=inactive_player,
         session_memory={"youtube_playback_target": "browser"},

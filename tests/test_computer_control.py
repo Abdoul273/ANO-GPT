@@ -9,14 +9,11 @@ Couvre :
   5. Fallback d'écriture _type_text (ydotool -> wtype -> clipboard paste).
   6. Parsing local en langage naturel (_parse_control_locally).
 """
-import pytest
-from unittest.mock import patch, MagicMock, call
 import subprocess
 
 from actions.computer_control import (
     computer_control,
     _parse_control_locally,
-    _CANONICAL_MAP,
 )
 import actions.computer_control as cc
 
@@ -47,7 +44,7 @@ def test_type_with_window_target(monkeypatch):
     monkeypatch.setattr(cc, '_type_text', lambda text: calls.append(('type', text)) or f'Texte tapé : {text}')
     monkeypatch.setattr(cc, '_press_key', lambda key: calls.append(('press', key)) or f'Touche pressée : {key}')
 
-    res = computer_control({'action': 'type', 'text': 'ls', 'window': 'kitty'})
+    computer_control({'action': 'type', 'text': 'ls', 'window': 'kitty'})
 
     assert ('focus', 'kitty') in calls
     assert ('type', 'ls') in calls
@@ -62,7 +59,7 @@ def test_type_with_title_and_enter(monkeypatch):
     monkeypatch.setattr(cc, '_type_text', lambda text: calls.append(('type', text)) or f'Texte tapé : {text}')
     monkeypatch.setattr(cc, '_press_key', lambda key: calls.append(('press', key)) or f'Touche pressée : {key}')
 
-    res = computer_control({'action': 'type', 'text': 'git status', 'title': 'alacritty', 'enter': True})
+    computer_control({'action': 'type', 'text': 'git status', 'title': 'alacritty', 'enter': True})
 
     assert ('focus', 'alacritty') in calls
     assert ('type', 'git status') in calls
@@ -318,7 +315,7 @@ def test_type_text_clipboard_paste_fallback(monkeypatch):
     monkeypatch.setattr(cc, '_clipboard_copy', lambda text: calls.append(('copy', text)) or True)
     monkeypatch.setattr(cc, '_clipboard_paste', lambda: calls.append(('paste',)) or 'Collé')
 
-    res = cc._type_text('test fallback')
+    cc._type_text('test fallback')
     assert ('copy', 'test fallback') in calls
     assert ('paste',) in calls
 

@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from actions import proactive
-from core import calendar_watcher
 from core.calendar_watcher import (
     CalendarWatcher,
     format_meeting_announcement,

@@ -36,6 +36,39 @@ def test_auto_priorise_deepseek_puis_grok(brain_config):
     assert llm_client.resolve_brain_provider() == "deepseek"
 
 
+def test_openrouter_est_un_cerveau_configurable(brain_config):
+    brain_config(
+        llm_provider="openrouter",
+        brain_provider="openrouter",
+        openrouter_api_key="or-secret",
+        openrouter_model="anthropic/claude-sonnet-4",
+    )
+    assert llm_client.resolve_brain_provider() == "openrouter"
+    assert llm_client.main_brain() == ("openrouter", "anthropic/claude-sonnet-4")
+    assert llm_client.PROVIDERS["openrouter"]["default_url"] == "https://openrouter.ai/api/v1"
+
+
+def test_catalogue_openrouter_retient_les_identifiants(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "zeta/model"}, {"id": "alpha/model"}, {"id": "zeta/model"}]}
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs["headers"]
+        return Response()
+
+    monkeypatch.setattr(llm_client._session, "get", fake_get)
+    assert llm_client.openrouter_models("or-secret") == ["alpha/model", "zeta/model"]
+    assert captured["url"] == "https://openrouter.ai/api/v1/models"
+    assert captured["headers"]["Authorization"] == "Bearer or-secret"
+
+
 def test_auto_priorise_azure_openai_lorsqu_il_est_configure(brain_config):
     brain_config(
         brain_provider="auto",
@@ -87,6 +120,25 @@ def test_repli_sur_grok_si_deepseek_echoue(brain_config, monkeypatch):
     monkeypatch.setattr(llm_client, "_call_openai_compat", fake_call)
     assert llm_client.think_deep("Question") == "Réponse de secours."
     assert calls == ["deepseek", "grok"]
+
+
+def test_reflexion_profonde_garde_azure_meme_si_openrouter_est_le_cerveau(
+        brain_config, monkeypatch):
+    brain_config(
+        brain_provider="openrouter",
+        openrouter_api_key="or-secret",
+        azure_openai_api_key="azure-secret",
+        azure_deep_model="azure-deep-specialist",
+    )
+    calls = []
+
+    def fake_azure(messages, tools, timeout, **kwargs):
+        calls.append(kwargs["model"])
+        return {"content": "Réponse du spécialiste Azure.", "tool_calls": []}
+
+    monkeypatch.setattr(llm_client, "_call_azure_openai", fake_azure)
+    assert llm_client.think_deep("Analyse cette décision") == "Réponse du spécialiste Azure."
+    assert calls == ["azure-deep-specialist"]
 
 
 def test_enregistrer_une_cle_ne_change_pas_le_provider(brain_config):

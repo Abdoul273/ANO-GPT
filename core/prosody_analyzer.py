@@ -623,7 +623,6 @@ class ProsodyAnalyzer:
         rms = features.rms_dbfs
         dyn = features.dynamic_range_db
         p_var = features.pitch_variation
-        f0 = features.f0_mean
         whisper = features.whisper_score
         voicing = features.voicing_ratio
 

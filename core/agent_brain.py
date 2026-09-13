@@ -25,9 +25,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
+from core import action_kit as kit
 from core.context_probe import ambient_context
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -132,9 +132,8 @@ def think(question: str, context: str = "", *,
     environment[LOOP_GUARD_ENV] = "1"
 
     try:
-        completed = subprocess.run(
+        completed = kit.run(
             command,
-            capture_output=True, text=True,
             # Priorité basse : l'agent est un binaire lourd, et cette machine
             # n'a que deux cœurs. Le laisser concurrencer la boucle audio à
             # égalité hache la voix et fait entendre à l'assistant sa propre
@@ -148,11 +147,12 @@ def think(question: str, context: str = "", *,
             cwd=str(Path.home()),
             env=environment,
         )
-    except subprocess.TimeoutExpired:
-        return (f"L'agent n'a pas répondu en {timeout} secondes. "
-                "Reformule plus court, ou réponds toi-même.")
     except Exception as exc:
         raise AgentUnavailable(f"Impossible de lancer l'agent : {exc}") from exc
+
+    if getattr(completed, "timed_out", False):
+        return (f"L'agent n'a pas répondu en {timeout} secondes. "
+                "Reformule plus court, ou réponds toi-même.")
 
     answer = (completed.stdout or "").strip()
     if answer:
@@ -209,9 +209,8 @@ def generate_memory_aliases(memory_text: str, category: str = "", *, timeout: in
     environment = dict(os.environ)
     environment[LOOP_GUARD_ENV] = "1"
     try:
-        completed = subprocess.run(
+        completed = kit.run(
             command,
-            capture_output=True, text=True,
             preexec_fn=_lower_priority if os.name == "posix" else None,
             timeout=timeout + 5,
             cwd=str(Path.home()),
@@ -244,9 +243,8 @@ def generate_document_summary(filename: str, content_snippet: str, *, timeout: i
     environment = dict(os.environ)
     environment[LOOP_GUARD_ENV] = "1"
     try:
-        completed = subprocess.run(
+        completed = kit.run(
             command,
-            capture_output=True, text=True,
             preexec_fn=_lower_priority if os.name == "posix" else None,
             timeout=timeout + 5,
             cwd=str(Path.home()),

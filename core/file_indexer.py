@@ -22,9 +22,9 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 logger = logging.getLogger("anogpt.file_indexer")
 
@@ -81,8 +81,11 @@ class PersonalFileIndexer:
         return conn
 
     def _init_db(self) -> None:
+        new_database = not self.db_path.exists()
         with self._lock:
             with self._get_connection() as conn:
+                if new_database:
+                    conn.execute("PRAGMA auto_vacuum=INCREMENTAL;")
                 conn.execute("PRAGMA journal_mode=WAL;")
                 conn.execute("PRAGMA synchronous=NORMAL;")
                 

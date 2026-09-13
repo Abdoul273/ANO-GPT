@@ -4,7 +4,7 @@ Concurrence & POSIX :
 ---------------------
 * Pools spécialisés avec limites strictes :
   - 'audio-io'      : 1 worker dédié avec priorité temps réel POSIX (SCHED_FIFO / nice négatif).
-  - 'disk-io'       : 2 workers dédiés aux I/O fichiers, bases SQLite et indexeur.
+  - 'disk-io'       : 3 workers dédiés aux I/O fichiers, bases SQLite et indexeur.
   - 'compute-light' : min(4, CPU count) workers pour FFT, hashing, traitement d'images léger.
   - 'network-heavy' : workers I/O pour requêtes HTTP, météo, scrapers et notifications push.
 * Naming convention strict : 'ano-{pool}-{task_name}-{uuid}' pour un repérage immédiat dans
@@ -33,7 +33,6 @@ import functools
 import inspect
 import logging
 import os
-import queue
 import re
 import sys
 import threading
@@ -41,8 +40,8 @@ import time
 import traceback
 import uuid
 import weakref
-from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Generator, Generic, Optional, ParamSpec, TypeVar
+from dataclasses import dataclass
+from typing import Any, Callable, Generator, Generic, ParamSpec, TypeVar
 
 logger = logging.getLogger("anogpt.thread_pool")
 
@@ -634,10 +633,10 @@ class ANOThreadPool:
             ),
             PoolConfig(
                 name="disk-io",
-                max_workers=2,
+                max_workers=3,
                 priority="normal",
                 stall_timeout=5.0,
-                description="Lectures/écritures fichiers, base SQLite, indexeur local",
+                description="Lectures/écritures fichiers, bases SQLite, indexeur local (3 workers)",
             ),
             PoolConfig(
                 name="compute-light",

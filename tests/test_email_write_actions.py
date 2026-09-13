@@ -1,6 +1,5 @@
 """Les écritures Gmail (envoi, réponse, corbeille) passent par une confirmation
 humaine ; le marquage et l'archivage s'appliquent directement."""
-from types import SimpleNamespace
 
 from actions import email as email_action
 from core import human_confirmation

@@ -35,17 +35,27 @@ POPEN_HERITAGE = {
     "core/browser_policy.py",
     "core/ghost_agent.py",
     "core/isolated_interrupt.py",
-    "core/llm_client.py",
     "core/player_ipc.py",
     "ui/orb/radial_waveform.py",
     "ui/window/system_ops.py",
+}
+
+# Ces chemins sont synchrones et exécutés depuis des tâches de voix. Ils ne
+# conservent aucun processus persistant : tout appel bloquant doit donc passer
+# par le socle qui tue aussi la descendance au dépassement du délai.
+CORE_KIT_ONLY = {
+    "core/agent_brain.py",
+    "core/audio_router.py",
+    "core/llm_client.py",
+    "core/screen_capture.py",
+    "core/tts.py",
 }
 
 
 def _sources():
     for path in sorted(ROOT.glob("**/*.py")):
         relative = path.relative_to(ROOT).as_posix()
-        if (relative.startswith(("tests/", "build/", "mobile/"))
+        if (relative.startswith(("tests/", "build/", "mobile/", ".venv-tools/"))
                 or "__pycache__" in relative
                 or path == KIT):
             continue
@@ -93,6 +103,19 @@ def test_la_dette_popen_ne_grandit_pas():
     assert not obsoletes, (
         "ces modules n'utilisent plus Popen : retire-les de POPEN_HERITAGE :\n  "
         + "\n  ".join(sorted(obsoletes))
+    )
+
+
+def test_les_chemins_core_prioritaires_passent_par_action_kit():
+    faults = []
+    for relative, tree in _sources():
+        if relative not in CORE_KIT_ONLY:
+            continue
+        for node in _subprocess_calls(tree):
+            if node.func.attr in BLOCKING:
+                faults.append(f"{relative}:{node.lineno} subprocess.{node.func.attr}()")
+    assert not faults, (
+        "chemin core synchrone hors action_kit :\n  " + "\n  ".join(faults)
     )
 
 

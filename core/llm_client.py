@@ -9,7 +9,6 @@ import os
 import re
 import socket
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -20,6 +19,7 @@ from typing import Callable, Generator, Optional, Dict, Any
 
 
 import requests
+from core import action_kit as kit
 from core.live_model_policy import BALANCED_MODEL, FAST_MODEL, PINNED_FLASH_MODEL, PINNED_PRO_MODEL
 
 
@@ -218,6 +218,16 @@ PROVIDERS: dict[str, dict] = {
         "key_field":     "openai_api_key",
         "url_editable":  False,
     },
+    "openrouter": {
+        "label":         "OpenRouter",
+        "family":        "openai_compat",
+        "needs_key":     True,
+        "default_url":   "https://openrouter.ai/api/v1",
+        # La liste complète est chargée à la demande depuis /models dans l'UI.
+        "default_model": "openai/gpt-4.1",
+        "key_field":     "openrouter_api_key",
+        "url_editable":  False,
+    },
     "azure_openai": {
         "label":         "Azure OpenAI",
         "family":        "azure_openai",
@@ -244,7 +254,7 @@ PROVIDERS: dict[str, dict] = {
 # candidates ; aucune API payante n'est donc activée implicitement. Gemini
 # ferme la chaîne car c'est le fournisseur vocal intégré à ANO-GPT.
 DEFAULT_BRAIN_PRIORITY = (
-    "azure_openai", "deepseek", "grok", "openai", "anthropic", "groq", "gemini", "ollama",
+    "azure_openai", "openrouter", "deepseek", "grok", "openai", "anthropic", "groq", "gemini", "ollama",
 )
 
 # Modèles proposés dans l'interface. La liste n'est jamais contraignante :
@@ -259,6 +269,9 @@ MODEL_CATALOG: dict[str, tuple[str, ...]] = {
     "openai": (
         "gpt-5.6-terra", "gpt-5.1", "gpt-4.1", "o4-mini",
     ),
+    # Ce court secours rend le champ utile hors ligne. Le bouton de l'UI
+    # télécharge le catalogue complet et actuel d'OpenRouter à la demande.
+    "openrouter": ("openai/gpt-4.1",),
     # Repli hors ligne seulement : en marche normale, la liste Azure vient de
     # `azure_catalog()`, qui interroge la ressource et connaît bien plus large
     # (Claude, Grok, DeepSeek, Llama…) que ces quelques valeurs sûres.
@@ -294,6 +307,34 @@ def models_for(provider: str) -> list[str]:
     if current and current not in catalog:
         catalog.insert(0, current)
     return catalog
+
+
+def openrouter_models(api_key: str = "", timeout: int = 20) -> list[str]:
+    """Retourne le catalogue OpenRouter sans figer ses modèles dans ANO-GPT.
+
+    OpenRouter ajoute et retire des modèles régulièrement. Cette lecture est
+    volontairement déclenchée depuis le bouton de l'interface, jamais pendant
+    l'audio ou l'ouverture des réglages. La clé est facultative pour l'endpoint
+    public, mais la transmettre permet à OpenRouter de retourner le catalogue
+    correspondant exactement au compte connecté.
+    """
+    headers = _openrouter_headers(api_key)
+    try:
+        response = _session.get(
+            "https://openrouter.ai/api/v1/models", headers=headers,
+            timeout=(5, max(5, int(timeout))),
+        )
+        response.raise_for_status()
+        data = response.json().get("data", [])
+    except Exception as exc:
+        raise RuntimeError(f"Catalogue OpenRouter indisponible : {exc}") from exc
+    if not isinstance(data, list):
+        raise RuntimeError("Catalogue OpenRouter invalide.")
+    # L'identifiant (ex. ``anthropic/claude-…``) est la seule valeur à
+    # enregistrer : le libellé commercial peut changer sans casser la config.
+    return sorted({str(item.get("id") or "").strip() for item in data
+                   if isinstance(item, dict) and str(item.get("id") or "").strip()},
+                  key=str.casefold)
 
 
 def _write_config_patch(patch: dict) -> bool:
@@ -332,6 +373,17 @@ def get_api_key_for(provider: str) -> str:
     info = PROVIDERS.get(provider, {})
     field = info.get("key_field")
     return _load_config().get(field, "") if field else ""
+
+
+def _openrouter_headers(api_key: str = "") -> dict[str, str]:
+    """En-têtes recommandés par OpenRouter, sans exposer ni journaliser la clé."""
+    headers = {
+        "HTTP-Referer": "https://github.com/ANO-GPT/ANO-GPT",
+        "X-Title": "ANO-GPT",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 def _brain_priority() -> tuple[str, ...]:
@@ -681,12 +733,12 @@ def _azure_foundry_preflight(endpoint: str, api_key: str) -> int | None:
             "max-time = 12",
         ))
         try:
-            result = subprocess.run(
+            result = kit.run(
                 ["curl", "--config", "-", "-sS", "-o", os.devnull, "-w", "%{http_code}"],
-                input=config, text=True, capture_output=True, timeout=15,
+                stdin=config, timeout=15,
             )
             return int(result.stdout.strip()) if result.stdout.strip().isdigit() else None
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, ValueError):
             return None
     try:
         return _session.get(url, timeout=(5, 12), headers={"api-key": api_key}).status_code
@@ -754,12 +806,12 @@ def _azure_fetch_models(endpoint: str, api_key: str, timeout: int = 40) -> list[
             f"max-time = {timeout}",
         ))
         try:
-            result = subprocess.run(
+            result = kit.run(
                 ["curl", "--config", "-", "-sS"],
-                input=config, text=True, capture_output=True, timeout=timeout + 6,
+                stdin=config, timeout=timeout + 6,
             )
             payload = result.stdout
-        except (OSError, subprocess.TimeoutExpired):
+        except OSError:
             return []
     else:
         try:
@@ -797,12 +849,12 @@ def _azure_fetch_deployments(endpoint: str, api_key: str, timeout: int = 30,
             f"max-time = {timeout}",
         ))
         try:
-            result = subprocess.run(
+            result = kit.run(
                 ["curl", "--config", "-", "-sS"],
-                input=config, text=True, capture_output=True, timeout=timeout + 6,
+                stdin=config, timeout=timeout + 6,
             )
             payload = result.stdout
-        except (OSError, subprocess.TimeoutExpired):
+        except OSError:
             return []
     else:
         try:
@@ -845,18 +897,18 @@ def _azure_zero_quota(endpoint: str, timeout: int = 60) -> list[str]:
     if not resource:
         return []
     try:
-        code, out, _ = (lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(
+        code, out, _ = (lambda r: (r.returncode, r.stdout, r.stderr))(kit.run(
             ["az", "cognitiveservices", "account", "list", "--query",
              f"[?name=='{resource}'].location | [0]", "-o", "tsv"],
-            capture_output=True, text=True, timeout=timeout))
+            timeout=timeout))
         location = out.strip() if code == 0 else ""
         if not location:
             return []
-        result = subprocess.run(
+        result = kit.run(
             ["az", "cognitiveservices", "usage", "list", "-l", location, "-o", "json"],
-            capture_output=True, text=True, timeout=timeout)
+            timeout=timeout)
         rows = json.loads(result.stdout or "[]")
-    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
+    except (OSError, ValueError, TypeError):
         return []
     empty: set[str] = set()
     seen: set[str] = set()
@@ -1056,14 +1108,14 @@ def probe_azure_deployment(endpoint: str, api_key: str, deployment: str,
         try:
             # Le corps passe par -d ; seule la clé emprunte stdin, pour qu'elle
             # n'apparaisse ni dans argv ni dans la liste des processus.
-            result = subprocess.run(
+            result = kit.run(
                 ["curl", "--config", "-", "-sS", "-w", "\n%{http_code}", "-d", body],
-                input=config, text=True, capture_output=True, timeout=timeout + 6,
+                stdin=config, timeout=timeout + 6,
             )
             lines = result.stdout.rsplit("\n", 1)
             payload = lines[0]
             status = int(lines[1].strip()) if len(lines) > 1 and lines[1].strip().isdigit() else 0
-        except (OSError, subprocess.TimeoutExpired, ValueError):
+        except (OSError, ValueError):
             return False, "Azure n'a pas répondu dans le délai imparti."
     else:
         try:
@@ -1147,10 +1199,8 @@ def ensure_ollama_running(timeout: int = 15) -> bool:
 
     print("[LLM] Ollama not running — launching 'ollama serve'…")
     try:
-        kwargs: dict = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-        if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-        subprocess.Popen(["ollama", "serve"], **kwargs)
+        if kit.spawn(["ollama", "serve"]) is None:
+            raise FileNotFoundError("ollama")
     except FileNotFoundError:
         print("[LLM] 'ollama' command not found. Install Ollama from https://ollama.com")
         return False
@@ -1196,7 +1246,10 @@ def warmup_model(system_prompt: str | None = None) -> bool:
             return False
     if family == "openai_compat":
         payload = {"model": model, "messages": messages, "stream": False, "max_tokens": 1}
-        headers = {"Authorization": f"Bearer {get_api_key_for(provider)}"} if get_api_key_for(provider) else {}
+        key = get_api_key_for(provider)
+        headers = _openrouter_headers(key) if provider == "openrouter" else (
+            {"Authorization": f"Bearer {key}"} if key else {}
+        )
         try:
             resp = _session.post(f"{_openai_v1_base(url)}/chat/completions", json=payload,
                                   timeout=(5, 180), headers=headers)
@@ -1300,7 +1353,11 @@ def _call_openai_compat(messages: list, tools: list | None, timeout: int,
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    headers = (
+        _openrouter_headers(api_key)
+        if provider == "openrouter" else
+        ({"Authorization": f"Bearer {api_key}"} if api_key else {})
+    )
     try:
         resp = _post_with_retry(endpoint, payload, timeout, headers=headers)
         resp.raise_for_status()
@@ -1598,7 +1655,7 @@ def call_llm_text(prompt: str, system: str | None = None, model: str | None = No
 #  résultat est ensuite prononcé par la voix habituelle.
 #
 #  Le mode auto essaie uniquement les fournisseurs dont une clé existe, dans
-#  l'ordre DeepSeek → Grok → OpenAI → Claude. Il n'active ni ne facture donc
+#  l'ordre Azure → OpenRouter → DeepSeek → Grok → OpenAI → Claude. Il n'active ni ne facture donc
 #  jamais un service que l'utilisateur n'a pas lui-même configuré.
 # ═══════════════════════════════════════════════════════════════════════════
 BRAIN_UNCONFIGURED = "__brain_unconfigured__"
@@ -1609,7 +1666,7 @@ DEEPSEEK_UNCONFIGURED = BRAIN_UNCONFIGURED
 
 
 def think_deep(question: str, context: str = "", timeout: int = 60) -> str:
-    """Interroge le cerveau sélectionné avec repli entre clés configurées.
+    """Interroge le spécialiste Azure de réflexion, puis les cerveaux en repli.
 
     Aucune clé : renvoie le sentinel historique, afin que Gemini/agy continue
     exactement comme avant. Une panne d'un fournisseur n'empêche pas le
@@ -1626,6 +1683,12 @@ def think_deep(question: str, context: str = "", timeout: int = 60) -> str:
         candidates = ([selected] if resolve_brain_provider() else []) + [
             item for item in configured_brain_providers() if item != selected
         ]
+    # La sélection du cerveau ne doit pas détourner les rôles spécialisés :
+    # quand Azure est configuré, sa sélection « raisonnement profond » reste
+    # l'outil prioritaire pour deep_think / simulate_decision. OpenRouter et
+    # les autres fournisseurs ne servent qu'en repli si Azure est indisponible.
+    if provider_is_usable("azure_openai"):
+        candidates = ["azure_openai", *[item for item in candidates if item != "azure_openai"]]
     if not candidates:
         return BRAIN_UNCONFIGURED
 
@@ -2063,7 +2126,8 @@ def _pull_model_ollama(model: str) -> str:
         return "La commande 'ollama' est introuvable. Veuillez installer Ollama depuis https://ollama.com"
     try:
         # On lance en arrière-plan et on renvoie un message immédiat
-        subprocess.Popen(["ollama", "pull", model], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if kit.spawn(["ollama", "pull", model]) is None:
+            raise RuntimeError("lancement impossible")
         return f"Téléchargement du modèle '{model}' lancé en arrière-plan. Cela peut prendre quelques minutes."
     except Exception as e:
         return f"Échec du téléchargement : {e}"
@@ -2143,7 +2207,7 @@ def _restart_ollama() -> str:
     # Tuer les processus ollama existants (optionnel, sur Linux/macOS)
     if sys.platform != "win32":
         try:
-            subprocess.run(["pkill", "-f", "ollama serve"], check=False, timeout=10)
+            kit.run(["pkill", "-f", "ollama serve"], timeout=10, quiet=True)
         except Exception:
             pass
     success = ensure_ollama_running(timeout=20)

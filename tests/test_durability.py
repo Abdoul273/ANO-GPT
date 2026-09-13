@@ -105,7 +105,37 @@ def test_l_entretien_leger_est_branche_hors_du_chemin_de_la_voix():
     bloc = source.split("_maintain_storage")[1][:1200]
     assert '"disk-io"' in bloc, "l'entretien doit passer par le pool disque"
     # Un VACUUM au démarrage réécrirait 275 Mo pendant que l'utilisateur parle.
-    assert "VACUUM" not in (ROOT / "main.py").read_text(encoding="utf-8")
+    assert "compact_on_shutdown" not in bloc
+
+
+def test_le_compactage_de_fermeture_exige_absence_et_espace_libre(monkeypatch, tmp_path):
+    base = tmp_path / "personal_rag.db"
+    candidate = maintenance.DatabaseReport(
+        path=base,
+        total_bytes=100 * 1024 * 1024,
+        free_bytes=25 * 1024 * 1024,
+        auto_vacuum=2,
+    )
+    monkeypatch.setattr(maintenance, "report", lambda: [candidate])
+    calls = []
+    monkeypatch.setattr(
+        maintenance, "compact",
+        lambda path: calls.append(path) or (True, f"{path.name} compactée"),
+    )
+
+    assert maintenance.compact_on_shutdown(idle_seconds=599) == []
+    assert calls == []
+    assert maintenance.compact_on_shutdown(idle_seconds=600) == ["personal_rag.db compactée"]
+    assert calls == [base]
+
+
+def test_les_nouvelles_bases_indexees_choisissent_le_mode_incremental():
+    for relative in (
+        "core/personal_rag.py", "core/file_indexer.py", "core/memory_store.py",
+        "core/vector_memory.py",
+    ):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        assert "PRAGMA auto_vacuum=INCREMENTAL" in source, relative
 
 
 def test_l_index_n_est_pas_charge_en_memoire_au_demarrage():

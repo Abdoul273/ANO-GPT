@@ -29,9 +29,6 @@ from core.prosody_analyzer import (
     MoodClassification,
     ProsodyAnalyzer,
     get_prosody_analyzer,
-    QUALIFIED_MOODS,
-    MOOD_SYSTEM_INSTRUCTIONS,
-    TTS_MODULATIONS,
 )
 
 logger = logging.getLogger("anogpt.prosody")

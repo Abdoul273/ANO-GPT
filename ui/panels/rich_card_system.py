@@ -1,29 +1,25 @@
 from __future__ import annotations
 
 import math
-import os
 import random
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 import psutil
 
 from PyQt6.QtCore import (
     QEasingCurve,
-    QEvent,
     QParallelAnimationGroup,
     QPoint,
     QPointF,
     QPropertyAnimation,
-    QRect,
     QRectF,
     QSize,
     Qt,
     QTimer,
     QUrl,
-    pyqtProperty,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
@@ -51,7 +47,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QTextBrowser,
-    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -1543,7 +1538,7 @@ class TelemetryCard(GlassCard):
             self._prev_net_out = net.bytes_sent
             self._last_net_time = now
 
-        except Exception as exc:
+        except Exception:
             self._lbl_cpu_val.setText("N/A")
 
     @staticmethod
@@ -2650,12 +2645,12 @@ class RichCardDemoWindow(QMainWindow):
 
         center_title = QLabel("ANO-GPT SCI-FI WORKSPACE", center_zone)
         center_title.setFont(QFont("Inter", 16, QFont.Weight.Bold))
-        center_title.setStyleSheet(f"color: rgba(0, 212, 255, 0.4); letter-spacing: 2px;")
+        center_title.setStyleSheet("color: rgba(0, 212, 255, 0.4); letter-spacing: 2px;")
         c_lay.addWidget(center_title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         center_sub = QLabel("Pile de notifications persistantes et éphémères à droite →", center_zone)
         center_sub.setFont(QFont("Inter", 10))
-        center_sub.setStyleSheet(f"color: rgba(0, 212, 255, 0.25);")
+        center_sub.setStyleSheet("color: rgba(0, 212, 255, 0.25);")
         c_lay.addWidget(center_sub, alignment=Qt.AlignmentFlag.AlignCenter)
 
         main_lay.addWidget(center_zone, stretch=1)

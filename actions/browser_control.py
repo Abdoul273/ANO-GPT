@@ -30,7 +30,6 @@ import tempfile
 import threading
 import time
 import urllib.parse
-import webbrowser
 from pathlib import Path
 from typing import Optional, Any, Dict, List, Tuple, Callable
 
@@ -587,12 +586,12 @@ class BrowserSession:
             if self._context is not None:
                 await self._context.close()
         except Exception:
-            pass
+            logger.debug("Fermeture du contexte Playwright déjà indisponible", exc_info=True)
         try:
             if self._pw is not None:
                 await self._pw.stop()
         except Exception:
-            pass
+            logger.debug("Arrêt Playwright déjà indisponible", exc_info=True)
         self._pw = self._browser = self._context = self._page = None
         self._is_cdp = False
         await self._init_playwright()

@@ -190,7 +190,7 @@ def read(image_bytes: bytes, question: str = "") -> ScreenRead | None:
 
     try:
         import pytesseract
-        from PIL import Image, ImageOps
+        from PIL import Image
 
         with Image.open(io.BytesIO(image_bytes)) as im:
             enhanced = prepare_for_ocr(im)

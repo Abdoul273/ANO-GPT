@@ -23,7 +23,6 @@ import platform
 import re
 import json
 import shlex
-import shutil
 import subprocess
 import time
 import unicodedata

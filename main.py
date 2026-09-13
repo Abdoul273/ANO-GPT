@@ -178,16 +178,13 @@ if _platform.system() == "Windows":
 
 
 import asyncio
-import concurrent.futures
 import re
 import signal
 import threading
 import time
 import json
-import sys
 import traceback
 import warnings
-from datetime import datetime
 from pathlib import Path
 
 # ── Suppression des warnings bénins sur Wayland/KDE ──────────────────────────
@@ -230,11 +227,8 @@ import threading as _threading_early
 
 import numpy as np
 from ui import JarvisUI
-from memory.memory_manager import (
-    load_memory, update_memory, format_memory_for_prompt,
-)
-from core import (context_probe, human_confirmation, memory_store, routines,
-                  screen_reader, speaker_id, tool_packs, undo_stack)
+from core import (context_probe, human_confirmation, memory_store, speaker_id, tool_packs,
+                  tool_stats as tool_stats)
 from core.event_bus import (
     AsyncEventBus,
     ConnectionStateChangedEvent,
@@ -320,61 +314,17 @@ def _start_sounddevice_import() -> None:
             name="sounddevice-import",
         ).start()
 
-from actions.file_processor import file_processor
-from actions.flight_finder     import flight_finder
-from actions.open_app          import open_app
-from actions.close_app         import close_app
-from actions.weather_report    import weather_action
-from actions.send_message      import send_message
-from actions.reminder          import reminder
-from actions.computer_settings import computer_settings
-from actions.screen_processor  import _capture_camera, _capture_screen
-from actions.youtube_video     import youtube_video
-from actions.desktop           import desktop_control
-from actions.browser_control   import browser_control
-from actions.file_controller   import file_controller
-from actions.code_helper       import code_helper
-from actions.dev_agent         import dev_agent
-from actions.web_search        import web_search as web_search_action
-from actions.image_search      import image_search as image_search_action
-from actions.computer_control  import computer_control
-from actions.game_updater      import game_updater
-from actions.media_control     import media_control
-from actions.system_monitor    import SystemMonitor, get_system_status
-from actions.proactive         import ProactiveService, desktop_blocks_proactivity
-from actions.background_tasks  import BackgroundTaskService, format_tasks, format_agent_result
-from actions.web_search        import (
-    _news as _fetch_news_sync,
-    DAILY_AI_CYBER_NEWS_QUERY,
-)
-from memory.config_manager     import get_brief_enabled, save_live_voice
-from actions.shell_exec        import shell_exec, hypr_control
-from actions.devsecops         import devsecops_control
-from actions.hypr_orchestrator import hypr_orchestrator_control
-from actions.auto_debug        import auto_debug_action
-from actions.navigation        import navigation_action
-from core.multimodal_vision    import inspect_screen_live
+from actions.system_monitor    import SystemMonitor
+from actions.proactive         import ProactiveService
+from actions.background_tasks  import BackgroundTaskService
+from memory.config_manager     import get_brief_enabled
 from core.screen_consciousness import get_screen_consciousness
-from core.auto_debug           import auto_debug_live
-from actions.capture           import capture_control
-from actions.music             import music_control
-from actions.find_nearby        import find_nearby
-from actions.email              import email_control
-from actions.calendar           import calendar_control
-from actions.cloud_integrations import cloud_integrations_control
-from actions.contacts           import contacts_control
-from actions.sparring_partner   import sparring_partner, observe_sparring_utterance
-from core.stt                  import AudioPreprocessor
 from core.live_speech_config   import (
     DEFAULT_LIVE_VOICE,
-    build_input_transcription_config,
-    build_output_transcription_config,
     normalise_live_voice,
 )
 from core.personality_modes import voice_settings_for_mode
 from core.live_model_policy    import (
-    DEFAULT_FALLBACK_MODEL,
-    DEFAULT_PRIMARY_MODEL,
     LiveModelPolicy,
 )
 from core.gemini_connection    import (
@@ -383,77 +333,48 @@ from core.gemini_connection    import (
     is_invalid_live_setup_error,
     safe_error_summary,
 )
-from core.speech_sync          import split_caption_units, caption_targets
-from core.wake_word            import WakeWordDetector
 from core import freeze_watch
-from core.barge_in             import InterruptPhraseDetector, LocalBargeInListener
 from core.continuous_conversation import (
     ContinuousConversationManager,
     DEFAULT_FOLLOW_UP_TIMEOUT_S,
     is_assistant_sleep_request,
 )
 from core.daily_briefing       import (
-    collect_briefing_data,
-    format_briefing_prompt,
-    format_briefing_card,
-    mark_briefing_delivered,
     should_trigger_daily_briefing,
 )
 from core.ipc                  import ControlServer
 from core                      import audio_router
-from core                      import tool_stats
-from core.habit_model          import HabitModel, suggestion_text
+from core.habit_model          import HabitModel
 from core.timers               import TimerService
 from core.distraction_guard    import DistractionGuard
 from core.action_runtime       import (
     ActionRuntime,
-    ActionRuntimeError,
-    friendly_runtime_error,
 )
 
 
 
 from core.audio_engine import (
     AudioEngine,
-    CHANNELS,
     SEND_SAMPLE_RATE,
-    RECEIVE_SAMPLE_RATE,
-    CHUNK_SIZE,
-    _OUTPUT_SLICE_MS,
     _OUTPUT_LATENCY_S,
-    _MAX_UTTERANCE_S,
-    _END_SILENCE_S,
-    _BARGE_ARM_S,
-    _BARGE_CONFIRM_S,
-    _update_barge_in,
-    HalfDuplexGate,
+    _BARGE_ARM_S as _BARGE_ARM_S,
+    _BARGE_CONFIRM_S as _BARGE_CONFIRM_S,
+    _update_barge_in as _update_barge_in,
 )
 from core.session_manager import (
     SessionManager,
     LIVE_MODEL,
     LIVE_FALLBACK_MODEL,
-    _STALE_AUDIO_TURN_S,
     _resume_would_replay_turn,
     _get_api_key,
     _voice_engine_settings,
     _setting_bool,
-    _load_system_prompt,
-    _clean_transcript,
-    _live_audio_data,
-    get_base_dir,
-    BASE_DIR,
-    API_CONFIG_PATH,
-    PROMPT_PATH,
 )
 from core.tool_dispatcher import (
     ToolDispatcher,
     CONSULT_BRAIN_DECLARATION,
     TOOL_DECLARATIONS,
-    _RETIRED_TOOLS,
-    _DESTRUCTIVE_TOOLS,
-    _DESTRUCTIVE_SETTINGS,
-    _is_destructive,
-    _TOOL_LABELS,
+    _DESTRUCTIVE_TOOLS as _DESTRUCTIVE_TOOLS,
 )
 from core.proactive_engine import ProactiveEngine
 from core.phone_relay import PhoneRelay
@@ -918,7 +839,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # doit réveiller l'assistant au même titre que le mot « ANO ». Sans ce
         # réveil, Gemini pouvait recevoir le texte alors que la sortie restait
         # muette après la veille, donnant l'impression qu'il ne répondait plus.
-        if getattr(ui, "muted", False):
+        if getattr(ui, "muted", False) and not getattr(ui, "microphone_locked", False):
             self._wake_up("commande texte")
         if self._try_switch_conversation_language(text):
             return
@@ -1008,7 +929,14 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 print(f"[Écran] injection texte ignorée : {exc}")
         return await self._submit_text_turn(text)
     def _wake_up(self, reason: str = "hotkey") -> str:
-        """Unmute and start listening. Safe to call when already listening."""
+        """Ouvre l'écoute, sauf après une coupure manuelle explicite."""
+        if (self.ui.muted
+                and getattr(self.ui, "microphone_locked", False)):
+            self.ui.write_log(
+                f"SYS : réveil {reason} ignoré — micro verrouillé par vous ; "
+                "cliquez sur le bouton micro pour l'activer."
+            )
+            return "locked"
         if self.ui.muted:
             self.ui.muted = False
             self.ui.write_log(f"SYS : réveil ({reason}) — micro actif.")
@@ -1976,6 +1904,7 @@ def main():
     def runner():
         ui.wait_for_api_key()
         jarvis = JarvisLive(ui)
+        runtime["jarvis"] = jarvis
 
         async def _async_main():
             loop = asyncio.get_running_loop()
@@ -2034,6 +1963,19 @@ def main():
     # huit secondes ne changeait rien — sauf pour l'utilisateur.
     runtime_thread.join(timeout=2.0)
     shutdown_all(wait=False, cancel_futures=True)
+    # La voix et les pools sont arrêtés : c'est le seul moment où un VACUUM
+    # peut réécrire une grosse base sans voler le disque à une conversation.
+    # Une fermeture juste après un tour reste instantanée ; il faut dix minutes
+    # d'absence et au moins 20 % de pages libres avant de faire quoi que ce soit.
+    jarvis = runtime.get("jarvis")
+    last_speech = getattr(jarvis, "_last_user_speech", time.monotonic())
+    try:
+        from core.storage_maintenance import compact_on_shutdown
+        compact_on_shutdown(idle_seconds=max(0.0, time.monotonic() - last_speech))
+    except Exception:
+        logging.getLogger("anogpt.storage").warning(
+            "compactage de fermeture ignoré", exc_info=True
+        )
     # Un thread non-daemon survivant (bibliothèque tierce, pool oublié)
     # empêcherait l'interpréteur de se terminer : le processus restait vivant
     # avec son verrou d'instance, et ANO-GPT ne pouvait pas être relancé.

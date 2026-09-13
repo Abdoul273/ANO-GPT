@@ -20,7 +20,6 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 # Ajout du dossier racine au sys.path
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -33,15 +32,10 @@ from core.vector_memory import (
     LEGACY_JSON,
     KIND_EPISODE,
     KIND_FACT,
-    KIND_PREFERENCE,
     KIND_PROFILE,
     KIND_TURN,
     EmbeddingEngine,
-    EntityTripleExtractor,
-    RDFTriple,
     VectorMemory,
-    _now,
-    _today,
 )
 
 logging.basicConfig(
@@ -143,7 +137,7 @@ def migrate(
                     if not dry_run and vm:
                         for row in conv_nodes:
                             content = str(row["content"] or "")
-                            title = str(row["title"] or "")
+                            str(row["title"] or "")
                             happened = str(row["happened"] or "")
                             if content:
                                 vm.save(

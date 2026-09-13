@@ -12,12 +12,11 @@ Couvre la Tâche 1 du plan docs/plans/2026-09-05-confirmation-card-and-live-poin
 from __future__ import annotations
 
 import threading
-import time
 import pytest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
 from core import human_confirmation
-from ui.panels.rich_card_system import CardManager, GlassCard, Theme
+from ui.panels.rich_card_system import CardManager, Theme
 
 
 @pytest.fixture(scope="module")

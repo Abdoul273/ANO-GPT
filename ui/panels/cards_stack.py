@@ -1,35 +1,20 @@
 from __future__ import annotations
 
-import json
 import math
-import os
-import platform
 import random
-import re
-import subprocess
-import sys
-import threading
 import time
-import traceback
-from pathlib import Path
 
-import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
+    QEasingCurve, QPointF, QRectF, Qt,
+    QTimer, pyqtSignal, QPropertyAnimation,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
+    QBrush, QColor, QFont, QPainter,
+    QPen,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from ui.core.hud_button import HudButton

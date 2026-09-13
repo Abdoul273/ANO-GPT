@@ -46,7 +46,6 @@ import collections
 import ctypes
 import ctypes.util
 import logging
-import struct
 import threading
 import time
 from typing import Optional

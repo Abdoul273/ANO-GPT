@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 from pathlib import Path
 import shutil
-from core.auto_debug import auto_debug_live, generate_debug_diagnostic
+from core.auto_debug import auto_debug_live
 
 from core import action_kit as kit
 

@@ -12,9 +12,7 @@ from core.thread_pool import (
     ANOThreadPool,
     PoolFuture,
     format_posix_comm_name,
-    get_thread_pool,
     run_in_pool,
-    set_posix_thread_name,
 )
 
 
@@ -38,7 +36,7 @@ def test_specialized_pools_initialization(pool: ANOThreadPool):
 
     # Limites strictes
     assert pools["audio-io"]["max_workers"] == 1
-    assert pools["disk-io"]["max_workers"] == 2
+    assert pools["disk-io"]["max_workers"] == 3
     assert pools["compute-light"]["max_workers"] == max(1, min(4, os.cpu_count() or 1))
     assert pools["network-heavy"]["max_workers"] >= 4
 

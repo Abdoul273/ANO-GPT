@@ -1,36 +1,18 @@
 from __future__ import annotations
 
-import json
-import math
-import os
-import platform
-import random
-import re
-import subprocess
-import sys
-import threading
-import time
-import traceback
-from pathlib import Path
 
-import psutil
 
 from PyQt6.QtCore import (
-    QBuffer, QByteArray, QEasingCurve, QEvent, QIODevice, QLineF, QPointF,
-    QPropertyAnimation, QRect, QRectF, QSize, Qt, QThread, QTimer, QUrl,
-    pyqtProperty, pyqtSignal,
+    QBuffer, QByteArray, QEasingCurve, QIODevice, QPropertyAnimation, QRectF, QSize, Qt, QTimer, pyqtProperty, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QImageReader,
-    QKeySequence, QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
+    QFont, QImage,
+    QIcon, QImageReader,
+    QPainter,
+    QPixmap,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from ui.core.hud_button import HudButton

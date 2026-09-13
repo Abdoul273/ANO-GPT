@@ -4,8 +4,6 @@
 tests/test_radial_waveform.py — Tests unitaires et d'intégration du visualiseur spectral circulaire.
 """
 
-import math
-import time
 import numpy as np
 import pytest
 
@@ -14,17 +12,13 @@ from PyQt6.QtGui import QColor, QImage, QPainter
 from PyQt6.QtWidgets import QApplication
 
 from ui.orb.radial_waveform import (
-    AudioRingBuffer,
     AudioSource,
     BiDirectionalAudioBridge,
     CircularFFTEngine,
-    Particle,
     ParticleSystem,
     RadialWaveformRenderer,
     RadialWaveformWidget,
     SpectralBenchmarks,
-    TAU_ATTACK_S,
-    TAU_DECAY_S,
 )
 
 

@@ -1,8 +1,6 @@
 """tests/test_semantic_memory.py — Tests du rappel sémantique et enrichissement FTS5."""
 
 import sqlite3
-import time
-from pathlib import Path
 import pytest
 
 from core import memory_store

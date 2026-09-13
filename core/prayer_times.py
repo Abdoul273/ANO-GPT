@@ -8,11 +8,10 @@ from __future__ import annotations
 import datetime
 import json
 import math
-import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 # ── Configuration des méthodes de calcul ─────────────────────────────────────
 

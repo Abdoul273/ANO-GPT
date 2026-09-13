@@ -64,7 +64,7 @@ def test_legacy_web_opener_ignores_firefox_argument(monkeypatch):
     launch = Mock(return_value=4242)
     monkeypatch.setattr(web_control.kit, "spawn", launch)
     monkeypatch.setattr(web_control, "_WAYLAND", False)
-    result = web_control.open_url("https://example.com", browser="firefox")
+    web_control.open_url("https://example.com", browser="firefox")
     assert launch.call_args.args[0] == ["/usr/bin/google-chrome-stable", "https://example.com"]
 
 

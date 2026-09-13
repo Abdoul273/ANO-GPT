@@ -89,7 +89,7 @@ def set_live_position(lat: float, lon: float, accuracy_m: float | None = None,
     return entry
 
 
-def get_live_position(resolve_place: bool = True) -> Optional[dict]:
+def get_live_position(resolve_place: bool = True, *, max_age_s: float | None = None) -> Optional[dict]:
     """Dernière position relevée si elle est encore fraîche, sinon None.
 
     ``resolve_place=False`` évite tout appel réseau lorsque seules les
@@ -100,7 +100,8 @@ def get_live_position(resolve_place: bool = True) -> Optional[dict]:
     except Exception:
         return None
 
-    if time.time() - float(d.get("_at", 0)) > _LIVE_TTL:
+    max_age = _LIVE_TTL if max_age_s is None else max(0.0, float(max_age_s))
+    if time.time() - float(d.get("_at", 0)) > max_age:
         return None
     lat, lon = d.get("lat"), d.get("lon")
     if lat is None or lon is None:
@@ -288,7 +289,9 @@ def get_user_coords() -> Optional[Tuple[float, float]]:
     return geocode(place or loc.get("country_name") or "")
 
 
-def get_precise_user_coords(max_accuracy_m: float = 500.0) -> Optional[Tuple[float, float]]:
+def get_precise_user_coords(
+    max_accuracy_m: float = 500.0, *, max_age_s: float | None = None,
+) -> Optional[Tuple[float, float]]:
     """Coordonnées *réelles* issues d'un relevé navigateur/GPS frais.
 
     Contrairement à :func:`get_user_coords`, cette fonction ne retombe jamais
@@ -296,7 +299,7 @@ def get_precise_user_coords(max_accuracy_m: float = 500.0) -> Optional[Tuple[flo
     une recherche régionale, mais pas à une demande explicite comme « affiche
     ma position ». Une mesure trop imprécise est également refusée.
     """
-    live = get_live_position(resolve_place=False)
+    live = get_live_position(resolve_place=False, max_age_s=max_age_s)
     if not live:
         return None
     accuracy = live.get("accuracy_m")

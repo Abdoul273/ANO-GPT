@@ -127,6 +127,12 @@ def _write_pptx(body: str, path: Path, title: str) -> bool:
 @kit.action("generate_document")
 def generate_document(parameters: dict | None = None, player=None) -> str:
     parameters = parameters or {}
+    # Le répartiteur réserve deux secondes pour rendre la main au Live.
+    # La valeur est interne : elle ne fait jamais confiance à un argument LLM.
+    try:
+        budget_s = max(1.0, float(parameters.get("_budget_s", 180.0)))
+    except (TypeError, ValueError):
+        budget_s = 180.0
     subject = " ".join(str(parameters.get("subject") or parameters.get("prompt") or "").split())
     if not subject:
         return "Précisez le sujet du document à rédiger."
@@ -153,7 +159,7 @@ def generate_document(parameters: dict | None = None, player=None) -> str:
             "puis 3 à 5 puces courtes."
         )
     try:
-        body = _strip_fence(text("document", prompt, system=_SYSTEM, timeout=180))
+        body = _strip_fence(text("document", prompt, system=_SYSTEM, timeout=min(180.0, budget_s)))
     except Exception as exc:
         return f"Rédaction Azure échouée : {exc}"
     if not body:

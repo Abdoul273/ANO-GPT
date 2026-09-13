@@ -1,35 +1,18 @@
 from __future__ import annotations
 
-import json
 import math
-import os
-import platform
-import random
-import re
-import subprocess
-import sys
-import threading
-import time
-import traceback
-from pathlib import Path
 
-import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
+    QPointF, QRectF, Qt,
+    QTimer,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
+    QBrush, QPainter,
+    QPen,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QWidget,
 )
 
 from ui.core.hud_paint import Hud

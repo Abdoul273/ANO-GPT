@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 import pytest
-from PyQt6.QtCore import QPoint, QRect
+from PyQt6.QtCore import QPoint
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
 from ui.visual_pointer import HighlightRegionItem, ScreenTargetBox, VisualPointerOverlay
@@ -85,7 +85,7 @@ def test_internal_widget_visible_highlights_exact_geometry(overlay):
 
     overlay.register_target_widget("confirmation", btn)
 
-    result = overlay.point_on_target("confirmation", description="Confirmation requise", duration=3.0)
+    overlay.point_on_target("confirmation", description="Confirmation requise", duration=3.0)
 
     # 1. Une annotation doit être créée
     assert len(overlay.active_annotations) == 1, "Une annotation doit être créée pour un widget visible"
@@ -140,7 +140,7 @@ def test_external_screen_target_found_highlights_box(overlay):
     mock_box = [200, 300, 400, 700]
 
     with patch("ui.visual_pointer.detect_screen_target_live", return_value=mock_box):
-        result = overlay.point_on_screen(
+        overlay.point_on_screen(
             description="Bouton Sublime Text",
             target="sublime_text_install_button",
             mode="auto",

@@ -74,7 +74,7 @@ def test_self_repair_tool_routes_corrige_to_autofix(monkeypatch, tmp_path):
     incident_log.bind(None, None)
     from actions.self_repair import self_repair
     assert "Aucune erreur" in self_repair({"action": "last_error"})
-    inc = incident_log.record("weather_report", ValueError("x"), message="x")
+    incident_log.record("weather_report", ValueError("x"), message="x")
     monkeypatch.setattr(auto_fix, "repair", lambda i, player=None, speak=None: f"réparation de {i.source}")
     assert self_repair({"action": "repair"}) == "réparation de weather_report"
     assert self_repair({"action": "repair", "tool": "météo"}) == "réparation de weather_report"

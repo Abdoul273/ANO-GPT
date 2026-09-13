@@ -119,7 +119,7 @@ PACKS: Mapping[str, ToolPack] = {
         label="e-mail, agenda et messagerie",
         tools=frozenset({
             "email_control", "calendar_control", "contacts_control",
-            "send_message", "cloud_integrations_control", "generate_document",
+            "send_message", "whatsapp_control", "cloud_integrations_control", "generate_document",
         }),
         triggers=_triggers(
             r"\b(mail|mails|e-?mail|gmail|boite mail|courriel)\b",

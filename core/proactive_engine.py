@@ -11,6 +11,7 @@ Concurrence
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from datetime import datetime
@@ -25,10 +26,10 @@ from core.daily_briefing import (
 from core.habit_model import suggestion_text
 from core.thread_pool import get_thread_pool
 from core import routines, tool_stats
-from memory.memory_manager import load_memory
 
 from actions.proactive import desktop_blocks_proactivity, in_quiet_hours
-from actions.web_search import _news as _fetch_news_sync, DAILY_AI_CYBER_NEWS_QUERY
+
+logger = logging.getLogger("anogpt.proactive")
 
 
 class ProactiveHost(Protocol):
@@ -63,7 +64,7 @@ class ProactiveEngine:
                 if app and stamp >= cutoff:
                     events.append((f"app:{app}", datetime.fromtimestamp(stamp)))
         except Exception:
-            pass
+            logger.debug("Import des habitudes applicatives ignoré", exc_info=True)
         try:
             for entry in tool_stats.load():
                 if entry.get("tool") != "music_control" or not entry.get("ok", True):
@@ -72,7 +73,7 @@ class ProactiveEngine:
                 if stamp.timestamp() >= cutoff:
                     events.append(("music", stamp.astimezone().replace(tzinfo=None)))
         except Exception:
-            pass
+            logger.debug("Import des habitudes musicales ignoré", exc_info=True)
         self._habits.import_once("journaux-existants-v1", events)
     def _observe_habit_reply(self, text: str) -> None:
         """Un refus explicite suspend seulement la suggestion concernée.
@@ -119,7 +120,7 @@ class ProactiveEngine:
             try:
                 await self._dashboard.request_fresh_location(timeout=5.0)
             except Exception:
-                pass
+                logger.debug("Position fraîche indisponible pour le briefing", exc_info=True)
 
         self.ui.write_log(f"SYS : préparation du briefing quotidien ({reason})...")
         user_name = self._get_user_name()
@@ -194,7 +195,7 @@ class ProactiveEngine:
                     "type": "sys", "text": f"⏰ Rappel : {message}",
                 })
             except Exception:
-                pass
+                logger.debug("Notification téléphone de rappel indisponible", exc_info=True)
 
         original_volume = await asyncio.to_thread(get_current_volume)
         volume_raised = original_volume is not None and original_volume < 70
@@ -225,7 +226,7 @@ class ProactiveEngine:
                 try:
                     await asyncio.wait_for(self._turn_done_event.wait(), timeout=20.0)
                 except asyncio.TimeoutError:
-                    pass
+                    logger.debug("Tour précédent non terminé avant le briefing")
             deadline = time.monotonic() + 20.0
             while time.monotonic() < deadline and (
                 self._is_speaking
@@ -303,7 +304,7 @@ class ProactiveEngine:
                     try:
                         await asyncio.wait_for(self._turn_done_event.wait(), timeout=15.0)
                     except asyncio.TimeoutError:
-                        pass
+                        logger.debug("Tour précédent non terminé avant l'annonce proactive")
                 while self._is_speaking:
                     await asyncio.sleep(0.08)
         finally:
@@ -458,7 +459,7 @@ class ProactiveEngine:
                     try:
                         self.ui.show_card("info", "📅 AGENDA", message)
                     except Exception:
-                        pass
+                        logger.debug("Carte agenda indisponible", exc_info=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -500,7 +501,7 @@ class ProactiveEngine:
                     try:
                         self.ui.show_card("info", "🕌 PRIÈRE", message)
                     except Exception:
-                        pass
+                        logger.debug("Carte prière indisponible", exc_info=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -542,7 +543,7 @@ class ProactiveEngine:
             try:
                 arrivals.put_nowait(mail)
             except asyncio.QueueFull:
-                pass  # une rafale de courrier ne doit pas bloquer la veille
+                logger.debug("Rafale Gmail ignorée : file proactive pleine")
 
         started = await asyncio.to_thread(service.start_polling, _on_mail)
         if not started:
@@ -562,7 +563,7 @@ class ProactiveEngine:
                         f"**{subject}**\n\n{snippet}",
                     )
                 except Exception:
-                    pass
+                    logger.debug("Carte Gmail indisponible", exc_info=True)
                 if self._dashboard is not None:
                     try:
                         await self._dashboard.broadcast({
@@ -570,7 +571,7 @@ class ProactiveEngine:
                             "text": f"Nouveau message de {sender} — {subject}",
                         })
                     except Exception:
-                        pass
+                        logger.debug("Notification téléphone Gmail indisponible", exc_info=True)
 
                 # Une arrivée réellement nouvelle est annoncée pour tous les
                 # messages, pas seulement pour le libellé Gmail IMPORTANT.
@@ -604,7 +605,7 @@ class ProactiveEngine:
                 try:
                     self.ui.show_card("info", "Alerte système", alert)
                 except Exception:
-                    pass
+                    logger.debug("Carte alerte système indisponible", exc_info=True)
                 if self.session:
                     try:
                         await self._submit_text_turn(alert)
@@ -665,7 +666,7 @@ class ProactiveEngine:
                             if cfg.allow_fajr_in_quiet_hours and cfg.prayers.get("fajr", True):
                                 is_fajr_allowed = True
                         except Exception:
-                            pass
+                            logger.debug("Configuration Fajr indisponible", exc_info=True)
 
                     if not is_fajr_allowed:
                         self.ui.write_log("SYS: Annonce proactive différée (heures calmes).")
@@ -730,7 +731,7 @@ class ProactiveEngine:
                             "info", card_title, event.message
                         )
                     except Exception:
-                        pass
+                        logger.debug("Carte proactive indisponible", exc_info=True)
                 except Exception as exc:
                     print(f"[Proactive] Annonce impossible : {exc}")
                     self._proactive.defer(event, 15.0)
@@ -739,7 +740,7 @@ class ProactiveEngine:
             try:
                 await system_watch
             except asyncio.CancelledError:
-                pass
+                logger.debug("Veille système annulée")
 
     async def _run_habit_model(self) -> None:
         """Évalue les habitudes au début de chaque créneau de trente minutes."""
@@ -805,7 +806,7 @@ class ProactiveEngine:
                                   for label, ok, msg in results),
                     )
                 except Exception:
-                    pass
+                    logger.debug("Carte de routine indisponible", exc_info=True)
             if announce and routine.say and self.session:
                 self.speak(
                     "[ROUTINE] Dis exactement ceci, sans rien ajouter et sans "

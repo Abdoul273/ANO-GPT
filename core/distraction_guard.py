@@ -17,7 +17,6 @@ from core.browser_policy import open_chrome
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 from actions import browser_tab_control
 from core.hypr_focus import active_window

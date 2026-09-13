@@ -1,42 +1,23 @@
 from __future__ import annotations
 
-import json
-import math
-import os
-import platform
-import random
-import re
-import subprocess
-import sys
-import threading
-import time
-import traceback
-from pathlib import Path
 
-import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
+    QRectF, Qt,
+    QTimer, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
+    QFont, QPainter,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QFrame, QGridLayout,
+    QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider,
+    QVBoxLayout, QWidget,
 )
 
 from ui.core.hud_button import HudButton
 from ui.core.hud_paint import Hud
-from ui.core.qtflags import QWebEngineView, QAudioOutput, QMediaPlayer, _QTMULTIMEDIA, _WEBENGINE
 from ui.media.video_playback import _VideoPlaybackMixin
-from ui.media.video_widgets import VideoResultCard, _VideoFrameCanvas
 from ui.panels.music_widgets import _SeekSlider
 from ui.styles.theme import C, qcol
 

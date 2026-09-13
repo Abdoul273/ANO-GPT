@@ -538,7 +538,14 @@ def run_shell(parameters=None, player=None, **_kwargs) -> str:
     command = adapt_command_for_arch(raw_command)
     # Le répartiteur central accorde 120 s à shell_exec. Garder une petite
     # marge permet à _run_normal de nettoyer son groupe avant ce délai.
-    timeout = float(params.get("timeout") or 110)
+    try:
+        timeout = float(params.get("timeout") or 110)
+    except (TypeError, ValueError):
+        return "Délai d'exécution invalide."
+    # L'action a déjà une limite globale de 120 s. Une borne ici évite qu'un
+    # appel mal formé monopolise le fil audio, tout en laissant de la marge au
+    # nettoyage du groupe de processus.
+    timeout = max(1.0, min(timeout, 110.0))
     cwd = params.get("cwd") or str(Path.home())
 
     if not command:
@@ -579,7 +586,15 @@ def run_shell(parameters=None, player=None, **_kwargs) -> str:
         except Exception:
             pass
 
-    resolved_cwd = cwd if Path(cwd).exists() else str(Path.home())
+    try:
+        resolved_cwd = str(Path(str(cwd)).expanduser().resolve())
+    except (OSError, ValueError):
+        return f"Dossier de travail invalide : {cwd}"
+    if not Path(resolved_cwd).is_dir():
+        # Ne jamais exécuter discrètement depuis le dossier personnel quand
+        # l'utilisateur a demandé un autre dossier : cela rendrait un résultat
+        # potentiellement correct mais appliqué au mauvais projet.
+        return f"Dossier de travail introuvable : {cwd}"
 
     # Une commande qui attend sudo ou une confirmation de paquet doit posséder
     # un vrai TTY. Après confirmation de sécurité, elle vit indépendamment de
@@ -787,6 +802,47 @@ def _hypr_screenshot(value: str = "", target: str = "") -> str:
 # hypr_control — contrôle du bureau Hyprland
 # ════════════════════════════════════════════════════════════════════════════
 
+def _hypr_workspace_id(payload: object) -> str:
+    """Identifiant lisible du workspace retourné par Hyprland."""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("id") or payload.get("name") or "").strip()
+
+
+def _hypr_active_window() -> dict:
+    value = kit.hypr_json("activewindow", default={})
+    return value if isinstance(value, dict) else {}
+
+
+def _hypr_active_workspace() -> dict:
+    value = kit.hypr_json("activeworkspace", default={})
+    return value if isinstance(value, dict) else {}
+
+
+def _confirm_workspace_focus(target: str) -> bool:
+    """Relit l'état : ``hyprctl`` peut répondre OK sans changement réel."""
+    kit.hypr_invalidate()
+    return kit.wait_until(
+        lambda: _hypr_workspace_id(_hypr_active_workspace()) == str(target),
+        timeout=0.65, interval=0.04, max_interval=0.12,
+    )
+
+
+def _confirm_window_workspace(address: str, target: str) -> bool:
+    """Vérifie que la fenêtre précise a rejoint le bureau demandé."""
+    kit.hypr_invalidate()
+
+    def _moved() -> bool:
+        clients = kit.hypr_clients(default=[])
+        for client in clients:
+            if str(client.get("address") or "") != address:
+                continue
+            workspace = client.get("workspace") or {}
+            return str(workspace.get("id") or workspace.get("name") or "") == str(target)
+        return False
+
+    return kit.wait_until(_moved, timeout=0.65, interval=0.04, max_interval=0.12)
+
 @kit.action("hypr_control")
 def hypr_control(parameters=None, player=None, **_kwargs) -> str:
     """
@@ -809,17 +865,52 @@ def hypr_control(parameters=None, player=None, **_kwargs) -> str:
         "workspace", "move_to_workspace") else None
 
     if action == "workspace":
-        return _hyprctl_dispatch(
-            "workspace", ws_value or value or "1",
-            f'hl.dsp.focus({{ workspace = "{ws_value or value or 1}" }})')
+        requested = ws_value or value or "1"
+        result = _hyprctl_dispatch(
+            "workspace", requested,
+            f'hl.dsp.focus({{ workspace = "{requested}" }})')
+        if not _ok(result):
+            return result
+        # Cette action ne déplace jamais de fenêtre : elle ne fait que
+        # changer le bureau affiché. C'est la distinction essentielle entre
+        # « va au bureau 1 » et « envoie cette fenêtre au bureau 1 ».
+        if re.fullmatch(r"[+-]?\d+", str(requested)) and _confirm_workspace_focus(str(requested)):
+            return f"Navigation confirmée : bureau {requested}. Aucune fenêtre n'a été déplacée."
+        active = _hypr_workspace_id(_hypr_active_workspace())
+        return (f"Navigation envoyée vers le bureau {requested}, mais Hyprland ne l'a pas confirmée"
+                + (f" (bureau actif : {active})." if active else "."))
     if action == "next_workspace":
-        return _hyprctl_dispatch(
-            "workspace", value or "e+1",
-            f'hl.dsp.focus({{ workspace = "{value or "e+1"}" }})')
+        before = _hypr_workspace_id(_hypr_active_workspace())
+        requested = value or "e+1"
+        result = _hyprctl_dispatch(
+            "workspace", requested,
+            f'hl.dsp.focus({{ workspace = "{requested}" }})')
+        if not _ok(result):
+            return result
+        kit.hypr_invalidate()
+        changed = kit.wait_until(
+            lambda: _hypr_workspace_id(_hypr_active_workspace()) not in {"", before},
+            timeout=0.65, interval=0.04, max_interval=0.12,
+        )
+        active = _hypr_workspace_id(_hypr_active_workspace())
+        return (f"Navigation confirmée : bureau {active}. Aucune fenêtre n'a été déplacée."
+                if changed and active else
+                "Navigation envoyée, mais le changement de bureau n'est pas confirmé.")
     if action == "move_to_workspace":
-        return _hyprctl_dispatch(
-            "movetoworkspace", ws_value or value or "1",
-            f'hl.dsp.window.move({{ workspace = "{ws_value or value or 1}" }})')
+        requested = ws_value or value or "1"
+        active = _hypr_active_window()
+        address = str(active.get("address") or "")
+        if not address:
+            return "Déplacement annulé : aucune fenêtre active identifiable à déplacer."
+        result = _hyprctl_dispatch(
+            "movetoworkspace", requested,
+            f'hl.dsp.window.move({{ workspace = "{requested}" }})')
+        if not _ok(result):
+            return result
+        if _confirm_window_workspace(address, str(requested)):
+            return f"Déplacement confirmé : la fenêtre active est sur le bureau {requested}."
+        return (f"Déplacement envoyé vers le bureau {requested}, mais la fenêtre {address} "
+                "n'a pas été confirmée à cette destination.")
     if action == "focus_app":
         return _hyprctl_dispatch(
             "focuswindow", f"class:(?i){value}" if value else "",
@@ -877,9 +968,11 @@ def _clean_cmd(cmd: str) -> str:
 _HYPR_PATTERNS = [
     (r"d[ée]place\s+(?:cette\s+)?(?:la\s+)?fen[êe]tre[^\n]*?\b(?:vers|au|sur|dans)\b[^\n]*", "move_to_workspace", None),
     (r"envoie\s+(?:cette\s+)?(?:la\s+)?fen[êe]tre[^\n]*?\b(?:vers|au|sur|dans)\b[^\n]*", "move_to_workspace", None),
-    (r"(?:passe|va|aller)\s+(?:au|sur|vers)\s+(?:bureau|workspace)[^\n]*?(suivant|pr[ée]c[ée]dent)", "next_workspace", None),
-    (r"(?:passe|va|aller)\s+(?:au|sur|vers)\s+(?:bureau|workspace)\s+(.+)", "workspace", None),
-    (r"(?:change|passe)[^\n]*?workspace\s+(.+)", "workspace", None),
+    (r"(?:passe|va|aller|navigue|rends?-toi)\s+(?:au|sur|vers)\s+(?:le\s+)?(?:bureau|workspace)[^\n]*?(suivant|pr[ée]c[ée]dent)", "next_workspace", None),
+    # Navigation = seulement le bureau visible. Les verbes de déplacement ne
+    # sont associés à move_to_workspace que si « fenêtre » est explicite.
+    (r"(?:passe|va|aller|navigue|rends?-toi)\s+(?:au|sur|vers)\s+(?:le\s+)?(?:bureau|workspace)\s+(.+)", "workspace", None),
+    (r"(?:change|passe|navigue)[^\n]*?(?:bureau|workspace)\s+(.+)", "workspace", None),
     (r"workspace\s+(\S+)", "workspace", None),
     (r"ferme\s+(?:cette\s+)?(?:la\s+)?fen[êe]tre(?:\s+active)?", "close_active", None),
     (r"plein\s*[ée]cran|fullscreen", "fullscreen", None),

@@ -23,7 +23,6 @@ from core.screen_consciousness import (
     WEBP_MAX_SIDE,
     WEBP_METHOD,
     WEBP_QUALITY,
-    DiffResult,
     ScreenConsciousness,
     ScreenSnapshot,
     TickStats,

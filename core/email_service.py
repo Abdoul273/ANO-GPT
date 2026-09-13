@@ -17,7 +17,6 @@ import shutil
 import sys
 import tempfile
 import threading
-import time
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from email.header import decode_header, make_header

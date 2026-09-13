@@ -530,7 +530,7 @@ class PersonaManager:
         try:
             loop = asyncio.get_running_loop()
             # Si on est déjà dans une boucle d'événements, on schedule la coroutine
-            task = loop.create_task(
+            loop.create_task(
                 self.async_switch_persona(
                     target, session_manager=session_manager, ui=ui, notify=notify, speak_ack=speak_ack
                 )

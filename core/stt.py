@@ -13,6 +13,7 @@ Vosk     – offline streaming transcription (lightweight)
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import logging
 import os
@@ -988,7 +989,8 @@ class WhisperSTT:
         """
         try:
             import torch
-            import torchaudio
+            if importlib.util.find_spec("torchaudio") is None:
+                raise ImportError("torchaudio absent")
         except ImportError:
             raise ImportError("streaming requires torch and torchaudio (Silero VAD)")
 
@@ -1007,7 +1009,6 @@ class WhisperSTT:
         vad_sr = 16000  # Silero expects 16k
         min_speech_samples = int(self._cfg.streaming_min_speech_ms * vad_sr / 1000)
         max_speech_samples = int(self._cfg.streaming_max_speech_ms * vad_sr / 1000)
-        pad_samples = int(self._cfg.streaming_speech_pad_ms * vad_sr / 1000)
 
         # Generator initialisation
         chunk = yield ("", False)  # prime

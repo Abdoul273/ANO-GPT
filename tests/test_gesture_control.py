@@ -4,17 +4,14 @@
 
 import time
 import numpy as np
-import pytest
 
 from core.gesture_control import (
     OneEuroFilter,
-    LowPassFilter,
     HandJoint,
     HandLandmarks,
     GestureRecognizer,
     GestureController,
     RecognizedAction,
-    get_gesture_controller,
 )
 from core.event_bus import AsyncEventBus, GestureRecognizedEvent
 

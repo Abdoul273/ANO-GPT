@@ -40,6 +40,18 @@ def test_le_fournisseur_choisi_devient_le_cerveau(config):
     assert "Azure" in llm_client.main_brain_label()
 
 
+def test_openrouter_devient_le_cerveau_sans_changer_la_voix(config):
+    config(
+        llm_provider="openrouter",
+        openrouter_api_key="or-secret",
+        openrouter_model="google/gemini-2.5-pro",
+        gemini_api_key="g-secret",
+    )
+    assert llm_client.main_brain() == ("openrouter", "google/gemini-2.5-pro")
+    # Le relais actif signifie que Gemini Live conserve seulement l'écoute/TTS.
+    assert llm_client.relay_active() is True
+
+
 def test_un_fournisseur_sans_cle_ne_prend_jamais_la_main(config):
     """Choisir OpenAI sans clé doit rendre la parole à Gemini, pas au vide."""
     config(llm_provider="openai", gemini_api_key="g-secret")

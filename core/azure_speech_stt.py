@@ -18,7 +18,7 @@ import wave
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable
 
 
 _DEFAULT_SETTINGS = (

@@ -1,7 +1,6 @@
 """OCR local : préparation des captures sombres et des petites fenêtres."""
 from __future__ import annotations
 
-import io
 
 from PIL import Image
 

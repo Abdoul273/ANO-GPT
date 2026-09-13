@@ -98,74 +98,6 @@ class _HudPaintMixin:
             p.setPen(QPen(_rgba(hot, 220), 1.0))
             p.drawLines(bright)
 
-    # ══ Anneaux gyroscopiques 3D ══════════════════════════════════════════════
-    def _project_rings(self, m, cx: float, cy: float, Rs: float, t: float):
-        curves = []
-        spin_boost = 1.0 + 1.6 * self._volume + 0.6 * self._energy
-        for k, (radius, tilt, speed) in enumerate(self._ring_specs):
-            spin = math.radians(t * speed * spin_boost + self._ring_phase[k])
-            wobble = 0.10 * math.sin(t * 0.37 + k * 2.1)
-            cs, ss = math.cos(spin), math.sin(spin)
-            ct, st = math.cos(tilt + wobble), math.sin(tilt + wobble)
-            local = []
-            for lx, _ly, lz in self._ring_pts:
-                y1, z1 = -lz * st, lz * ct                       # inclinaison (X)
-                x2, z2 = lx * cs + z1 * ss, -lx * ss + z1 * cs   # rotation (Y)
-                local.append((x2 * radius, y1 * radius, z2 * radius))
-            curves.append(self._project(local, m, cx, cy, Rs, cam=self._RING_CAM))
-        return curves
-
-    def _draw_rings(self, p: QPainter, curves, front: bool, t: float,
-                    wire: QColor, hot: QColor, activity: float) -> None:
-        """Moitié arrière (avant le nuage) ou avant (après), groupée par
-        profondeur en chemins de 1 px. Le halo néon des anneaux de façade est
-        obtenu par quatre superpositions décalées d'un pixel, bien moins
-        chères qu'un trait épais anticrénelé."""
-        nb = self._ZBUCKETS
-        paths = [QPainterPath() for _ in range(nb)]
-        used = [False] * nb
-        for proj in curves:
-            prev = proj[0]
-            current: int | None = None
-            for cur in proj[1:]:
-                zm = prev[2] + cur[2]
-                if (zm >= 0) == front:
-                    b = int((abs(zm) * 0.5) * nb)
-                    b = nb - 1 if b >= nb else (0 if b < 0 else b)
-                    if current != b:
-                        paths[b].moveTo(prev[0], prev[1])
-                        current = b
-                        used[b] = True
-                    paths[b].lineTo(cur[0], cur[1])
-                else:
-                    current = None
-                prev = cur
-        a_max = 210 + 45 * activity if front else 62 + 30 * activity
-        a_min = 80 if front else 20
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for i in range(nb):
-            if not used[i]:
-                continue
-            f = (i + 0.5) / nb
-            alpha = a_min + (a_max - a_min) * f
-            if front and i == nb - 1:
-                p.setPen(QPen(_rgba(wire, alpha * 0.22), 1.0))
-                for dx, dy in ((-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)):
-                    p.translate(dx, dy)
-                    p.drawPath(paths[i])
-                    p.translate(-dx, -dy)
-            p.setPen(QPen(_rgba(hot if front else wire, alpha), 1.0))
-            p.drawPath(paths[i])
-        if not front:
-            return
-        # Un photon file le long de chaque anneau.
-        speed = 18.0 + 30.0 * activity
-        for k, proj in enumerate(curves):
-            x, y, z = proj[int((t * speed + k * 13) % (len(proj) - 1))]
-            if z < 0:
-                continue
-            self._blit(p, "photon", x, y, 7.5, 0.9)
-
     # ══ Nuage de photons ══════════════════════════════════════════════════════
     def _draw_particle_cloud(self, p: QPainter, m, cx: float, cy: float,
                              radius: float, core: QColor, wire: QColor,
@@ -432,15 +364,12 @@ class _HudPaintMixin:
         # 2. Réticule et spectre : le cadre HUD.
         self._draw_reticle(p, cx, cy, Rs, t, wire, hot, activity)
         self._draw_spectrum(p, cx, cy, Rs, core, hot)
-        # 3. Anneaux gyroscopiques, moitié arrière.
-        rings = self._project_rings(m, cx, cy, Rs, t)
-        self._draw_rings(p, rings, False, t, wire, hot, activity)
-        # 4. Le volume de photons.
+        # 3. Le volume de photons. Les fils elliptiques orbitaux ont été
+        # retirés : les anneaux circulaires du noyau et le réticule restent.
         self._draw_neural_orb(p, m, cx, cy, Rs, t, core, halo, wire, hot)
-        # 5. Noyau, limbe, moitié avant des anneaux, ondes vocales.
+        # 4. Noyau, limbe et ondes vocales.
         self._draw_nucleus(p, cx, cy, Rs, t, hot, activity)
         self._draw_limb(p, cx, cy, Rs, core, wire, activity)
-        self._draw_rings(p, rings, True, t, wire, hot, activity)
         self._draw_shockwaves(p, cx, cy, Rs, hot)
         # 6. Indicateurs : vision continue, retour gestuel.
         if self._continuous_vision_active:

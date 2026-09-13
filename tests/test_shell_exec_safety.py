@@ -1,6 +1,5 @@
 """Tests des garde-fous de sécurité de actions/shell_exec.py (§G)."""
 import sys
-import time
 import threading
 from pathlib import Path
 

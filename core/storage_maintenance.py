@@ -33,6 +33,7 @@ MEMORY_DIR = BASE_DIR / "memory"
 #: En deçà, un VACUUM coûte plus qu'il ne rend.
 VACUUM_MIN_FREE_RATIO = 0.20
 VACUUM_MIN_FREE_BYTES = 20 * 1024 * 1024
+USER_ABSENCE_BEFORE_VACUUM_S = 10 * 60
 
 logger = logging.getLogger("anogpt.storage")
 
@@ -157,6 +158,31 @@ def enable_incremental_vacuum(path: Path) -> tuple[bool, str]:
     except sqlite3.Error as exc:
         return False, f"{path.name} : bascule impossible ({exc})."
     return True, f"{path.name} : passée en compactage incrémental."
+
+
+def compact_on_shutdown(*, idle_seconds: float) -> list[str]:
+    """Compacte les bases réellement trouées à l'arrêt, jamais à chaud.
+
+    Le seuil d'absence protège la fermeture déclenchée juste après une
+    conversation : un ``VACUUM`` ne doit pas prolonger celle-ci ni entrer en
+    concurrence avec les écritures encore en vol.  Cette fonction est appelée
+    après l'arrêt de la boucle Live et des pools, donc aucun lecteur ANO-GPT ne
+    conserve une transaction ouverte.
+    """
+    if idle_seconds < USER_ABSENCE_BEFORE_VACUUM_S:
+        logger.info("compactage différé : utilisateur actif récemment",
+                    extra={"idle_seconds": round(idle_seconds, 1)})
+        return []
+
+    candidates = [entry.path for entry in report() if entry.should_compact]
+    messages: list[str] = []
+    for path in candidates:
+        done, message = compact(path)
+        if done:
+            messages.append(message)
+        else:
+            logger.warning("compactage différé", extra={"db": path.name, "reason": message})
+    return messages
 
 
 def startup_maintenance() -> None:

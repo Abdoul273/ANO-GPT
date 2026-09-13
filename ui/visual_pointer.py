@@ -175,7 +175,6 @@ class HighlightRegionItem(VisualAnnotation):
 
         rect = QRectF(self.x, self.y, self.w, self.h)
         cx = rect.center().x()
-        cy = rect.center().y()
 
         # ── 1. Remplissage holographique doux ───────────────────────────────
         fill_alpha = int(24 * master_alpha * (0.8 + 0.3 * pulse))

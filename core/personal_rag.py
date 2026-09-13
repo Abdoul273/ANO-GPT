@@ -26,14 +26,13 @@ import logging
 import math
 import os
 import re
-import shutil
 import sqlite3
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 # Bibliothèque sqlite-vec
 try:
@@ -46,9 +45,6 @@ except ImportError:
 # Bibliothèque watchdog
 try:
     from watchdog.events import (
-        FileCreatedEvent,
-        FileDeletedEvent,
-        FileModifiedEvent,
         FileMovedEvent,
         FileSystemEvent,
         FileSystemEventHandler,
@@ -1120,8 +1116,14 @@ class PersonalRAGStorage:
         return conn
 
     def _init_db(self) -> None:
+        new_database = not self.db_path.exists()
         with self._lock:
             with self._get_connection() as conn:
+                # SQLite ne peut activer ce mode sans réécrire une base déjà
+                # remplie. Sur une création neuve il ne coûte rien et permet de
+                # rendre les pages libres sans futur VACUUM complet.
+                if new_database:
+                    conn.execute("PRAGMA auto_vacuum=INCREMENTAL;")
                 conn.execute("PRAGMA journal_mode=WAL;")
                 conn.execute("PRAGMA synchronous=NORMAL;")
 

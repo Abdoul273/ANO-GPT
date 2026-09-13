@@ -304,6 +304,40 @@ def record_conversation_turn(
     )
 
 
+def record_conversation_turns(
+    turns: list[tuple[str, str, str | None]], *, db_path: str | Path | None = None,
+) -> list[int]:
+    """Archive un lot de tours avec une seule transaction de graphe.
+
+    Le chemin vocal utilise ce pendant de :func:`record_conversation_turn`
+    pour ne pas réintroduire un commit de ``memory.db`` par élément du lot
+    vectoriel.
+    """
+    if not turns:
+        return []
+    with _LOCK, _connect(db_path) as conn:
+        ids: list[int] = []
+        for user_text, assistant_text, happened in turns:
+            timestamp = happened or datetime.now().isoformat(timespec="seconds")
+            content = f"Utilisateur : {_clean(user_text)}\nANO-GPT : {_clean(assistant_text)}"
+            node_id = _upsert_node(
+                conn,
+                kind="conversation",
+                external_id=_external_hash("turn", f"{timestamp}\n{content}"),
+                title=_clean(user_text, 160) or "Conversation",
+                content=content,
+                aliases="discussion échange historique conversation",
+                happened=timestamp,
+            )
+            conn.execute("DELETE FROM kg_edges WHERE origin_id=?", (node_id,))
+            _entity_nodes(conn, node_id, title=_clean(user_text, 160) or "Conversation",
+                          content=content, happened=timestamp, project="")
+            _prune_orphans(conn)
+            ids.append(node_id)
+        conn.commit()
+        return ids
+
+
 def upsert_contact(contact: dict, *, db_path: str | Path | None = None) -> int:
     name = _clean(contact.get("name"), 120)
     external_id = _clean(contact.get("id") or _fold(name), 200)
@@ -857,4 +891,3 @@ def generate_mermaid_graph(
             lines.append(f'  N{e["source_id"]} -->|{e["relation"]}| N{e["target_id"]};')
 
         return "\n".join(lines)
-

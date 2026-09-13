@@ -19,10 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.personal_rag import (
     PersonalRAG,
-    TreeSitterCodeExtractor,
-    MarkdownDocExtractor,
     format_search_results_markdown,
-    search_personal_docs,
 )
 
 
@@ -37,9 +34,9 @@ def run_demo():
         workspace_dir = Path(tmp_dir) / "mon_projet"
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"\n[1] Initialisation du moteur PersonalRAG...")
+        print("\n[1] Initialisation du moteur PersonalRAG...")
         print(f"    - Base vectorielle : sqlite-vec ({db_path.name})")
-        print(f"    - Dimension vecteurs : 384 (dense L2-normalisé)")
+        print("    - Dimension vecteurs : 384 (dense L2-normalisé)")
 
         rag = PersonalRAG(db_path=db_path, roots=[workspace_dir])
 
@@ -109,14 +106,14 @@ def run_demo():
         )
 
         # 3. Indexation initiale
-        print(f"\n[2] Indexation initiale des fichiers du projet...")
+        print("\n[2] Indexation initiale des fichiers du projet...")
         stats = rag.index_directory(workspace_dir)
         print(f"    ✓ Fichiers indexés  : {stats.files_indexed}")
         print(f"    ✓ Blocs (chunks)    : {stats.chunks_created} créés")
         print(f"    ✓ Total en base     : {rag.storage.count_chunks()} vecteurs sqlite-vec")
 
         # 4. Démonstration de l'indexation incrémentale avec hachage SHA256 par bloc
-        print(f"\n[3] Démonstration du hachage SHA256 et indexation incrémentale par blocs...")
+        print("\n[3] Démonstration du hachage SHA256 et indexation incrémentale par blocs...")
         print("    -> Tentative de ré-indexation sans modification :")
         mod, added, reused = rag.index_file(py_file)
         print(f"       Fichier modifié ? {mod} | Nouveaux blocs : {added} | Blocs réutilisés : {reused}")

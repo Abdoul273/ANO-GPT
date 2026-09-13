@@ -8,7 +8,6 @@ Valide :
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
 import pytest
 
 from actions import desktop_apps

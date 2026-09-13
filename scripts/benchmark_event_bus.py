@@ -18,13 +18,9 @@ from PyQt6.QtCore import QCoreApplication
 from core.event_bus import (
     AsyncEventBus,
     EventPriority,
-    BaseEvent,
     AudioCaptureFrameEvent,
     ModelSpeechDeltaEvent,
     BargeInDetectedEvent,
-    ToolExecutionRequestedEvent,
-    ToolExecutionFinishedEvent,
-    ConnectionStateChangedEvent,
     SystemAlertEvent,
     EventBusBridge,
 )
@@ -116,7 +112,7 @@ async def benchmark_async_throughput(n_events: int = 20_000) -> float:
 
 
 def benchmark_qt_bridge_throughput(n_events: int = 20_000) -> float:
-    app = QCoreApplication.instance() or QCoreApplication([])
+    QCoreApplication.instance() or QCoreApplication([])
     bus = AsyncEventBus(history_maxlen=100)
     bridge = EventBusBridge(bus=bus)
 

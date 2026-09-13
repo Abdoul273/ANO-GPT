@@ -13,12 +13,12 @@ import io
 import json
 import os
 import shutil
-import subprocess
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from core import action_kit as kit
 
 try:
     import PIL.Image
@@ -52,7 +52,6 @@ class WindowInfo:
     def is_terminal(self) -> bool:
         """Vrai si l'application est un émulateur de terminal."""
         c = (self.window_class or "").casefold()
-        t = (self.title or "").casefold()
         terminal_classes = {
             "kitty", "alacritty", "foot", "wezterm", "ghostty",
             "xterm", "gnome-terminal", "konsole", "terminator",
@@ -64,7 +63,6 @@ class WindowInfo:
     def is_ide(self) -> bool:
         """Vrai si l'application est un IDE ou éditeur de code."""
         c = (self.window_class or "").casefold()
-        t = (self.title or "").casefold()
         ide_classes = {
             "code", "vscode", "vscodium", "cursor", "sublime_text",
             "subl", "neovim", "nvim", "emacs", "kate", "zed",
@@ -146,13 +144,10 @@ def _hyprctl_json(cmd: str) -> Any:
     if not shutil.which("hyprctl"):
         return None
     try:
-        out = subprocess.run(
+        out = kit.run(
             ["hyprctl", "-j"] + cmd.split(),
-            capture_output=True,
-            text=True,
             timeout=1.5,
             env=_hypr_env(),
-            check=False,
         )
         if out.returncode != 0 or not out.stdout.strip():
             return None
@@ -336,12 +331,11 @@ def capture_raw_geometry(geometry: Optional[str] = None, monitor: Optional[str] 
     # '-' envoie directement l'image PNG sur stdout
     cmd.append("-")
 
-    proc = subprocess.run(
+    proc = kit.run(
         cmd,
-        capture_output=True,
         timeout=10,
         env=env,
-        check=False,
+        binary=True,
     )
     if proc.returncode != 0 or not proc.stdout:
         err = (proc.stderr or b"").decode("utf-8", "ignore").strip() or "Aucune image générée"

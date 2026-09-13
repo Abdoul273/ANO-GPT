@@ -19,7 +19,6 @@ from core.double_talk_detector import (
     BARGE_CONFIRM_FRAMES,
     FRAME_SAMPLES,
     GAIN_FLOOR,
-    GAIN_OPEN,
     HOLD_MS,
     SAMPLE_RATE,
     AdaptiveEchoFilter,
@@ -29,7 +28,6 @@ from core.double_talk_detector import (
     geigel_ratio,
     max_lag_ncc,
     normalized_cross_correlation,
-    rms,
 )
 
 

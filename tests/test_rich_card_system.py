@@ -124,8 +124,8 @@ def test_card_manager_stacking_and_limits():
     # Vérification du calcul vertical non-chevauchant
     y1 = c1.y()
     y2 = c2.y()
-    y3 = c3.y()
-    y4 = c4.y()
+    c3.y()
+    c4.y()
 
     # Chaque carte doit avoir un Y strictement supérieur à la précédente
     assert y2 >= y1 + c1.height() or True

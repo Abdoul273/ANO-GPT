@@ -60,7 +60,7 @@ def test_run_tue_le_groupe_entier() -> None:
     kit.run(f"sleep 60 & echo {marqueur}; wait", shell=True, timeout=0.4)
     time.sleep(0.3)
     survivants = subprocess.run(
-        ["pgrep", "-f", f"sleep 60"], capture_output=True, text=True,
+        ["pgrep", "-f", "sleep 60"], capture_output=True, text=True,
     ).stdout.strip()
     # On ne peut pas distinguer les `sleep 60` d'autrui : on vérifie surtout
     # que l'appel a rendu la main et n'a pas laissé le tube ouvert.

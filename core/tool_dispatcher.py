@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import re
-import threading
 import time
 import traceback
 from typing import Any, Protocol, Union
@@ -31,7 +30,6 @@ from core.background_task import spawn_logged
 from core.event_bus import ToolExecutionFinishedEvent, ToolExecutionRequestedEvent
 from core.live_model_policy import DEFAULT_PRIMARY_MODEL as LIVE_MODEL
 from core.live_speech_config import FRENCH_TECH_PHRASES
-from core.plugin_registry import PluginRegistry
 from core import memory_store, routines, screen_reader, speaker_id, tool_stats, undo_stack
 from memory.memory_manager import update_memory
 
@@ -43,7 +41,6 @@ from actions.weather_report import weather_action
 from actions.send_message import send_message
 from actions.reminder import reminder
 from actions.computer_settings import computer_settings
-from actions.screen_processor import _capture_camera, _capture_screen
 from actions.youtube_video import youtube_video
 from actions.desktop import desktop_control
 from actions.browser_control import browser_control
@@ -52,8 +49,6 @@ from actions.code_helper import code_helper
 from actions.dev_agent import dev_agent
 from actions.web_search import web_search as web_search_action
 from actions.image_search import image_search as image_search_action
-from actions.image_generation import generate_image as generate_image_action
-from actions.video_generation import generate_video as generate_video_action
 from actions.document_generation import generate_document as generate_document_action
 from actions.computer_control import computer_control
 from actions.game_updater import game_updater
@@ -64,7 +59,6 @@ from actions.hypr_orchestrator import hypr_orchestrator_control
 from actions.auto_debug import auto_debug_action
 from actions.navigation import navigation_action
 from core.multimodal_vision import inspect_screen_live
-from core.auto_debug import auto_debug_live
 from actions.capture import capture_control
 from actions.music import music_control
 from actions.download_music import download_music
@@ -77,7 +71,7 @@ from actions.tiktok_tracker import tiktok_tracker
 from actions.tiktok_coach import tiktok_coach
 from actions.github import github_control
 from actions.contacts import contacts_control
-from actions.sparring_partner import sparring_partner, observe_sparring_utterance
+from actions.sparring_partner import sparring_partner
 from actions.background_tasks import BackgroundTaskService, format_tasks, format_agent_result
 from actions.system_monitor import get_system_status
 

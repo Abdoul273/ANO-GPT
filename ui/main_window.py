@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import os
-import threading
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow
 
 from ui.core.speech_text import _advance_current_sentence
@@ -12,7 +11,7 @@ from ui.paths import (
     _DEFAULT_H, _DEFAULT_W, _MIN_H, _MIN_W, _read_full_config,
 )
 from ui.styles.qss import get_global_style
-from ui.styles.theme import C, DEFAULT_UI_COLOR, apply_ui_accent
+from ui.styles.theme import DEFAULT_UI_COLOR, apply_ui_accent
 from ui.window.chrome import ChromeMixin
 from ui.window.dialogs_host import DialogsHostMixin
 from ui.window.drawer import DrawerMixin
@@ -112,6 +111,9 @@ class MainWindow(
         self.on_stt_provider_change     = None
         self.on_elevenlabs_voice_change = None
         self._muted            = False
+        # Le clic explicite sur le micro crée un verrou matériel logique : ni
+        # mot d'activation, ni outil, ni message distant ne peut le rouvrir.
+        self._manual_mic_lock  = False
         self._current_file: str | None = None
         self._remote_overlay = None
         self._audio_settings_overlay = None

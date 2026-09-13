@@ -15,15 +15,10 @@ from pathlib import Path
 import pytest
 
 from core.personal_rag import (
-    CodeChunk,
-    LocalDenseEmbedder,
     MarkdownDocExtractor,
-    PDFDocExtractor,
     PersonalRAG,
-    PersonalRAGStorage,
     TextDocExtractor,
     TreeSitterCodeExtractor,
-    format_search_results_markdown,
     search_personal_docs,
     should_ignore_path,
 )

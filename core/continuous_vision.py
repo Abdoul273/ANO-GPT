@@ -37,13 +37,11 @@ import math
 import os
 import re
 import struct
-import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from multiprocessing import shared_memory
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 # Import OpenCV et NumPy résilients
 try:

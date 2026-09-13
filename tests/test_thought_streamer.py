@@ -22,7 +22,6 @@ Valide :
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from unittest.mock import MagicMock, patch
@@ -35,13 +34,9 @@ from PyQt6.QtGui import QImage, QPainter
 from ui.panels.thought_overlay import ThoughtOverlay
 
 from core.thought_streamer import (
-    DEFAULT_AUDIO_DELAY_SECONDS,
     ReasoningStreamParser,
-    ThoughtEvent,
     ThoughtNoiseFilter,
     ThoughtStreamer,
-    ThoughtType,
-    get_thought_streamer,
     mood_aware_waiting_phrase,
 )
 from core.session_manager import SessionManager
@@ -314,7 +309,7 @@ def test_session_manager_receive_audio_thinking_turn():
     streamer = sm.thought_streamer
 
     with patch.object(streamer, "feed_thought_token") as mock_feed_thought, \
-         patch.object(streamer, "on_speaking_start") as mock_speaking, \
+         patch.object(streamer, "on_speaking_start"), \
          patch.object(streamer, "on_turn_complete") as mock_turn_done:
 
         # 1. Mock de Part thinking Gemini 2.0

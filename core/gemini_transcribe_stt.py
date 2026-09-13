@@ -10,7 +10,6 @@ import asyncio
 import json
 import time
 
-import numpy as np
 
 from core.live_speech_config import FRENCH_MAIL_PHRASES, FRENCH_TECH_PHRASES
 from core.precision_stt import DEFAULT_MODEL, MAX_AUDIO_SECONDS, PrecisionTranscriber

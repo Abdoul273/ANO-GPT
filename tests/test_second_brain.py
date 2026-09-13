@@ -1,8 +1,6 @@
 """Tests unitaires et d'intégration pour actions/second_brain.py et core/knowledge_graph.py."""
 
 from datetime import datetime
-from pathlib import Path
-import pytest
 
 from actions.second_brain import (
     parse_second_brain_intent,

@@ -29,8 +29,6 @@ from core.event_bus import (
     ToolExecutionFinishedEvent,
     ConnectionStateChangedEvent,
     SystemAlertEvent,
-    UserTextMessageEvent,
-    UIStateChangedEvent,
     EventBusBridge,
 )
 
@@ -215,7 +213,7 @@ def test_circular_buffer_and_replay():
 
 
 def test_qt_bridge_signals():
-    app = QCoreApplication.instance() or QCoreApplication([])
+    QCoreApplication.instance() or QCoreApplication([])
 
     bus = AsyncEventBus()
     bridge = EventBusBridge(bus=bus)

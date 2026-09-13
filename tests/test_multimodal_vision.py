@@ -1,6 +1,5 @@
 """tests/test_multimodal_vision.py — Tests unitaires pour core/multimodal_vision.py."""
 
-import pytest
 from unittest.mock import patch, MagicMock
 from core.screen_capture import WindowInfo
 from core.multimodal_vision import (

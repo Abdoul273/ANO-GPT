@@ -23,7 +23,6 @@ Corrections par rapport à l'ancienne version :
 import json
 import platform
 import re
-import shutil
 import sys
 import threading
 import uuid

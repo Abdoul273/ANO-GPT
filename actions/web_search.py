@@ -13,6 +13,7 @@ import threading
 import time
 import unicodedata
 import atexit
+import importlib.util
 import warnings
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
 from pathlib import Path
@@ -21,12 +22,8 @@ from typing import Optional, Dict, Any, Tuple
 from core import action_kit as kit
 from core.live_model_policy import BALANCED_MODEL, FAST_MODEL
 
-# Vérification de la dépendance requests
-try:
-    import requests
-    _REQUESTS = True
-except ImportError:
-    _REQUESTS = False
+# Vérification sans charger requests sur le chemin vocal.
+_REQUESTS = importlib.util.find_spec("requests") is not None
 
 # Supprimer les warnings de déprécation de paquets renommés
 warnings.filterwarnings("ignore", message="This package.*has been renamed", category=RuntimeWarning)

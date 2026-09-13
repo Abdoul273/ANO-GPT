@@ -1,7 +1,6 @@
 """Tests unitaires pour l'analyseur prosodique et l'adaptation Jarvis (core/prosody_analyzer.py)."""
 
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 import numpy as np
 
@@ -10,15 +9,9 @@ from core.prosody_analyzer import (
     TemporalMoodFilter,
     AcousticFeatures,
     MoodClassification,
-    TTSModulation,
     QUALIFIED_MOODS,
-    MOOD_SYSTEM_INSTRUCTIONS,
-    TTS_MODULATIONS,
     compute_yin_pitch,
     get_prosody_analyzer,
-    analyze_user_speech,
-    build_prosody_prompt,
-    apply_prosody_tts,
 )
 from core.session_manager import SessionManager
 

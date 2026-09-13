@@ -1,35 +1,11 @@
 from __future__ import annotations
 
-import json
-import math
 import os
-import platform
-import random
-import re
-import subprocess
-import sys
 import threading
-import time
-import traceback
-from pathlib import Path
 
-import psutil
 
-from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
-)
-from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
-)
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QApplication,
 )
 
 from ui.panels.clipboard import ClipboardPanel
@@ -292,11 +268,28 @@ class DialogsHostMixin:
 
     def _set_muted(self, value: bool):
         """Idempotent mute setter — safe target for cross-thread signals."""
-        if bool(value) != self._muted:
-            self._toggle_mute()
+        target = bool(value)
+        if not target and getattr(self, "_manual_mic_lock", False):
+            # Les réglages, le réveil vocal et les appels inter-fils passent
+            # ici. Seul `_toggle_mute`, appelé par le bouton micro, peut lever
+            # ce verrou.
+            if hasattr(self, "_log"):
+                self._log.append_log(
+                    "SYS : micro verrouillé — réactive-le avec le bouton micro."
+                )
+            return
+        if target != self._muted:
+            self._apply_mute_state(target)
 
     def _toggle_mute(self):
-        self._muted = not self._muted
+        """Bascule demandée par un clic volontaire sur un bouton micro."""
+        target = not self._muted
+        self._manual_mic_lock = target
+        self._apply_mute_state(target)
+
+    def _apply_mute_state(self, muted: bool):
+        """Applique l'état UI sans décider qui a le droit de le modifier."""
+        self._muted = bool(muted)
         self.hud.muted = self._muted
         self._style_mute_btn()
         if self._muted:
@@ -306,13 +299,20 @@ class DialogsHostMixin:
             self._apply_state("LISTENING")
             self._log.append_log("SYS : micro actif.")
 
+    def _mute_from_shortcut(self):
+        """F4 peut couper le micro, mais ne contourne jamais le verrou manuel."""
+        if self._muted:
+            self._log.append_log("SYS : micro verrouillé — clique sur le bouton micro pour l'activer.")
+            return
+        self._toggle_mute()
+
     def _style_mute_btn(self):
         """Micro coupé = état anormal, teinter en rouge ; micro actif = accent cyan."""
         if not hasattr(self, "_mute_btn"):
             return
         if self._muted:
             self._mute_btn.setIcon(make_svg_icon("mic-off", C.MUTED_C, 20))
-            self._mute_btn.setToolTip("Micro coupé · Clic ou F4 pour réactiver")
+            self._mute_btn.setToolTip("Micro coupé · Cliquez sur ce bouton pour réactiver")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: rgba(255, 51, 102, 0.18); color: {C.MUTED_C};

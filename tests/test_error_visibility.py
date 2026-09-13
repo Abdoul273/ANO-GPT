@@ -24,7 +24,7 @@ PLAFOND_HANDLERS_MUETS = 584
 def _sources():
     for path in sorted(ROOT.glob("**/*.py")):
         relative = path.relative_to(ROOT).as_posix()
-        if relative.startswith(("tests/", "build/", "mobile/")) or "__pycache__" in relative:
+        if relative.startswith(("tests/", "build/", "mobile/", ".venv-tools/")) or "__pycache__" in relative:
             continue
         try:
             yield relative, ast.parse(path.read_text(encoding="utf-8"))

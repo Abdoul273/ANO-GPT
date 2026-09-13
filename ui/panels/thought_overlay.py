@@ -11,15 +11,14 @@ import time
 from typing import Callable, Optional
 
 from PyQt6.QtCore import (
-    QEasingCurve, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer,
+    QEasingCurve, QPointF, QPropertyAnimation, QRect, QRectF, Qt, QTimer,
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainter,
-    QPainterPath, QPen,
+    QPen,
 )
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QWidget
 
-from ui.styles.theme import C
 
 
 class ThoughtOverlay(QWidget):
@@ -150,7 +149,6 @@ class ThoughtOverlay(QWidget):
         if not self._is_scrolling or not self.isVisible():
             return
 
-        budget = max(40, self.width() - self._PAD_X)
         max_scroll = self._text_width + 50
         self._scroll_x += 1.2
         if self._scroll_x > max_scroll:

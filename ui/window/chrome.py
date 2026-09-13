@@ -1,42 +1,22 @@
 from __future__ import annotations
 
-import json
-import math
-import os
-import platform
-import random
-import re
-import subprocess
-import sys
 import threading
 import time
-import traceback
 from pathlib import Path
 
-import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
+    QSize, Qt,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
+    QFont,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from ui.core.hud_button import HudButton
-from ui.core.hud_paint import Hud
 from ui.panels.file_chip import FileChipWidget, _fmt_size
 from ui.panels.floating_panel import FloatingPanel
-from ui.panels.log_widget import LogWidget
 from ui.panels.telemetry import LiveTranscriptWidget, MetricBar
 from ui.core.qtflags import _OS
 from ui.paths import _LEFT_W
@@ -155,11 +135,11 @@ class ChromeMixin:
         w = QWidget()
         w.setFixedWidth(_LEFT_W)
         w.setObjectName("LeftPanel")
-        w.setStyleSheet(f"""
-            QWidget#LeftPanel {{
+        w.setStyleSheet("""
+            QWidget#LeftPanel {
                 background: transparent;
                 border: none;
-            }}
+            }
         """)
         lay = QVBoxLayout(w)
         lay.setContentsMargins(10, 8, 10, 8)

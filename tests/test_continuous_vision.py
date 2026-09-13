@@ -16,9 +16,8 @@ Valide :
 from __future__ import annotations
 
 import asyncio
-import os
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import numpy as np
@@ -27,14 +26,10 @@ import cv2
 from core.continuous_vision import (
     ACTIVE_FPS,
     IDLE_FPS,
-    STILL_TIMEOUT_SECONDS,
     GEMINI_TOKENS_PER_VIDEO_FRAME,
-    ContinuousVisionEngine,
     DynamicWebPEncoder,
-    FrameMetadata,
     LocalMotionDetector,
     SharedMemoryRingBuffer,
-    get_continuous_vision_engine,
     is_vision_activation_phrase,
     is_vision_deactivation_phrase,
     run_vision_benchmark,

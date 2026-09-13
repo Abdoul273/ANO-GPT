@@ -64,6 +64,8 @@ class AssistantConfig:
     xai_api_key: str = ""
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    # OpenRouter expose son catalogue multi-éditeurs au format OpenAI.
+    openrouter_api_key: str = ""
     # Picovoice reste entièrement local après l'initialisation. Cette clé est
     # nécessaire pour créer son moteur de mot d'activation ; elle ne doit jamais
     # être inscrite dans les journaux ni dans une configuration suivie par git.
@@ -76,13 +78,14 @@ class AssistantConfig:
     brain_provider: str = "auto"
     brain_provider_priority: list[str] = field(
         default_factory=lambda: [
-            "azure_openai", "deepseek", "grok", "openai", "anthropic", "groq", "gemini",
+            "azure_openai", "openrouter", "deepseek", "grok", "openai", "anthropic", "groq", "gemini",
         ]
     )
     deepseek_model: str = "deepseek-v4-flash"
     grok_model: str = "grok-4.3"
     openai_model: str = "gpt-5.6-terra"
     anthropic_model: str = "claude-sonnet-5"
+    openrouter_model: str = "openai/gpt-4.1"
     groq_model: str = "llama-3.3-70b-versatile"
     azure_openai_model: str = "anogpt-brain"
     gemini_model: str = BALANCED_MODEL
@@ -133,7 +136,7 @@ class AssistantConfig:
         # Tout fournisseur du registre peut devenir le cerveau principal :
         # l'utilisateur choisit, ce n'est plus une liste réservée au repli.
         allowed_brains = {
-            "auto", "azure_openai", "deepseek", "grok", "groq", "openai",
+            "auto", "azure_openai", "openrouter", "deepseek", "grok", "groq", "openai",
             "anthropic", "gemini", "ollama", "custom",
         }
         if self.brain_provider not in allowed_brains:
@@ -275,7 +278,7 @@ class ConfigManager:
         if self._use_keyring:
             for secret_name in (
                 "gemini_api_key", "elevenlabs_api_key", "deepseek_api_key",
-                "xai_api_key", "openai_api_key", "anthropic_api_key",
+                "xai_api_key", "openai_api_key", "anthropic_api_key", "openrouter_api_key",
                 "picovoice_access_key",
             ):
                 if not getattr(config, secret_name):
@@ -297,6 +300,7 @@ class ConfigManager:
             "XAI_API_KEY": "xai_api_key",
             "OPENAI_API_KEY": "openai_api_key",
             "ANTHROPIC_API_KEY": "anthropic_api_key",
+            "OPENROUTER_API_KEY": "openrouter_api_key",
             "PICOVOICE_ACCESS_KEY": "picovoice_access_key",
             "ASSISTANT_NAME": "assistant_name",
             "USER_NAME": "user_name",
@@ -337,7 +341,7 @@ class ConfigManager:
         if self._use_keyring:
             for secret_name in (
                 "gemini_api_key", "elevenlabs_api_key", "deepseek_api_key",
-                "xai_api_key", "openai_api_key", "anthropic_api_key",
+                "xai_api_key", "openai_api_key", "anthropic_api_key", "openrouter_api_key",
                 "picovoice_access_key",
             ):
                 secret_value = getattr(config, secret_name)

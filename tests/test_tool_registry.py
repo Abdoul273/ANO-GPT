@@ -14,10 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import time
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
-import pytest
 from google.genai import types
 from pydantic import BaseModel, Field
 
@@ -26,14 +24,11 @@ from core.tool_registry import (
     ExecutionContext,
     LegacyToolAdapter,
     SlidingWindowRateLimiter,
-    ToolDefinition,
     ToolRegistry,
-    ToolResult,
     build_tool_metadata,
     build_production_declarations,
     parse_google_docstring,
     python_type_to_schema,
-    schema_to_dict,
     tool,
 )
 
@@ -379,7 +374,6 @@ def test_dispatcher_precision_stt_verification_divergence():
 
 def test_migrated_tools_declaration_and_execution():
     async def scenario():
-        import core.migrated_tools
         from core.migrated_tools import SystemStatusReport
         from core.tool_registry import tool_registry
 

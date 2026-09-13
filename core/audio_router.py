@@ -47,6 +47,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from core import action_kit as kit
+
 _PACTL = "pactl"
 
 
@@ -85,10 +87,7 @@ class OutputDevice:
 
 def _pactl_json(*args: str, timeout: float = 4.0) -> Optional[list]:
     try:
-        r = subprocess.run(
-            [_PACTL, "-f", "json", *args],
-            capture_output=True, text=True, timeout=timeout,
-        )
+        r = kit.run([_PACTL, "-f", "json", *args], timeout=timeout)
         if r.returncode != 0 or not r.stdout.strip():
             return None
         return json.loads(r.stdout)
@@ -98,7 +97,7 @@ def _pactl_json(*args: str, timeout: float = 4.0) -> Optional[list]:
 
 def _pactl(*args: str, timeout: float = 4.0) -> bool:
     try:
-        r = subprocess.run([_PACTL, *args], capture_output=True, text=True, timeout=timeout)
+        r = kit.run([_PACTL, *args], timeout=timeout)
         return r.returncode == 0
     except Exception:
         return False
@@ -283,10 +282,7 @@ def get_manual_override() -> Optional[str]:
 def _system_default_source_name() -> Optional[str]:
     """Nom de la source que l'utilisateur a choisie dans le système sonore."""
     try:
-        result = subprocess.run(
-            [_PACTL, "get-default-source"],
-            capture_output=True, text=True, timeout=4.0,
-        )
+        result = kit.run([_PACTL, "get-default-source"], timeout=4.0)
     except Exception:
         return None
     if result.returncode != 0:
@@ -545,10 +541,7 @@ def _list_echo_cancel_module_ids() -> List[str]:
     laissés par un crash. `pactl -f json list modules` n'a pas d'index
     sous PipeWire — on parse le format short."""
     try:
-        r = subprocess.run(
-            [_PACTL, "list", "modules", "short"],
-            capture_output=True, text=True, timeout=4,
-        )
+        r = kit.run([_PACTL, "list", "modules", "short"], timeout=4)
         if r.returncode != 0 or not r.stdout:
             return []
         ids: List[str] = []
@@ -647,10 +640,7 @@ def enable_echo_cancel(master_source: str, master_sink: Optional[str] = None) ->
         args.insert(1, f"sink_master={master_sink}")
         args.insert(2, "sink_name=anogpt_speaker_aec")
     try:
-        r = subprocess.run(
-            [_PACTL, "load-module", "module-echo-cancel", *args],
-            capture_output=True, text=True, timeout=5,
-        )
+        r = kit.run([_PACTL, "load-module", "module-echo-cancel", *args], timeout=5)
         mod_id = (r.stdout or "").strip()
         if r.returncode == 0 and mod_id.isdigit():
             _echo_module_id = mod_id

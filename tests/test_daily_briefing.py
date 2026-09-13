@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import date, datetime
-import pytest
 
 from core.daily_briefing import (
     BriefingData,

@@ -1,10 +1,8 @@
 import asyncio
 import threading
-import time
 from unittest.mock import Mock
 from types import SimpleNamespace
 
-import pytest
 
 from core.audio_engine import AudioEngine, hold_live_audio
 from core.tool_dispatcher import _has_explicit_capture_intent

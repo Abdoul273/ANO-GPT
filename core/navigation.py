@@ -20,7 +20,7 @@ import asyncio
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Optional
 
 try:
     import requests
@@ -1180,11 +1180,9 @@ class NavigationManager:
 
         if step_idx < total_steps:
             current_step = session.route.steps[step_idx]
-            dist_step = int(current_step.distance_m)
             instr = current_step.instruction
         else:
             instr = "Arrivée imminente"
-            dist_step = 0
 
         rem_dist_km = session.route.distance_m / 1000.0
         rem_min = max(1, int(round(session.route.duration_s / 60.0)))

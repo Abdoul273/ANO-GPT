@@ -14,7 +14,6 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from core.wake_word import (
-    DEFAULT_MODEL,
     _normalise,
     resolve_vosk_model_path,
     vosk_native_allowed,

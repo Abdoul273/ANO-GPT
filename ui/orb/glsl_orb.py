@@ -237,18 +237,6 @@ void main() {
     col   += palMag * 0.16 * gCore * (0.25 + high);
     alpha += 0.32 * gHalo + 0.42 * gCore;
 
-    // Trois anneaux gyroscopiques 2D (ellipses tournantes) — coût fixe.
-    for (int k = 0; k < 3; ++k) {
-        float kf  = float(k);
-        float ang = u_time * (0.35 + kf * 0.31) * (0.75 + en) + kf * 1.73;
-        vec2  euv = rot(ang) * uv;
-        float st  = 1.28 + 0.22 * kf;
-        float er  = abs(length(euv * vec2(1.0, st)) - (rad * 1.22 + 0.055 * kf));
-        float rng = smoothstep(0.016, 0.0, er);
-        col   += mix(pal, palMag, kf * 0.35) * rng * (0.16 + 0.14 * en);
-        alpha += rng * 0.20;
-    }
-
     // Sphère volumétrique : z = ±sqrt(R² − r²), 6 échantillons de plasma
     // le long de la corde. Pas de SDF itéré — l'iGPU Skylake tient 60 fps.
     if (r < rad) {

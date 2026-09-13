@@ -1,16 +1,14 @@
 """tests/test_visual_pointer.py — Tests unitaires pour ui/visual_pointer.py."""
 
-import time
 import pytest
-from PyQt6.QtCore import Qt, QRect
-from PyQt6.QtGui import QColor, QImage, QPainter
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage, QPainter
 from PyQt6.QtWidgets import QApplication
 
 from ui.visual_pointer import (
     DrawPathItem,
     HighlightRegionItem,
     LaserPointItem,
-    PointerTheme,
     ScreenOverlayWindow,
     VisualAnnotation,
     VisualPointerOverlay,

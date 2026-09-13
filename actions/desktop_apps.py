@@ -40,7 +40,6 @@ import difflib
 import re
 import unicodedata
 import shlex
-import shutil
 import subprocess
 import time
 import json

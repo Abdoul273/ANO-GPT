@@ -108,7 +108,7 @@ class PositionsMixin:
         if not hasattr(self, "_music_player_panel"):
             return
         cw = self.centralWidget()
-        W, H = cw.width(), cw.height()
+        W = cw.width()
         pw = self._music_player_panel.width()
         ph = self._music_player_panel.sizeHint().height() or 180
         self._music_player_panel.setGeometry(W - pw - 16, 74, pw, ph)

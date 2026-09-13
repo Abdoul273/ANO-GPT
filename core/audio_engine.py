@@ -39,16 +39,16 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
 from core import audio_router
 from core.barge_in import InterruptPhraseDetector, LocalBargeInListener, hold_live_audio
-from core.echo_canceller import FullDuplexFilter, get_full_duplex_filter
+from core.echo_canceller import get_full_duplex_filter
 from core.event_bus import AudioCaptureFrameEvent, BargeInDetectedEvent
 from core.speech_sync import (
-    caption_targets, caption_targets_weighted, split_caption_units,
+    caption_targets_weighted, split_caption_units,
 )
 from core.stt import AudioPreprocessor
 from core.stt_audio import pcm16_bytes
@@ -1017,7 +1017,8 @@ class AudioEngine:
                         loop.call_soon_threadsafe(self._activity_end)
                     # Muted: run only the local wake-word detector. Nothing here
                     # ever reaches the network.
-                    if (self._wake_enabled and self._wake is not None
+                    if (not getattr(self.ui, "microphone_locked", False)
+                            and self._wake_enabled and self._wake is not None
                             and self._wake.available):
                         pcm16 = raw_channel if raw_channel.dtype == np.int16 \
                             else (np.clip(raw_channel, -1, 1) * 32767).astype(np.int16)

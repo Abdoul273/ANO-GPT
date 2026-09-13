@@ -5,7 +5,6 @@ Optimisé pour Arch Linux / Hyprland (Wayland), multi-moteurs, workspace-aware.
 """
 import os
 import re
-import shutil
 from core import action_kit as kit
 import time
 from pathlib import Path

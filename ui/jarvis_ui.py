@@ -58,6 +58,11 @@ class JarvisUI:
     def muted(self) -> bool:
         return self._win._muted
 
+    @property
+    def microphone_locked(self) -> bool:
+        """Vrai après une coupure volontaire, jusqu'au prochain clic micro."""
+        return bool(getattr(self._win, "_manual_mic_lock", False))
+
     def show_window(self) -> None:
         self._win.request_show()
 

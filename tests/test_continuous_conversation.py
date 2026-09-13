@@ -5,7 +5,6 @@ import pytest
 
 from core.continuous_conversation import (
     ContinuousConversationManager,
-    DEFAULT_FOLLOW_UP_TIMEOUT_S,
     is_assistant_sleep_request,
     is_closing_statement,
     normalize_text_for_intent,

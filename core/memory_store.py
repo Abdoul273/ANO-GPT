@@ -160,8 +160,11 @@ def _ensure_schema() -> None:
         if _INITIALISED:
             return
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        new_database = not DB_PATH.exists()
         conn = sqlite3.connect(DB_PATH, timeout=5.0)
         try:
+            if new_database:
+                conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
 

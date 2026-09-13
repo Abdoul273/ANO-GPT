@@ -139,8 +139,8 @@ class ProcResult:
 
     cmd: tuple[str, ...]
     code: int
-    out: str = ""
-    err: str = ""
+    out: str | bytes = ""
+    err: str | bytes = ""
     duration: float = 0.0
     timed_out: bool = False
     not_found: bool = False
@@ -159,11 +159,11 @@ class ProcResult:
         return self.code
 
     @property
-    def stdout(self) -> str:
+    def stdout(self) -> str | bytes:
         return self.out
 
     @property
-    def stderr(self) -> str:
+    def stderr(self) -> str | bytes:
         return self.err
 
     @property
@@ -274,9 +274,10 @@ def run(
     shell: bool = False,
     cwd: str | None = None,
     env: Mapping[str, str] | None = None,
-    stdin: str | None = None,
+    stdin: str | bytes | None = None,
     preexec_fn: Callable[[], Any] | None = None,
     capture: bool = True,
+    binary: bool = False,
     text_errors: str = "replace",
     cache_ttl: float = 0.0,
     quiet: bool = False,
@@ -310,12 +311,12 @@ def run(
         if cached is not None:
             return cached
 
-    binary = argv[0]
-    if not shell and which(binary) is None:
-        res = ProcResult(cmd=tuple(argv), code=127, err=f"{binary} introuvable",
+    executable = argv[0]
+    if not shell and which(executable) is None:
+        res = ProcResult(cmd=tuple(argv), code=127, err=f"{executable} introuvable",
                          not_found=True)
         if not quiet:
-            log.debug("binaire absent : %s", binary)
+            log.debug("binaire absent : %s", executable)
         return res
 
     full_env = None
@@ -329,19 +330,21 @@ def run(
         proc = None
         try:
             with (_PROC_SLOTS if timeout <= _SLOT_MAX_TIMEOUT else _NO_SLOT):
+                popen_kwargs: dict[str, Any] = {
+                    "shell": shell,
+                    "cwd": cwd,
+                    "env": full_env,
+                    "stdin": subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                    "stdout": subprocess.PIPE if capture else subprocess.DEVNULL,
+                    "stderr": subprocess.PIPE if capture else subprocess.DEVNULL,
+                    "start_new_session": True,
+                    "preexec_fn": preexec_fn,
+                }
+                if not binary:
+                    popen_kwargs.update(text=True, errors=text_errors)
                 proc = subprocess.Popen(
                     argv if not shell else argv[0],
-                    shell=shell,
-                    cwd=cwd,
-                    env=full_env,
-                    stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
-                    stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
-                    stderr=subprocess.PIPE if capture else subprocess.DEVNULL,
-                    text=True,
-                    errors=text_errors,
-                    # Groupe dédié : indispensable pour tuer toute la descendance.
-                    start_new_session=True,
-                    preexec_fn=preexec_fn,
+                    **popen_kwargs,
                 )
                 try:
                     out, err = proc.communicate(input=stdin, timeout=timeout)
@@ -352,7 +355,7 @@ def run(
                     )
                 except subprocess.TimeoutExpired:
                     _kill_tree(proc)
-                    out, err = "", ""
+                    out, err = (b"", b"") if binary else ("", "")
                     try:
                         out, err = proc.communicate(timeout=1.0)
                     except (subprocess.TimeoutExpired, ValueError, OSError):
@@ -364,7 +367,7 @@ def run(
                     )
         except FileNotFoundError:
             result = ProcResult(cmd=tuple(argv), code=127,
-                                err=f"{binary} introuvable", not_found=True,
+                                err=f"{executable} introuvable", not_found=True,
                                 duration=time.monotonic() - started)
         except PermissionError as exc:
             result = ProcResult(cmd=tuple(argv), code=126, err=str(exc),
@@ -373,7 +376,7 @@ def run(
             result = ProcResult(cmd=tuple(argv), code=-1, err=str(exc),
                                 duration=time.monotonic() - started)
 
-        _record(f"proc:{binary}", result.duration, result.ok)
+        _record(f"proc:{executable}", result.duration, result.ok)
 
         # Un binaire absent ou refusé ne guérit pas en réessayant.
         if result.ok or result.not_found or attempt >= retries:

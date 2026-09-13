@@ -19,22 +19,15 @@ from core.youtube_service import (
     resolve_result,
     search_youtube as search_youtube_structured,
 )
+import importlib.util
+
 from actions.media_control import media_control
 
 from core import action_kit as kit
 from core.live_model_policy import BALANCED_MODEL, FAST_MODEL
 
-try:
-    import numpy as np
-    _NUMPY = True
-except ImportError:
-    _NUMPY = False
-
-try:
-    import requests
-    _REQUESTS_OK = True
-except ImportError:
-    _REQUESTS_OK = False
+_NUMPY = importlib.util.find_spec("numpy") is not None
+_REQUESTS_OK = importlib.util.find_spec("requests") is not None
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi

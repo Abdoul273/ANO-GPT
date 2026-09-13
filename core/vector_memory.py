@@ -20,7 +20,7 @@ import sys
 import threading
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -58,6 +58,8 @@ MODEL_LOCAL_DIR = BASE_DIR / "models" / "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 MAX_VALUE_CHARS = 1000
 K_RRF_DEFAULT = 60
+TURN_BATCH_MAX = 5
+TURN_BATCH_DELAY_S = 2.0
 
 KIND_PROFILE = "profil"
 KIND_FACT = "fait"
@@ -130,6 +132,28 @@ class MemoryEntry:
     bm25_rank: int | None = None
     vec_rank: int | None = None
     vec_distance: float | None = None
+
+
+@dataclass
+class _PreparedMemory:
+    """Partie coûteuse d'une écriture, calculée sans verrou SQLite.
+
+    ONNX et l'extracteur RDF n'ont besoin ni d'une connexion ni d'un id
+    SQLite. Les préparer ici réduit la durée du verrou d'écriture à la seule
+    modification des tables et au commit groupé.
+    """
+
+    clean_value: str
+    kind: str
+    norm_key: str | None
+    category: str | None
+    happened: str | None
+    confidence: float
+    metadata_json: str
+    now: str
+    entry_embedding: bytes | None
+    triples: list[RDFTriple]
+    triple_embeddings: list[bytes | None]
 
 
 # ── Moteur d'embeddings local ONNX ──────────────────────────────────────────
@@ -383,7 +407,6 @@ class EntityTripleExtractor:
         triples: list[RDFTriple] = []
         now_ts = happened or _now()
         clean = " ".join(str(text or "").split())
-        folded = _fold(clean)
         subject = "utilisateur"
 
         entities = cls.extract_entities(clean)
@@ -527,7 +550,6 @@ class EntityTripleExtractor:
 
         # Si clé explicite sous forme de relation (ex: key="langage_favori")
         if key and "_" in key and not triples:
-            parts = key.split("_", 1)
             triples.append(RDFTriple(
                 id=None,
                 subject=subject,
@@ -640,6 +662,12 @@ class VectorMemory:
         self.db_path = Path(db_path) if db_path else DB_PATH
         self.model = model or EmbeddingEngine.get_instance()
         self._lock = threading.RLock()
+        # Cette file n'est jamais lue par la boucle audio : elle permet un seul
+        # fsync pour plusieurs tours sans retarder la réponse vocale.
+        self._turn_queue: list[tuple[str, str, str | None]] = []
+        self._turn_queue_lock = threading.Lock()
+        self._turn_flush_timer: threading.Timer | None = None
+        self._turn_flush_active = False
         self._init_db()
         if self.db_path.resolve() == DB_PATH.resolve():
             self._migrate_legacy_db_once()
@@ -649,6 +677,11 @@ class VectorMemory:
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
+        # WAL + NORMAL conserve l'intégrité transactionnelle tout en évitant
+        # un fsync complet à chaque tour. Le timeout absorbe un bref écrivain
+        # concurrent plutôt que d'échouer ou de relancer une tâche.
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA foreign_keys=ON;")
 
         # Chargement de sqlite-vec
@@ -659,7 +692,10 @@ class VectorMemory:
         return conn
 
     def _init_db(self) -> None:
+        new_database = not self.db_path.exists()
         with self._lock, self._get_connection() as conn:
+            if new_database:
+                conn.execute("PRAGMA auto_vacuum=INCREMENTAL;")
             conn.executescript(_SCHEMA)
 
             # Création des tables virtuelles vec0 sqlite-vec
@@ -782,11 +818,17 @@ class VectorMemory:
         triple: RDFTriple,
         *,
         conn: sqlite3.Connection | None = None,
+        embedding_blob: bytes | None = None,
     ) -> int:
         """Enregistre un triplet RDF avec embedding vectoriel et détection des contradictions."""
         now = _now()
         ts = triple.valid_from or now
-        triple_text = triple.text_representation()
+        if sqlite_vec is not None and embedding_blob is None:
+            try:
+                # Ne jamais faire tourner ONNX pendant une transaction SQLite.
+                embedding_blob = self.model.serialize(self.model.encode(triple.text_representation()))
+            except Exception as exc:
+                logger.warning("Échec préparation vectorielle du triplet : %s", exc)
 
         def _do(c: sqlite3.Connection) -> int:
             self.resolve_contradictions(c, triple, ts)
@@ -814,14 +856,9 @@ class VectorMemory:
             triple_id = cur.lastrowid
 
             # Indexation vectorielle du triplet dans vec_triples
-            if sqlite_vec is not None:
-                try:
-                    vec = self.model.encode(triple_text)
-                    blob = self.model.serialize(vec)
-                    c.execute("DELETE FROM vec_triples WHERE id = ?", (triple_id,))
-                    c.execute("INSERT INTO vec_triples(id, embedding) VALUES (?, ?)", (triple_id, blob))
-                except Exception as exc:
-                    logger.warning("Échec indexation vectorielle du triplet %d : %s", triple_id, exc)
+            if sqlite_vec is not None and embedding_blob is not None:
+                c.execute("DELETE FROM vec_triples WHERE id = ?", (triple_id,))
+                c.execute("INSERT INTO vec_triples(id, embedding) VALUES (?, ?)", (triple_id, embedding_blob))
 
             return triple_id
 
@@ -834,6 +871,122 @@ class VectorMemory:
 
     # ── Écriture et Ingestion de Souvenirs ────────────────────────────────────
 
+    def _prepare_save(
+        self,
+        value: str,
+        *,
+        kind: str,
+        key: str | None,
+        category: str | None,
+        happened: str | None,
+        confidence: float,
+        metadata: dict | None,
+    ) -> _PreparedMemory | None:
+        """Prépare CPU/RDF/ONNX avant d'ouvrir la transaction SQLite."""
+        clean_val = " ".join((value or "").split())[:MAX_VALUE_CHARS]
+        if not clean_val:
+            return None
+
+        kind = kind if kind in KINDS else KIND_FACT
+        norm_key = "_".join((key or "").lower().split()) or None
+        now = _now()
+        h_date = happened or (_today() if kind != KIND_PROFILE else None)
+        triples = EntityTripleExtractor.extract_triples(
+            clean_val, category=category or "", key=norm_key,
+            happened=h_date or now,
+        )
+
+        entry_embedding: bytes | None = None
+        triple_embeddings: list[bytes | None] = [None] * len(triples)
+        if sqlite_vec is not None:
+            try:
+                entry_embedding = self.model.serialize(
+                    self.model.encode(f"{norm_key or ''} {clean_val}".strip())
+                )
+            except Exception as exc:
+                logger.warning("Échec préparation vectorielle du souvenir : %s", exc)
+            for index, triple in enumerate(triples):
+                try:
+                    triple_embeddings[index] = self.model.serialize(
+                        self.model.encode(triple.text_representation())
+                    )
+                except Exception as exc:
+                    logger.warning("Échec préparation vectorielle du triplet : %s", exc)
+
+        return _PreparedMemory(
+            clean_value=clean_val, kind=kind, norm_key=norm_key,
+            category=category, happened=h_date, confidence=confidence,
+            metadata_json=json.dumps(metadata or {}, ensure_ascii=False), now=now,
+            entry_embedding=entry_embedding, triples=triples,
+            triple_embeddings=triple_embeddings,
+        )
+
+    def _save_prepared(self, conn: sqlite3.Connection, item: _PreparedMemory) -> str:
+        """Écrit un souvenir déjà préparé dans la transaction courante."""
+        entry_id: int | None = None
+        msg = "C'est noté."
+
+        if item.norm_key:
+            existing = conn.execute(
+                "SELECT id, value FROM entries WHERE kind=? AND key=?",
+                (item.kind, item.norm_key),
+            ).fetchone()
+            if existing:
+                entry_id = int(existing["id"])
+                if existing["value"] == item.clean_value:
+                    return "C'était déjà noté."
+                conn.execute(
+                    """UPDATE entries SET value=?, category=COALESCE(?, category),
+                       metadata=?, updated_at=?, happened_at=COALESCE(?, happened_at),
+                       is_active=1, valid_until=NULL WHERE id=?""",
+                    (item.clean_value, item.category, item.metadata_json, item.now,
+                     item.happened, entry_id),
+                )
+                msg = "Noté, je remplace ce que je savais."
+        else:
+            dup = conn.execute(
+                "SELECT id FROM entries WHERE kind=? AND value=?",
+                (item.kind, item.clean_value),
+            ).fetchone()
+            if dup:
+                entry_id = int(dup["id"])
+                conn.execute(
+                    "UPDATE entries SET updated_at=?, is_active=1, valid_until=NULL WHERE id=?",
+                    (item.now, entry_id),
+                )
+                return "C'était déjà noté."
+
+        if entry_id is None:
+            cur = conn.execute(
+                """INSERT INTO entries
+                   (kind, key, value, category, metadata, valid_from, is_active,
+                    confidence, created_at, updated_at, happened_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+                (item.kind, item.norm_key, item.clean_value, item.category,
+                 item.metadata_json, item.now, float(item.confidence), item.now,
+                 item.now, item.happened),
+            )
+            entry_id = cur.lastrowid
+
+        if sqlite_vec is not None and item.entry_embedding is not None and entry_id:
+            conn.execute("DELETE FROM vec_entries WHERE id = ?", (entry_id,))
+            conn.execute("INSERT INTO vec_entries(id, embedding) VALUES (?, ?)",
+                         (entry_id, item.entry_embedding))
+
+        for cm in EntityTripleExtractor.CONTRADICTION_RE.finditer(item.clean_value):
+            neg_word = cm.group(1).strip(".,;:")
+            canon_neg = EntityTripleExtractor.SOFTWARE_PATTERNS.get(_fold(neg_word), neg_word)
+            conn.execute(
+                """UPDATE rdf_triples SET is_active = 0, valid_until = ?, updated_at = ?
+                   WHERE is_active = 1 AND (LOWER(object) = LOWER(?) OR LOWER(object) = LOWER(?))""",
+                (item.now, item.now, neg_word, canon_neg),
+            )
+
+        for triple, embedding in zip(item.triples, item.triple_embeddings):
+            triple.source_entry_id = entry_id
+            self.add_triple(triple, conn=conn, embedding_blob=embedding)
+        return msg
+
     def save(
         self,
         value: str,
@@ -845,102 +998,15 @@ class VectorMemory:
         confidence: float = 1.0,
         metadata: dict | None = None,
     ) -> str:
-        """Enregistre un souvenir, extrait ses triplets RDF et met à jour l'index vectoriel."""
-        clean_val = " ".join((value or "").split())[:MAX_VALUE_CHARS]
-        if not clean_val:
+        """Enregistre un souvenir ; tout le calcul lourd précède la transaction."""
+        item = self._prepare_save(
+            value, kind=kind, key=key, category=category, happened=happened,
+            confidence=confidence, metadata=metadata,
+        )
+        if item is None:
             return "Rien à mémoriser."
-
-        kind = kind if kind in KINDS else KIND_FACT
-        norm_key = "_".join((key or "").lower().split()) or None
-        now = _now()
-        h_date = happened or (_today() if kind != KIND_PROFILE else None)
-        meta_json = json.dumps(metadata or {}, ensure_ascii=False)
-
         with self._lock, self._get_connection() as conn:
-            entry_id: int | None = None
-            msg = "C'est noté."
-
-            # Dédoublonnage sur clé ou valeur exacte
-            if norm_key:
-                existing = conn.execute(
-                    "SELECT id, value FROM entries WHERE kind=? AND key=?",
-                    (kind, norm_key),
-                ).fetchone()
-                if existing:
-                    entry_id = int(existing["id"])
-                    if existing["value"] == clean_val:
-                        return "C'était déjà noté."
-                    conn.execute(
-                        """UPDATE entries
-                           SET value=?, category=COALESCE(?, category),
-                               metadata=?, updated_at=?, happened_at=COALESCE(?, happened_at),
-                               is_active=1, valid_until=NULL
-                           WHERE id=?""",
-                        (clean_val, category, meta_json, now, h_date, entry_id),
-                    )
-                    msg = "Noté, je remplace ce que je savais."
-            else:
-                dup = conn.execute(
-                    "SELECT id FROM entries WHERE kind=? AND value=?",
-                    (kind, clean_val),
-                ).fetchone()
-                if dup:
-                    entry_id = int(dup["id"])
-                    conn.execute(
-                        "UPDATE entries SET updated_at=?, is_active=1, valid_until=NULL WHERE id=?",
-                        (now, entry_id),
-                    )
-                    return "C'était déjà noté."
-
-            if entry_id is None:
-                cur = conn.execute(
-                    """INSERT INTO entries
-                       (kind, key, value, category, metadata, valid_from, is_active,
-                        confidence, created_at, updated_at, happened_at)
-                       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
-                    (
-                        kind, norm_key, clean_val, category, meta_json,
-                        now, float(confidence), now, now, h_date,
-                    ),
-                )
-                entry_id = cur.lastrowid
-
-            # Calcul et stockage de l'embedding dans vec_entries
-            if sqlite_vec is not None and entry_id:
-                try:
-                    embed_text = f"{norm_key or ''} {clean_val}".strip()
-                    vec = self.model.encode(embed_text)
-                    blob = self.model.serialize(vec)
-                    conn.execute("DELETE FROM vec_entries WHERE id = ?", (entry_id,))
-                    conn.execute(
-                        "INSERT INTO vec_entries(id, embedding) VALUES (?, ?)",
-                        (entry_id, blob),
-                    )
-                except Exception as exc:
-                    logger.warning("Échec de l'indexation vectorielle du souvenir %d : %s", entry_id, exc)
-
-            # Invalidation explicite d'entités contredites ou abandonnées
-            for cm in EntityTripleExtractor.CONTRADICTION_RE.finditer(clean_val):
-                neg_word = cm.group(1).strip(".,;:")
-                canon_neg = EntityTripleExtractor.SOFTWARE_PATTERNS.get(_fold(neg_word), neg_word)
-                conn.execute(
-                    """UPDATE rdf_triples
-                       SET is_active = 0, valid_until = ?, updated_at = ?
-                       WHERE is_active = 1 AND (LOWER(object) = LOWER(?) OR LOWER(object) = LOWER(?))""",
-                    (now, now, neg_word, canon_neg),
-                )
-
-            # Extraction et sauvegarde des triplets RDF
-            triples = EntityTripleExtractor.extract_triples(
-                clean_val,
-                category=category or "",
-                key=norm_key,
-                happened=h_date or now,
-                source_entry_id=entry_id,
-            )
-            for t in triples:
-                self.add_triple(t, conn=conn)
-
+            msg = self._save_prepared(conn, item)
             conn.commit()
             return msg
 
@@ -959,6 +1025,101 @@ class VectorMemory:
             category="conversation",
             happened=happened or _now(),
         )
+
+    def save_turns(self, turns: Sequence[tuple[str, str, str | None]]) -> list[str]:
+        """Archive plusieurs tours avec un unique commit SQLite.
+
+        Les embeddings et les triplets de tout le lot sont préparés avant
+        d'acquérir la connexion ; le commit ne contient que les écritures.
+        """
+        prepared = [
+            self._prepare_save(
+                f"Utilisateur : {user_text.strip()}\nANO-GPT : {assistant_text.strip()}",
+                kind=KIND_TURN, key=None, category="conversation",
+                happened=happened or _now(), confidence=1.0, metadata=None,
+            )
+            for user_text, assistant_text, happened in turns
+        ]
+        items = [item for item in prepared if item is not None]
+        if not items:
+            return []
+        with self._lock, self._get_connection() as conn:
+            results = [self._save_prepared(conn, item) for item in items]
+            conn.commit()
+            return results
+
+    def enqueue_turn(self, user_text: str, assistant_text: str, *, happened: str | None = None) -> None:
+        """Place un tour en mémoire et déclenche son lot après 2 s ou 5 tours.
+
+        Cette méthode est volontairement minuscule : elle est appelée depuis
+        le chemin vocal et ne touche ni SQLite, ni ONNX, ni le pool directement
+        tant qu'un lot est déjà en attente.
+        """
+        submit_now = False
+        with self._turn_queue_lock:
+            self._turn_queue.append((user_text, assistant_text, happened))
+            if len(self._turn_queue) >= TURN_BATCH_MAX:
+                if self._turn_flush_timer is not None:
+                    self._turn_flush_timer.cancel()
+                    self._turn_flush_timer = None
+                if not self._turn_flush_active:
+                    self._turn_flush_active = True
+                    submit_now = True
+            elif not self._turn_flush_active and self._turn_flush_timer is None:
+                timer = threading.Timer(TURN_BATCH_DELAY_S, self._submit_queued_turn_flush)
+                timer.daemon = True
+                self._turn_flush_timer = timer
+                timer.start()
+        if submit_now:
+            self._submit_queued_turn_flush()
+
+    def _submit_queued_turn_flush(self) -> None:
+        """Soumet le lot sur disk-io avec un seuil adapté au commit groupé."""
+        with self._turn_queue_lock:
+            self._turn_flush_timer = None
+            if self._turn_flush_active is False:
+                self._turn_flush_active = True
+            if not self._turn_queue:
+                self._turn_flush_active = False
+                return
+        try:
+            from core.thread_pool import get_thread_pool
+            get_thread_pool().submit(
+                "disk-io", self._flush_queued_turns,
+                task_name="record-conversation-turn", stall_timeout=30.0,
+            )
+        except Exception:
+            # À l'arrêt, ne jamais perdre silencieusement la file : le prochain
+            # enqueue retentera une soumission proprement.
+            logger.exception("Impossible de soumettre le lot de conversations")
+            with self._turn_queue_lock:
+                self._turn_flush_active = False
+
+    def _flush_queued_turns(self) -> None:
+        """Vide un lot et alimente aussi le graphe secondaire, hors voix."""
+        with self._turn_queue_lock:
+            turns, self._turn_queue = self._turn_queue, []
+        try:
+            self.save_turns(turns)
+            from core.knowledge_graph import record_conversation_turns
+            record_conversation_turns(turns)
+        except Exception:
+            logger.exception("Lot de conversations non indexé")
+        finally:
+            submit_now = False
+            with self._turn_queue_lock:
+                self._turn_flush_active = False
+                if self._turn_queue:
+                    if len(self._turn_queue) >= TURN_BATCH_MAX:
+                        self._turn_flush_active = True
+                        submit_now = True
+                    elif self._turn_flush_timer is None:
+                        timer = threading.Timer(TURN_BATCH_DELAY_S, self._submit_queued_turn_flush)
+                        timer.daemon = True
+                        self._turn_flush_timer = timer
+                        timer.start()
+            if submit_now:
+                self._submit_queued_turn_flush()
 
     def save_preference(
         self,

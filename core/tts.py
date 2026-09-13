@@ -18,7 +18,6 @@ import asyncio
 import logging
 import os
 import queue as _queue
-import subprocess
 import sys
 import threading
 from abc import ABC, abstractmethod
@@ -35,6 +34,7 @@ from typing import (
 
 import numpy as np
 import sounddevice as sd
+from core import action_kit as kit
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -113,15 +113,18 @@ def _play_audio_bytes(audio_bytes: bytes) -> None:
         # ffmpeg is part of the normal ANO-GPT media stack.  Decode to a fixed
         # mono 24 kHz float stream: no temporary file and no extra UI work.
         try:
-            decoded = subprocess.run(
+            result = kit.run(
                 [
                     "ffmpeg", "-hide_banner", "-loglevel", "error",
                     "-i", "pipe:0", "-f", "f32le", "-acodec", "pcm_f32le",
                     "-ac", "1", "-ar", "24000", "pipe:1",
                 ],
-                input=audio_bytes, capture_output=True, timeout=30, check=True,
-            ).stdout
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                stdin=audio_bytes, timeout=30, binary=True,
+            )
+            if not result.ok:
+                raise RuntimeError(result.reason())
+            decoded = result.stdout
+        except OSError as exc:
             raise RuntimeError(f"Décodage audio impossible (miniaudio/ffmpeg) : {exc}") from exc
         samples = np.frombuffer(decoded, dtype=np.float32)
         sample_rate = 24_000
@@ -339,15 +342,13 @@ def _import_kokoro_pipeline():
             raise RuntimeError(f"Kokoro import failed: {first_err}\nRun: pip install kokoro>=0.9 soundfile") from first_err
 
         logger.warning("Kokoro/transformers version mismatch — upgrading kokoro…")
-        import subprocess
-        result = subprocess.run(
+        result = kit.run(
             [sys.executable, "-m", "pip", "install", "kokoro>=0.9",
              "--upgrade", "--quiet", "--disable-pip-version-check"],
-            capture_output=True,
             timeout=900,
         )
         if result.returncode != 0:
-            stderr = result.stderr.decode(errors="replace").strip()
+            stderr = str(result.stderr).strip()
             raise RuntimeError(f"Kokoro auto‑upgrade failed: {stderr[:200]}") from first_err
 
         # Flush import cache

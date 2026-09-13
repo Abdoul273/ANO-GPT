@@ -16,10 +16,8 @@ Fournit :
 from __future__ import annotations
 
 import asyncio
-import collections
 import dataclasses
 import enum
-import functools
 import inspect
 import re
 import time
@@ -33,7 +31,6 @@ from typing import (
     Callable,
     Literal,
     Mapping,
-    Optional,
     Sequence,
     Union,
     get_args,

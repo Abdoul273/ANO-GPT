@@ -1,8 +1,7 @@
 """tests/test_screen_capture.py — Tests unitaires pour core/screen_capture.py."""
 
-import json
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from core.screen_capture import (
     WindowInfo,
     get_all_clients,

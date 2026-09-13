@@ -7,11 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.persona_manager import (
-    Persona,
     PersonaManager,
-    PersonaSwitchResult,
     get_persona_manager,
-    set_persona_manager,
 )
 
 

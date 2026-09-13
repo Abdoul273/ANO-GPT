@@ -1,35 +1,17 @@
 from __future__ import annotations
 
-import json
-import math
-import os
-import platform
-import random
-import re
-import subprocess
-import sys
-import threading
-import time
-import traceback
-from pathlib import Path
 
-import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
+    Qt,
+    QTimer, QThread, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
+    QFont, QFontMetrics,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QCheckBox, QComboBox, QFrame, QGridLayout,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from ui.core.fade_widget import FadeInWidget
@@ -69,6 +51,23 @@ class _KeyTestWorker(QThread):
         except Exception as e:
             ok, msg = False, f"Erreur : {e}"
         self.finished_ok.emit(ok, msg)
+
+
+class _OpenRouterCatalogWorker(QThread):
+    """Charge le vaste catalogue OpenRouter hors du thread Qt/audio."""
+    finished_ok = pyqtSignal(list, str)
+
+    def __init__(self, api_key: str, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+
+    def run(self):
+        try:
+            from core.llm_client import openrouter_models
+            models, note = openrouter_models(self._api_key), ""
+        except Exception as exc:
+            models, note = [], str(exc)
+        self.finished_ok.emit(models, note)
 
 
 def _shrinkable(combo: QComboBox) -> None:
@@ -129,6 +128,8 @@ class AIConfigOverlay(FadeInWidget):
     def __init__(self, parent=None):
         super().__init__(parent, duration=300)
         self._worker: _KeyTestWorker | None = None
+        self._openrouter_worker: _OpenRouterCatalogWorker | None = None
+        self._openrouter_models: list[str] = []
         self._selected_provider = "gemini"
         self._provider_btns: dict[str, QPushButton] = {}
 
@@ -225,6 +226,17 @@ class AIConfigOverlay(FadeInWidget):
         self._model_input.setMaxVisibleItems(14)
         _shrinkable(self._model_input)
         pl.addWidget(self._model_input)
+
+        self._openrouter_refresh_btn = QPushButton("↻  CHARGER TOUS LES MODÈLES OPENROUTER")
+        self._openrouter_refresh_btn.setFixedHeight(28)
+        self._openrouter_refresh_btn.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        self._openrouter_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._openrouter_refresh_btn.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self._openrouter_refresh_btn.setToolTip(
+            "Lit le catalogue OpenRouter à la demande ; aucun appel réseau à l'ouverture.")
+        self._openrouter_refresh_btn.clicked.connect(self._load_openrouter_catalog)
+        pl.addWidget(self._openrouter_refresh_btn)
 
         # Champs Azure séparés : Azure OpenAI et Azure Speech n'utilisent pas
         # la même ressource ni la même clé. Ils n'apparaissent que pour Azure.
@@ -399,9 +411,10 @@ class AIConfigOverlay(FadeInWidget):
         except Exception:
             choices, deployed, served, no_quota = [], set(), {}, set()
         self._model_input.blockSignals(True)
-        # Serveur perso : on ne peut pas deviner ce qu'il sert, la saisie libre
-        # reste donc le seul recours. Partout ailleurs, on choisit dans la liste.
-        free_text = pid == "custom" or len(choices) <= 1
+        # OpenRouter est volontairement fermé à la saisie : son catalogue
+        # complet est téléchargé pour que l'utilisateur n'ait aucun identifiant
+        # technique à connaître. Le serveur personnel reste le seul cas libre.
+        free_text = pid == "custom" or (pid != "openrouter" and len(choices) <= 1)
         self._model_input.setEditable(free_text)
         self._model_input.clear()
         for name in choices:
@@ -412,6 +425,37 @@ class AIConfigOverlay(FadeInWidget):
             self._model_input.setEditText(current)
         else:
             self._select_combo(self._model_input, current)
+
+    def _load_openrouter_catalog(self) -> None:
+        """Actualise explicitement la liste complète sans bloquer Qt ni la voix."""
+        if self._selected_provider != "openrouter":
+            return
+        if not self._key_input.text().strip():
+            self._set_status("Ajoutez d'abord votre clé OpenRouter.", C.ACC2)
+            return
+        self._openrouter_refresh_btn.setEnabled(False)
+        self._model_input.setEnabled(False)
+        self._set_status("◌ Lecture du catalogue OpenRouter…", C.TEXT_DIM)
+        self._openrouter_worker = _OpenRouterCatalogWorker(
+            self._key_input.text().strip(), parent=self)
+        self._openrouter_worker.finished_ok.connect(self._on_openrouter_catalog_loaded)
+        self._openrouter_worker.start()
+
+    def _on_openrouter_catalog_loaded(self, models: list, note: str) -> None:
+        self._openrouter_refresh_btn.setEnabled(True)
+        self._model_input.setEnabled(True)
+        if not models:
+            self._set_status(f"✗ Catalogue OpenRouter illisible : {note or 'aucun modèle'}", C.RED)
+            return
+        previous = self._model_text()
+        self._openrouter_models = list(models)
+        self._model_input.blockSignals(True)
+        self._model_input.clear()
+        for model in models:
+            self._model_input.addItem(model, model)
+        self._model_input.blockSignals(False)
+        self._select_combo(self._model_input, previous)
+        self._set_status(f"✓ {len(models)} modèles OpenRouter chargés.", C.GREEN)
 
     def _active_provider_id(self) -> str:
         try:
@@ -490,7 +534,7 @@ class AIConfigOverlay(FadeInWidget):
             for widget in (
                 self._key_label, self._key_input, self._show_key_btn,
                 self._save_key_btn, self._url_label, self._url_input,
-                self._model_title, self._model_input,
+                self._model_title, self._model_input, self._openrouter_refresh_btn,
             ):
                 widget.setVisible(False)
             for widget in self._azure_widgets:
@@ -512,6 +556,7 @@ class AIConfigOverlay(FadeInWidget):
             return
         self._model_title.setVisible(True)
         self._model_input.setVisible(True)
+        self._openrouter_refresh_btn.setVisible(pid == "openrouter")
         self._key_label.setVisible(info["needs_key"] or info["key_field"] is not None)
         self._key_input.setVisible(info["needs_key"] or info["key_field"] is not None)
         self._show_key_btn.setVisible(info["needs_key"] or info["key_field"] is not None)
@@ -534,6 +579,18 @@ class AIConfigOverlay(FadeInWidget):
             cfg.get("llm_model", "") if pid == cfg.get("llm_provider", "gemini") else ""
         )
         self._set_model_choices(pid, active_model or info["default_model"])
+        if pid == "openrouter":
+            if self._openrouter_models:
+                # Le catalogue reste disponible pendant toute l'ouverture du
+                # panneau ; pas de second appel réseau à chaque clic.
+                self._on_openrouter_catalog_loaded(self._openrouter_models, "")
+            elif self._key_input.text().strip():
+                # Chargement différé : Qt finit d'abord de poser le panneau.
+                QTimer.singleShot(0, self._load_openrouter_catalog)
+            else:
+                self._model_input.setEnabled(False)
+        else:
+            self._model_input.setEnabled(True)
         is_azure = pid == "azure_openai"
         for widget in self._azure_widgets:
             widget.setVisible(is_azure)
@@ -550,8 +607,9 @@ class AIConfigOverlay(FadeInWidget):
             self._select_combo(self._azure_document_model, cfg.get("azure_document_model", ""))
             self._select_combo(self._azure_image_model, cfg.get("azure_image_model", ""))
             self._select_combo(self._azure_video_model, cfg.get("azure_video_model", ""))
-        self._status_lbl.setText("")
-        self._status_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        if pid != "openrouter":
+            self._status_lbl.setText("")
+            self._status_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
 
     @staticmethod
     def _model_label(name: str, deployed: set, served: dict | None = None,

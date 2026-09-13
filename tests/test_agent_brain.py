@@ -7,8 +7,6 @@ plutôt qu'un blanc.
 """
 
 import asyncio
-import subprocess
-
 import pytest
 
 from core import agent_brain
@@ -92,9 +90,11 @@ def test_un_depassement_de_temps_donne_une_phrase_pas_un_blanc(monkeypatch):
     monkeypatch.setattr(agent_brain, "agent_binary", lambda: "/faux/agy")
 
     def _timeout(*a, **k):
-        raise subprocess.TimeoutExpired(cmd="agy", timeout=90)
+        return agent_brain.kit.ProcResult(
+            cmd=("agy",), code=-9, timed_out=True, err="délai dépassé"
+        )
 
-    monkeypatch.setattr(agent_brain.subprocess, "run", _timeout)
+    monkeypatch.setattr(agent_brain.kit, "run", _timeout)
     answer = agent_brain.think("Question lente", timeout=90)
     assert "90 secondes" in answer
     assert "réponds toi-même" in answer
@@ -110,7 +110,7 @@ def test_une_erreur_de_lagent_est_resumee_a_une_ligne(monkeypatch):
     """Une trace entière lue à voix haute est un supplice."""
     monkeypatch.setattr(agent_brain, "agent_binary", lambda: "/faux/agy")
     monkeypatch.setattr(
-        agent_brain.subprocess, "run",
+        agent_brain.kit, "run",
         lambda *a, **k: _Completed(stderr="échec net\ndétail 1\ndétail 2\ndétail 3"),
     )
     answer = agent_brain.think("Question")

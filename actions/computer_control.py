@@ -183,6 +183,41 @@ def _hypr_dispatch(dispatcher: str, arg: str = "") -> bool:
     return not any(bad in out for bad in ("error", "unknown", "invalid"))
 
 
+def _active_workspace_id() -> str:
+    """Lit l'identifiant du bureau réellement affiché par Hyprland."""
+    data = _hyprctl_json("activeworkspace")
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("id") or data.get("name") or "").strip()
+
+
+def _confirm_workspace(workspace: str, previous: str = "") -> bool:
+    """Un succès de dispatcher n'est pas une preuve que le focus a changé."""
+    kit.hypr_invalidate()
+    target = str(workspace)
+    relative = bool(re.fullmatch(r"e[+-]\d+", target))
+    return kit.wait_until(
+        lambda: (_active_workspace_id() != previous if relative and previous else
+                 _active_workspace_id() == target),
+        timeout=0.65, interval=0.04, max_interval=0.12,
+    )
+
+
+def _confirm_window_workspace(address: str, workspace: str) -> bool:
+    """Vérifie la fenêtre ciblée, plutôt que d'annoncer un déplacement."""
+    kit.hypr_invalidate()
+
+    def moved() -> bool:
+        for client in (_hyprctl_json("clients") or []):
+            if str(client.get("address") or "") != address:
+                continue
+            current = client.get("workspace") or {}
+            return str(current.get("id") or current.get("name") or "") == str(workspace)
+        return False
+
+    return kit.wait_until(moved, timeout=0.65, interval=0.04, max_interval=0.12)
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Extraction workspace — chiffres ET ordinaux français
 # ════════════════════════════════════════════════════════════════════════════
@@ -744,8 +779,11 @@ def _move_to_workspace(title: str, workspace) -> str:
                 _hypr_move_window_to_workspace(f"address:{addr}", ws, follow=False)
             else:
                 _hypr_dispatch("movetoworkspacesilent", f"{ws},address:{addr}")
-            return (f"Fenêtre «{target.get('title') or target.get('class')}» "
-                    f"déplacée vers le bureau {ws}.")
+            label = target.get("title") or target.get("class") or "active"
+            if _confirm_window_workspace(str(addr), ws):
+                return f"Déplacement confirmé : fenêtre «{label}» sur le bureau {ws}."
+            return (f"Déplacement envoyé pour «{label}» vers le bureau {ws}, "
+                    "mais Hyprland ne l'a pas confirmé.")
         except Exception as e:
             return f"Échec du déplacement vers le bureau {ws} : {e}"
     if _have("wmctrl"):
@@ -764,18 +802,24 @@ def _switch_workspace(workspace) -> str:
     if ws is None:
         return f"Numéro de bureau invalide : '{workspace}'."
     if _WAYLAND and _have("hyprctl"):
+        previous = _active_workspace_id()
+        dispatched = False
         if _HAS_WINDOW_INSTANCES:
             try:
-                _hypr_dispatch_hyprland(
+                dispatched = bool(_hypr_dispatch_hyprland(
                     legacy_cmd="workspace",
                     legacy_args=ws,
                     lua_cmd=f'hl.dsp.focus({{ workspace = "{ws}" }})',
-                )
-                return f"Basculé vers le bureau {ws}."
+                ))
             except Exception:
                 pass
-        if _hypr_dispatch("workspace", ws):
-            return f"Basculé vers le bureau {ws}."
+        if not dispatched:
+            dispatched = _hypr_dispatch("workspace", ws)
+        if dispatched and _confirm_workspace(ws, previous=previous):
+            return f"Navigation confirmée : bureau {_active_workspace_id()}. Aucune fenêtre n'a été déplacée."
+        if dispatched:
+            return (f"Navigation envoyée vers le bureau {ws}, mais Hyprland "
+                    "ne l'a pas confirmée. Aucune fenêtre n'a été déplacée.")
         return f"Échec du basculement vers le bureau {ws}."
     if _have("wmctrl"):
         try:
@@ -1108,8 +1152,8 @@ def _parse_control_locally(text: str) -> Optional[Dict[str, Any]]:
         return {"action": "switch_workspace", "params": {"workspace": "e+1"}}
     if re.search(r"\b(?:bureau|workspace)\s+pr[ée]c[ée]dent\b|\bprevious\s+workspace\b", t):
         return {"action": "switch_workspace", "params": {"workspace": "e-1"}}
-    m = re.search(r"(?:passe|va|bascule|change)\s+(?:au|sur|vers)?\s*"
-                  r"(?:bureau|workspace)\s+(\S+)", t)
+    m = re.search(r"(?:passe|va|bascule|change|navigue|rends?-toi)\s+(?:au|sur|vers)?\s*"
+                  r"(?:le\s+)?(?:bureau|workspace)\s+(\S+)", t)
     if m:
         return {"action": "switch_workspace", "params": {"workspace": m.group(1)}}
     m = re.search(r"d[ée]place\s+(?:la\s+fen[êe]tre\s+|cette\s+fen[êe]tre\s+)?"

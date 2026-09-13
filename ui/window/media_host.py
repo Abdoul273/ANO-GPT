@@ -1,45 +1,19 @@
 from __future__ import annotations
 
-import json
 import math
-import os
-import platform
-import random
-import re
-import subprocess
-import sys
 import threading
-import time
-import traceback
-from pathlib import Path
 
-import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
+    QEvent, Qt,
+    QUrl,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
-)
-from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QPixmap,
 )
 
-from ui.core.qtflags import QWebEngineView, _OS, webengine_enabled
-from ui.media.camera import _CameraPreview
-from ui.media.gallery import ImageGalleryOverlay
-from ui.media.video_hub import VideoHubOverlay
-from ui.orb.companion import CompanionOrb
-from ui.orb.mini_orb import MiniOrbOverlay
+from ui.core.qtflags import _OS
 from ui.paths import CONFIG_DIR
-from ui.styles.theme import C
 
 
 class MediaHostMixin:

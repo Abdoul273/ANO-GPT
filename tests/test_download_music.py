@@ -1,7 +1,6 @@
 """Téléchargement musical : meilleur match YouTube, pas n'importe quoi."""
 
 import threading
-from pathlib import Path
 
 import pytest
 

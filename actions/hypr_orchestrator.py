@@ -22,9 +22,8 @@ from __future__ import annotations
 import os
 import re
 from core import action_kit as kit
-import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 # ════════════════════════════════════════════════════════════════════════════
 # Configuration & Cartographie des rôles
@@ -235,13 +234,12 @@ class HyprOrchestrator:
 
         for c in clients:
             addr = c.get("address", "")
-            title = (c.get("title") or "Inconnu")[:30]
+            (c.get("title") or "Inconnu")[:30]
             app_class = c.get("class") or "App"
             current_ws = c.get("workspace", {}).get("id", 1)
             target_ws = cls.classify_window(c)
 
             # Nom court lisible
-            disp_name = f"{app_class} ({title})"
 
             if current_ws != target_ws:
                 # Déplacement silencieux (sans voler le focus)

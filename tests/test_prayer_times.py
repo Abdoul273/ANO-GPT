@@ -3,13 +3,11 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 from core.prayer_times import (
     METHODS,
-    PRAYER_NAMES,
     PrayerManager,
     calculate_prayer_times,
     haversine_km,
@@ -99,7 +97,7 @@ def test_prayer_manager_next_prayer(tmp_path: Path):
     manager = PrayerManager(config_path=cfg_file, state_path=state_file)
 
     tz = datetime.timezone(datetime.timedelta(hours=2))
-    fixed_date = datetime.date(2026, 9, 6)
+    datetime.date(2026, 9, 6)
 
     with patch.object(manager, "resolve_coords", return_value=(48.8566, 2.3522, "Paris")):
         # Cas 1 : Milieu de matinée (10h00) -> Prochaine prière = Dhuhr
@@ -139,7 +137,7 @@ def test_prayer_manager_announcement_detection(tmp_path: Path):
     state_file = tmp_path / "prayer_state.json"
     manager = PrayerManager(config_path=cfg_file, state_path=state_file)
 
-    tz = datetime.timezone(datetime.timedelta(hours=2))
+    datetime.timezone(datetime.timedelta(hours=2))
     with patch.object(manager, "resolve_coords", return_value=(48.8566, 2.3522, "Paris")):
         schedule = manager.get_schedule()
         asr_time = schedule["asr"]
@@ -218,7 +216,7 @@ def test_proactive_prayer_expiration_and_anti_interruption():
 
     # Événement prière récent (5 minutes)
     recent_time = time.time() - 300
-    recent_event = ProactiveEvent(
+    ProactiveEvent(
         topic="prayer",
         message="Il est l'heure de la prière de Dhuhr.",
         data={"prayer": "dhuhr", "time": recent_time},

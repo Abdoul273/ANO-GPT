@@ -6,7 +6,6 @@ import pytest
 from core.prosody import (
     AcousticProsodyAnalyzer,
     ProsodyManager,
-    PROSODY_PROFILES,
     current_prosody_instruction,
 )
 

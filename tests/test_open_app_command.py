@@ -126,7 +126,7 @@ def test_open_app_targets_newly_opened_window(monkeypatch):
     monkeypatch.setitem(oa._OS_LAUNCHERS, oa._SYSTEM, mock_launcher)
     monkeypatch.setattr(oa, "_is_process_running", lambda app: False)
     monkeypatch.setattr(oa, "_HAS_TRACKER", False)
-    monkeypatch.setattr(oa.shutil, "which", lambda cmd: "/usr/bin/" + cmd)
+    monkeypatch.setattr(oa.kit, "which", lambda cmd: "/usr/bin/" + cmd)
 
     initial_clients = [{"address": "0x1111", "workspace": {"id": 1}, "class": "foot"}]
     new_clients = [
@@ -172,7 +172,7 @@ def test_open_app_targets_newly_opened_window(monkeypatch):
     monkeypatch.setattr(cc, "computer_control", mock_cc)
 
     # 1. Cas automatique : détection du diff d'adresses
-    res = open_app({"app_name": "kitty", "command": "codex"})
+    open_app({"app_name": "kitty", "command": "codex"})
 
     # a) et e) Détection de la nouvelle fenêtre (0x55aabbcc) et appel computer_control avec window="address:0x55aabbcc"
     assert len(cc_calls) == 1, "computer_control aurait dû être appelé exactement une fois."
@@ -203,7 +203,7 @@ def test_open_app_targets_newly_opened_window(monkeypatch):
     focused_windows.clear()
     switched_workspaces.clear()
 
-    res_custom = open_app({
+    open_app({
         "app_name": "kitty",
         "command": "codex",
         "target_window": "address:0x999999",

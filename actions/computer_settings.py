@@ -31,7 +31,6 @@ import importlib.util
 import os
 import platform
 import re
-import shutil
 import sys
 import time
 from pathlib import Path

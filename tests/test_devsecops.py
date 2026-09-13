@@ -1,14 +1,11 @@
 """Tests unitaires et d'intégration pour actions/devsecops.py."""
 
 from pathlib import Path
-import pytest
 
 from actions.devsecops import (
     DockerManager,
     SystemdMaster,
-    PackageManager,
     GitMaster,
-    SecurityAuditor,
     parse_devsecops_intent,
     devsecops_control,
 )

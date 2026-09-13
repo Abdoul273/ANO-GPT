@@ -1,14 +1,8 @@
 """tests/test_navigation.py — Tests de la navigation guidée pas-à-pas d'ANO-GPT."""
 
-import json
-import math
-import time
-import pytest
 
 from core.navigation import (
     OFF_ROUTE_DISTANCE_M,
-    OFF_ROUTE_TIME_THRESHOLD_S,
-    RECALCULATE_MIN_INTERVAL_S,
     NavigationManager,
     NavigationRoute,
     NavigationSession,
@@ -17,7 +11,6 @@ from core.navigation import (
     decode_valhalla_polyline,
     distance_to_polyline,
     format_maneuver_fr,
-    get_navigation_manager,
     haversine_distance,
     parse_osrm_response,
     parse_valhalla_response,

@@ -22,14 +22,13 @@ Ce module résout le problème du silence de l'assistant lors des opérations lo
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
 import re
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("anogpt.thought_streamer")
 
@@ -47,7 +46,7 @@ WHISPER_TTS_VOLUME: str = "-45%"
 def mood_aware_waiting_phrase(base: str, tool_name: Optional[str] = None) -> str:
     """Donne une vraie présence vocale pendant une attente, selon le mode."""
     try:
-        from core.personality_modes import PersonalityMode, active_mode
+        from core.personality_modes import active_mode
         mode = active_mode()
     except Exception:
         mode = None
@@ -419,7 +418,7 @@ class ThoughtNoiseFilter:
 
         # Règle générique
         clean_name = normalized.replace("_", " ").title()
-        return (f"Exécution de {clean_name}...", f"Un instant, j'exécute l'action...")
+        return (f"Exécution de {clean_name}...", "Un instant, j'exécute l'action...")
 
     @classmethod
     def generate_audio_milestone(cls, text: str, tool_name: Optional[str] = None) -> str:

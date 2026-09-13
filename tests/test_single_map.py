@@ -7,12 +7,10 @@ tailles. Ces tests empêchent la seconde carte de revenir.
 """
 
 import os
-import re
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 
 UI_ROOT = Path(__file__).resolve().parent.parent / "ui"
 UI = "\n".join(
@@ -115,7 +113,7 @@ def test_les_lieux_autour_de_moi_refusent_une_position_fixe():
     block = MAIN[start:start + 2200]
     assert "fresh_location" in block
     assert "_require_precise_gps" in block
-    assert "Je n'utiliserai ni Kouriah" in block
+    assert "pas une position IP ou une ancienne position" in block
 
 
 def test_une_position_inconnue_est_avouee_et_non_inventee():

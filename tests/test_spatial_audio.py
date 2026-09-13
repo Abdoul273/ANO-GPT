@@ -13,7 +13,6 @@ Vérifie :
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -21,10 +20,6 @@ import pytest
 
 from core.spatial_audio import (
     DEFAULT_SAMPLE_RATE,
-    EAR_SPACING,
-    HEAD_RADIUS,
-    SPEED_OF_SOUND,
-    CartesianCoords,
     HolographicRoomReverb,
     OrbMode,
     PipeWireSpatialChain,
@@ -39,7 +34,6 @@ from core.spatial_audio import (
     generate_binaural_listening_test,
     generate_parametric_hrir,
     get_preset_coordinates,
-    get_spatial_processor,
     screen_coords_to_spherical,
     spherical_to_cartesian,
     spatial_audio_requested,
@@ -280,7 +274,7 @@ def test_mode_switch_smoothness():
     chunk = (np.ones(512, dtype=np.float32) * 0.3 * 32767.0).astype(np.int16).tobytes()
 
     # Traiter en plein écran
-    out_full = processor.process_chunk(chunk)
+    processor.process_chunk(chunk)
 
     # Bascule vers Mini-Orbe
     processor.set_orb_mode(OrbMode.MINI_ORB_TOP_RIGHT)

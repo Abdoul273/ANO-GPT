@@ -1,19 +1,11 @@
 from __future__ import annotations
 
 import json
-import math
-import os
-import platform
-import random
-import re
-import subprocess
 import sys
 import threading
-import time
-import traceback
 from pathlib import Path
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication
 
 

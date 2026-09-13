@@ -12,7 +12,6 @@ Concurrence
 from __future__ import annotations
 
 import asyncio
-import collections
 import json
 import re
 import time
@@ -26,24 +25,15 @@ from core.ai_stt_corrector import STTCorrector, TranscriptAssembler, TranscriptG
 from core.audio_engine import (
     CHANNELS,
     RECEIVE_SAMPLE_RATE,
-    SEND_SAMPLE_RATE,
     _OUTPUT_SLICE_MS,
     _MainAttr,
-)
-from core.gemini_connection import (
-    ConnectionState,
-    is_invalid_api_key_error,
-    is_invalid_live_setup_error,
-    safe_error_summary,
 )
 from core.event_bus import ModelSpeechDeltaEvent
 from core.live_model_policy import (
     DEFAULT_FALLBACK_MODEL,
     DEFAULT_PRIMARY_MODEL,
-    LiveModelPolicy,
 )
 from core.live_speech_config import (
-    DEFAULT_LIVE_VOICE,
     build_input_transcription_config,
     build_output_transcription_config,
     live_end_silence_ms,
@@ -68,7 +58,6 @@ from core import context_probe, memory_store, tool_packs
 from actions.sparring_partner import observe_sparring_utterance
 from core.prosody_analyzer import (
     ProsodyAnalyzer,
-    AcousticFeatures as ProsodyFeatures,
     MoodClassification,
     TTSModulation,
     get_prosody_analyzer,

@@ -1,40 +1,17 @@
 from __future__ import annotations
 
-import json
-import math
 import os
 import platform
-import random
-import re
 import subprocess
 import sys
-import threading
-import time
-import traceback
 from pathlib import Path
 
-import psutil
 
-from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
-)
-from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
-)
-from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
-)
 
-from ui.core.qtflags import _OS, _WIN_HIDE
+from ui.core.qtflags import _OS
 from ui.paths import BASE_DIR
 from ui.styles.theme import C
+from core import action_kit as kit
 
 class SystemOpsMixin:
     def _toggle_fullscreen(self):
@@ -158,8 +135,7 @@ class SystemOpsMixin:
                 pass
         elif _os == "Linux":
             try:
-                out = subprocess.run(["xdg-user-dir", "DESKTOP"],
-                                     capture_output=True, text=True, timeout=5)
+                out = kit.run(["xdg-user-dir", "DESKTOP"], timeout=5)
                 p = Path(out.stdout.strip())
                 if out.stdout.strip() and p != home and p.is_dir():
                     return p
@@ -316,10 +292,10 @@ class SystemOpsMixin:
                 )
                 desk.chmod(desk.stat().st_mode | 0o755)
                 try:
-                    subprocess.run(
+                    kit.run(
                         ["gio", "set", str(desk),
                          "metadata::trusted", "true"],
-                        capture_output=True, timeout=5,
+                        timeout=5,
                     )
                 except Exception:
                     pass

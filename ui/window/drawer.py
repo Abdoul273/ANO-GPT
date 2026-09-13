@@ -1,39 +1,21 @@
 from __future__ import annotations
 
-import json
-import math
-import os
-import platform
-import random
-import re
-import subprocess
-import sys
 import threading
 import time
-import traceback
-from pathlib import Path
 
 import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QLineF, QPointF, QRect, QRectF, QSize, Qt,
-    QTimer, QThread, pyqtSignal, QPropertyAnimation, QUrl,
+    QSize, Qt,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont, QImage,
-    QDesktopServices, QFontDatabase, QFontMetrics, QFontMetricsF, QIcon, QKeySequence,
-    QLinearGradient, QPainter,
-    QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QShortcut,
+    QFont,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QProgressBar,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QTextBrowser, QTextEdit, QVBoxLayout, QWidget, QSplashScreen,
+    QComboBox, QFrame, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from ui.core.metrics import _metrics
-from ui.core.qtflags import _OS
 from ui.panels.log_widget import LogWidget
 from ui.panels.floating_panel import FloatingPanel
 from ui.styles.theme import C, hairline, make_svg_icon, section_label

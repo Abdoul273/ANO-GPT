@@ -1,10 +1,9 @@
 """Tests pour l'index personnel de fichiers FTS5 (core/file_indexer.py)."""
 
 import time
-from pathlib import Path
 import pytest
 
-from core.file_indexer import PersonalFileIndexer, SearchResult
+from core.file_indexer import PersonalFileIndexer
 
 
 @pytest.fixture

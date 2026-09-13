@@ -347,7 +347,11 @@ def _desktop_send(app_name: str, receiver: str, message: str) -> str:
 
 # ── Handlers par plateforme ─────────────────────────────────────────────────
 def _send_whatsapp(receiver: str, message: str) -> str:
-    return _desktop_send("whatsapp", receiver, message)
+    # ZapZap connaît les deep-links WhatsApp et les relaie à son instance
+    # unique. C'est nettement plus fiable que Ctrl+F dans une WebView, qui
+    # pouvait ouvrir la recherche du navigateur plutôt que celle de WhatsApp.
+    from core.zapzap_controller import request_send, resolve_phone
+    return request_send(resolve_phone(receiver), message)
 
 def _send_telegram(receiver: str, message: str) -> str:
     return _desktop_send("telegram", receiver, message)
@@ -590,7 +594,7 @@ def send_message(
     except Exception as e:
         result = f"Impossible d'envoyer le message : {e}"
 
-    ok = "envoyé" in result.lower()
+    ok = ("demande d'envoi transmise" in result.lower() or "envoyé" in result.lower())
     print(f"[SendMessage] {'✅' if ok else '❌'} {result}")
     if player:
         try:

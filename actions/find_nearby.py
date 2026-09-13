@@ -22,7 +22,7 @@ from core.places import describe_places, has_serpapi, search_places
 from core import action_kit as kit
 
 
-def get_location(*, require_precise_gps: bool = False) -> dict[str, Any]:
+def get_location(*, require_precise_gps: bool = False, max_location_age_s: float | None = None) -> dict[str, Any]:
     """Position réelle de l'utilisateur, au format attendu ici.
 
     Le relevé GPS frais passe avant la position IP : une pharmacie annoncée à
@@ -37,7 +37,8 @@ def get_location(*, require_precise_gps: bool = False) -> dict[str, Any]:
     info = get_user_location()
     coords = None
     try:
-        coords = get_precise_user_coords()
+        coords = (get_precise_user_coords(max_age_s=max_location_age_s)
+                  if max_location_age_s is not None else get_precise_user_coords())
     except Exception:
         coords = None
     if require_precise_gps and not coords:
@@ -84,7 +85,10 @@ def find_nearby(parameters: dict | None = None, session_memory=None, ui=None) ->
     else:
         try:
             if params.get("_require_precise_gps"):
-                location = get_location(require_precise_gps=True)
+                location = get_location(
+                    require_precise_gps=True,
+                    max_location_age_s=params.get("_max_location_age_s"),
+                )
             else:
                 location = get_location()
         except Exception as exc:

@@ -455,7 +455,7 @@ class SceneMixin:
                 self._thought_overlay.fade_out()
 
     def _install_shortcuts(self) -> None:
-        QShortcut(QKeySequence("F4"), self).activated.connect(self._toggle_mute)
+        QShortcut(QKeySequence("F4"), self).activated.connect(self._mute_from_shortcut)
         QShortcut(QKeySequence("F8"), self).activated.connect(self._toggle_gesture_control)
         QShortcut(QKeySequence("F11"), self).activated.connect(self._toggle_fullscreen)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._do_interrupt)
