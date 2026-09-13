@@ -139,6 +139,7 @@ class DialogsHostMixin:
             ow, oh,
         )
         ov.provider_changed.connect(self._on_ai_provider_changed)
+        ov.voice_key_changed.connect(self._on_voice_key_changed)
         self._show_settings_overlay(ov, "ai_config", "_ai_config_overlay")
 
     def _on_ai_provider_changed(self, provider: str) -> None:
@@ -152,6 +153,19 @@ class DialogsHostMixin:
             except Exception as exc:
                 if hasattr(self, "_log"):
                     self._log.write_log(f"ERR : bascule de cerveau impossible — {exc}")
+
+    def _on_voice_key_changed(self) -> None:
+        """La clé de la voix a changé : la session Gemini Live doit repartir."""
+        if hasattr(self, "_log"):
+            self._log.write_log("SYS : clé voix Gemini mise à jour — reconnexion vocale.")
+        callback = getattr(self, "on_brain_change", None)
+        if callable(callback):
+            try:
+                from core.llm_client import _load_config
+                callback(str(_load_config().get("brain_provider") or "auto"))
+            except Exception as exc:
+                if hasattr(self, "_log"):
+                    self._log.write_log(f"ERR : reconnexion vocale impossible — {exc}")
 
     def _open_audio_settings(self):
         if self._audio_settings_overlay:

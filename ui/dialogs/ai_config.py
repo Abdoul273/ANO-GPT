@@ -123,6 +123,7 @@ class AIConfigOverlay(FadeInWidget):
     DeepSeek, Gemini, Grok, Groq, Anthropic, OpenAI-compatible. Chaque clé
     peut être testée puis appliquée immédiatement, sans redémarrage."""
     provider_changed = pyqtSignal(str)
+    voice_key_changed = pyqtSignal()
     _OW, _OH = 500, 680
 
     def __init__(self, parent=None):
@@ -202,6 +203,52 @@ class AIConfigOverlay(FadeInWidget):
         self._show_key_btn.clicked.connect(self._toggle_key_visibility)
         key_row.addWidget(self._show_key_btn)
         pl.addLayout(key_row)
+
+        # Gemini seulement : une seconde clé, réservée à la voix (Gemini Live).
+        # Un second projet Google gratuit y suffit : la voix reste gratuite,
+        # pendant que la clé principale (payante) sert à la vision, au coach
+        # TikTok et aux résumés.
+        self._voice_widgets: list[QWidget] = []
+        self._voice_key_label = micro_label("Clé Gemini — voix (Gemini Live), second compte gratuit · optionnel")
+        pl.addWidget(self._voice_key_label)
+        self._voice_widgets.append(self._voice_key_label)
+        voice_row = QHBoxLayout(); voice_row.setSpacing(4)
+        self._voice_key_input = QLineEdit()
+        self._voice_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._voice_key_input.setPlaceholderText("Vide = la voix utilise la clé principale")
+        self._voice_key_input.setFont(QFont("Inter", 10))
+        self._voice_key_input.setFixedHeight(30)
+        self._voice_key_input.setToolTip(
+            "Clé d'un second projet Google AI Studio (jamais rechargé) : la session vocale "
+            "Gemini Live l'utilise seule. Tout le reste (vision, coach, résumés) garde la clé "
+            "principale ci-dessus."
+        )
+        voice_row.addWidget(self._voice_key_input)
+        self._show_voice_key_btn = QPushButton("👁")
+        self._show_voice_key_btn.setFixedSize(30, 30)
+        self._show_voice_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._show_voice_key_btn.clicked.connect(self._toggle_voice_key_visibility)
+        voice_row.addWidget(self._show_voice_key_btn)
+        self._test_voice_btn = QPushButton("◎ VOIX")
+        self._test_voice_btn.setFixedSize(64, 30)
+        self._test_voice_btn.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        self._test_voice_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._test_voice_btn.setToolTip("Vérifie cette clé auprès de Google avant de l'enregistrer.")
+        self._test_voice_btn.clicked.connect(self._test_voice_key)
+        voice_row.addWidget(self._test_voice_btn)
+        voice_holder = QWidget(); voice_holder.setLayout(voice_row)
+        voice_holder.setStyleSheet("background: transparent;")
+        pl.addWidget(voice_holder)
+        self._voice_widgets.append(voice_holder)
+        self._voice_hint = QLabel(
+            "Recharge la clé principale (vision, coach TikTok, modèles Pro) ; laisse ce second "
+            "compte gratuit : la voix ne te coûtera rien."
+        )
+        self._voice_hint.setWordWrap(True)
+        self._voice_hint.setFont(QFont("Inter", 8))
+        self._voice_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        pl.addWidget(self._voice_hint)
+        self._voice_widgets.append(self._voice_hint)
 
         self._url_label = micro_label("URL du serveur")
         pl.addWidget(self._url_label)
@@ -539,6 +586,8 @@ class AIConfigOverlay(FadeInWidget):
                 widget.setVisible(False)
             for widget in self._azure_widgets:
                 widget.setVisible(False)
+            for widget in self._voice_widgets:
+                widget.setVisible(False)
             try:
                 from core.llm_client import PROVIDERS, configured_brain_providers
                 order = configured_brain_providers()
@@ -568,6 +617,12 @@ class AIConfigOverlay(FadeInWidget):
         self._key_input.setPlaceholderText(
             "Collez votre clé API ici…" if info["needs_key"] else "Optionnelle selon votre serveur"
         )
+
+        is_gemini = pid == "gemini"
+        for widget in self._voice_widgets:
+            widget.setVisible(is_gemini)
+        if is_gemini:
+            self._voice_key_input.setText(cfg.get("gemini_live_api_key", "") or "")
 
         self._url_label.setVisible(info["url_editable"])
         self._url_input.setVisible(info["url_editable"])
@@ -738,6 +793,44 @@ class AIConfigOverlay(FadeInWidget):
             "video_model": self._combo_value(self._azure_video_model),
         }
 
+    def _toggle_voice_key_visibility(self):
+        hidden = self._voice_key_input.echoMode() == QLineEdit.EchoMode.Password
+        self._voice_key_input.setEchoMode(
+            QLineEdit.EchoMode.Normal if hidden else QLineEdit.EchoMode.Password)
+
+    def _test_voice_key(self):
+        key = self._voice_key_input.text().strip()
+        if not key:
+            self._set_status("⚠ Colle d'abord la clé du second compte.", C.ACC2)
+            return
+        self._test_voice_btn.setEnabled(False)
+        self._set_status("◌ Vérification de la clé voix auprès de Google…", C.TEXT_DIM)
+        from core.live_model_policy import BALANCED_MODEL
+        self._voice_worker = _KeyTestWorker("gemini", key, BALANCED_MODEL, "", parent=self)
+        self._voice_worker.finished_ok.connect(self._on_voice_test_finished)
+        self._voice_worker.start()
+
+    def _on_voice_test_finished(self, ok: bool, msg: str):
+        self._test_voice_btn.setEnabled(True)
+        self._set_status(
+            f"✓ Clé voix valide — {msg}" if ok else f"✗ Clé voix refusée — {msg}",
+            C.GREEN if ok else C.RED,
+        )
+
+    def _persist_voice_key(self) -> bool:
+        """Écrit la clé voix ; True si elle a changé (la voix doit se reconnecter)."""
+        if self._selected_provider != "gemini":
+            return False
+        key = self._voice_key_input.text().strip()
+        before = str(_read_full_config().get("gemini_live_api_key", "") or "").strip()
+        if key == before:
+            return False
+        from core.llm_client import _write_config_patch
+        if not _write_config_patch({"gemini_live_api_key": key}):
+            raise RuntimeError("écriture de la clé voix refusée")
+        _patch_cached_config({"gemini_live_api_key": key})
+        return True
+
     def _test_key(self):
         pid = self._selected_provider
         info = self._PROVIDERS[pid]
@@ -806,11 +899,16 @@ class AIConfigOverlay(FadeInWidget):
                 **({"azure_openai_endpoint" if pid == "azure_openai" else "llm_url": url.rstrip("/")}
                    if url and info["url_editable"] else {}),
             })
+            voice_changed = self._persist_voice_key()
             self._status_lbl.setText(
                 f"✓ Clé {info['label']} enregistrée. Le mode Auto conserve son ordre de priorité."
+                + (" Clé voix enregistrée : la voix se reconnecte avec le second compte."
+                   if voice_changed else "")
             )
             self._status_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
             self._refresh_provider_list()
+            if voice_changed:
+                self.voice_key_changed.emit()
         except Exception as exc:
             self._status_lbl.setText(f"✗ Échec de l’enregistrement : {exc}")
             self._status_lbl.setStyleSheet(f"color: {C.RED}; background: transparent;")
@@ -875,6 +973,7 @@ class AIConfigOverlay(FadeInWidget):
             if url and info["url_editable"]:
                 patch["azure_openai_endpoint" if pid == "azure_openai" else "llm_url"] = url.rstrip("/")
             _patch_cached_config(patch)
+            self._persist_voice_key()  # la reconnexion vocale suit avec provider_changed
             # Dire exactement ce qui change : le fournisseur choisi devient le
             # cerveau de tout, et Gemini ne garde que la voix. Sans cette
             # phrase, l'utilisateur croit avoir changé la voix aussi.
