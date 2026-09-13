@@ -178,7 +178,9 @@ if _platform.system() == "Windows":
 
 
 import asyncio
+import contextlib
 import re
+import sys
 import signal
 import threading
 import time
@@ -378,6 +380,48 @@ from core.tool_dispatcher import (
 )
 from core.proactive_engine import ProactiveEngine
 from core.phone_relay import PhoneRelay
+
+# Ouverture du WebSocket Live. Sans borne, une poignée de main qui n'aboutit
+# pas (réseau qui flanche pile pendant une reconnexion « outils élargis »)
+# laissait la boucle vocale suspendue pour toujours : plus de voix, plus de
+# texte, aucun journal. Passé ce délai, on relâche et on réessaie.
+LIVE_CONNECT_TIMEOUT_S = 25.0
+
+
+@contextlib.asynccontextmanager
+async def _live_connect(client, model: str, config):
+    """``client.aio.live.connect`` avec délai d'ouverture et battement de cœur."""
+    from core import freeze_watch
+
+    async def _beat_while_connecting():
+        while True:
+            freeze_watch.beat("boucle audio")
+            await asyncio.sleep(0.25)
+
+    cm = client.aio.live.connect(model=model, config=config)
+    beater = asyncio.create_task(_beat_while_connecting(), name="connect-heartbeat")
+    try:
+        async with asyncio.timeout(LIVE_CONNECT_TIMEOUT_S):
+            session = await cm.__aenter__()
+    except TimeoutError:
+        raise TimeoutError(
+            f"Gemini Live n'a pas répondu à l'ouverture en {LIVE_CONNECT_TIMEOUT_S:.0f} s"
+        ) from None
+    finally:
+        beater.cancel()
+    try:
+        yield session
+    finally:
+        # La fermeture aussi peut attendre un serveur muet : on ne la laisse
+        # pas retenir la reconnexion.
+        try:
+            async with asyncio.timeout(5.0):
+                await cm.__aexit__(*sys.exc_info())
+        except BaseException as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            print(f"[JARVIS] fermeture Live ignorée : {exc}")
+
 
 def _unwrap_exception_group(exc: BaseException) -> BaseException:
     """Première vraie exception d'un (Base)ExceptionGroup, récursivement."""
@@ -1653,7 +1697,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
 
                 live_model = self._live_models.current
                 async with (
-                    client.aio.live.connect(model=live_model, config=config) as session,
+                    _live_connect(client, live_model, config) as session,
                     asyncio.TaskGroup() as tg,
                 ):
                     self.session          = session
