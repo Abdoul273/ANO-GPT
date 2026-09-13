@@ -339,7 +339,8 @@ TOOL_DECLARATIONS = [
             "Crée une nouvelle image avec le modèle d'image Azure Foundry dédié, "
             "l'enregistre localement et l'affiche dans la galerie ANO-GPT. "
             "Utilise-le uniquement quand l'utilisateur demande de créer, générer, "
-            "dessiner ou imaginer une image inédite."
+            "dessiner ou imaginer une IMAGE inédite. JAMAIS quand il dit « vidéo », « clip » "
+            "ou « film » : c'est generate_video (ou tiktok_coach action='viral_video' pour TikTok)."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -355,8 +356,11 @@ TOOL_DECLARATIONS = [
         "description": (
             "Crée une nouvelle vidéo avec le modèle vidéo Azure Foundry (Sora), "
             "l'enregistre dans ~/Vidéos/ANO-GPT et l'ouvre dans le lecteur ANO-GPT. "
-            "Utilise-le quand l'utilisateur demande de créer, générer ou animer une "
-            "vidéo inédite. Ne l'utilise jamais pour chercher une vidéo existante "
+            "Utilise-le quand l'utilisateur demande de créer, générer, faire ou animer une "
+            "vidéo inédite — une demande de VIDÉO ne se traite jamais avec generate_image ni par un "
+            "simple script écrit. Pour « une vidéo virale pour mon TikTok », préfère tiktok_coach "
+            "action='viral_video' qui conçoit le concept d'après le compte puis lance cette génération. "
+            "Ne l'utilise jamais pour chercher une vidéo existante "
             "(youtube_video) ni pour lire un fichier local (file_controller)."
         ),
         "parameters": {
@@ -844,13 +848,17 @@ TOOL_DECLARATIONS = [
             "un .md ultra-complet (diagnostic, corrections, plan de montage, et deux prompts vidéo prêts à coller : "
             "Grok Imagine 15 s et Gemini Veo 10 s) dans ~/Documents/ANO-GPT/Diagnostics TikTok et L'OUVRE aussitôt dans "
             "Markdown Studio (ne jamais l'ouvrir toi-même via shell_exec ou un éditeur). Ne crée jamais ce "
-            "fichier avant cet accord explicite. « Ouvre le rapport » ⇒ action='open_report'."
+            "fichier avant cet accord explicite. « Ouvre le rapport » ⇒ action='open_report'. "
+            "« Génère-moi / fais-moi une vidéo (virale) pour mon TikTok », « crée une vidéo qui va percer » ⇒ "
+            "action='viral_video' (query = contrainte éventuelle) : conçoit le concept d'après le compte ET "
+            "produit la vidéo avec Sora — c'est une VIDÉO qui est demandée, jamais une image ni un simple script."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "diagnose | report (après oui explicite, crée ET ouvre le .md) | open_report | review | list | draft | best_time"},
-                "query": {"type": "STRING", "description": "Vidéo visée (diagnose) ou fichier (draft : numéro de la liste, ordinal, mots du nom, chemin), tel que dit"},
+                "action": {"type": "STRING", "description": "diagnose | report (après oui explicite, crée ET ouvre le .md) | open_report | viral_video (concept + génération Sora) | review | list | draft | best_time"},
+                "query": {"type": "STRING", "description": "Vidéo visée (diagnose), fichier (draft : numéro de la liste, ordinal, mots du nom, chemin) ou idée/contrainte (viral_video), tel que dit"},
+                "seconds": {"type": "INTEGER", "description": "viral_video : durée de la vidéo (4, 8 ou 12 s ; défaut 12)"},
                 "path": {"type": "STRING", "description": "Pour draft : chemin du fichier si connu"},
                 "note": {"type": "STRING", "description": "Pour draft : ce que l'utilisateur veut obtenir avec cette vidéo"},
             },
@@ -3609,6 +3617,27 @@ class ToolDispatcher:
                 result = await loop.run_in_executor(
                     None,
                     lambda: tiktok_tracker(parameters=args, player=self.ui, speak=self.speak),
+                )
+
+            elif name == "tiktok_coach" and str(args.get("action") or "").lower() in (
+                "viral_video", "generate_video", "create_video", "make_video", "video_virale",
+            ):
+                # « Génère-moi une vidéo virale » : concept pensé pour CE compte,
+                # puis la vidéo est réellement produite (Sora) en arrière-plan.
+                from actions.tiktok_coach import viral_video_brief
+                secs = int(args.get("seconds") or 12)
+                brief = await loop.run_in_executor(
+                    None, lambda: viral_video_brief(str(args.get("query") or ""), seconds=secs),
+                )
+                self._ui_card("show_card", "result", "Concept vidéo virale",
+                              f"**{brief['concept']}**\n\n{brief['caption']}\n\n```text\n{brief['prompt']}\n```")
+                launched = self._start_video_generation({"prompt": brief["prompt"], "seconds": brief["seconds"]})
+                result = (
+                    f"Concept retenu : {brief['concept']} Description prête : {brief['caption']}. "
+                    + ("La VIDÉO est lancée avec Sora en arrière-plan (plusieurs minutes) : dis le concept "
+                       "en une phrase, précise que la vidéo arrive toute seule, n'appelle aucun autre outil."
+                       if launched else
+                       "Une vidéo est déjà en cours de génération : dis-le, la nouvelle attendra.")
                 )
 
             elif name == "tiktok_coach":

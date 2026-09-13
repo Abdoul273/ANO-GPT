@@ -871,6 +871,87 @@ def generate_video_prompts(v: dict, summary: dict, data: dict) -> dict:
     return {"rationale": str(result.get("rationale") or "").strip(), "prompts": prompts[:len(VIDEO_PROMPT_TARGETS)]}
 
 
+_VIRAL_BRIEF_INSTRUCTIONS = """Tu es directeur artistique et réalisateur de vidéos courtes générées par IA (Sora). Ton client est un créateur TikTok dont voici le compte. Conçois LA vidéo de {seconds} secondes la plus susceptible de devenir virale pour CE compte : même niche, même public, mais en reprenant ce qui a marché et en évitant ce qui a échoué.
+{idea}
+RÈGLES ABSOLUES :
+1. Le prompt suit EXACTEMENT la structure et le niveau de détail du GABARIT (rubriques FORMAT, PERSONNAGE, DÉCOR, ANGLE CAMÉRA, DÉCOUPAGE, AUDIO, STYLE VISUEL, HOOK COMMENTAIRE, dans cet ordre). Le gabarit n'est qu'un exemple de forme : n'en reprends ni le sujet, ni les personnages, ni le décor, ni les dialogues.
+2. DÉCOUPAGE : tranches serrées couvrant exactement {seconds} s ; HOOK dès 0-1 s, un TWIST, une chute/boucle.
+3. Une seule prise, cohérence du personnage, pas de texte à l'écran demandé au générateur (ajouté au montage). Dialogues courts en français entre guillemets.
+4. Le prompt est en français, prêt à envoyer tel quel au générateur, sans commentaire ni markdown.
+
+Réponds en JSON strict :
+{{
+  "concept": "2 phrases dites à voix haute au créateur : l'idée, et pourquoi elle peut percer sur son compte (tutoiement)",
+  "caption": "description TikTok prête à coller avec 4-6 hashtags",
+  "prompt": "..."
+}}
+
+=== GABARIT (forme uniquement) ===
+{template}
+
+=== LE COMPTE ===
+{account}
+"""
+
+
+def _account_digest(cur: dict, items: list[dict], summary: dict) -> str:
+    rows = "\n".join(
+        f"- {v['plays']} vues | {v['like_rate'] * 100:.1f} % J'aime | {v['comments']} com. | "
+        f"{v.get('duration', 0)} s | « {v.get('desc', '')[:80]} »"
+        for v in sorted(items, key=lambda v: v.get('plays', 0), reverse=True)[:12]
+    )
+    parts = [
+        f"@{cur.get('handle')} ({cur.get('nickname')}) : {cur.get('followers')} abonnés, "
+        f"{cur.get('likes')} J'aime, {cur.get('videos')} vidéos. {_summary_facts(summary)}",
+        "Vidéos, de la plus vue à la moins vue :\n" + rows,
+    ]
+    with _REPORT_LOCK:
+        last = _READY_REPORTS.get(_LAST_REPORT_ID)
+    if last:
+        d = last.get("data") or {}
+        if d.get("why"):
+            parts.append("Défauts relevés sur la dernière vidéo diagnostiquée (À ÉVITER) :\n" +
+                         "\n".join(f"- {x}" for x in d["why"][:6]))
+        if d.get("improvements"):
+            parts.append("Corrections recommandées :\n" + "\n".join(f"- {x}" for x in d["improvements"][:6]))
+    return "\n\n".join(parts)
+
+
+def viral_video_brief(query: str = "", seconds: int = 12) -> dict:
+    """Concept + prompt Sora d'une vidéo virale pensée pour CE compte.
+
+    Renvoie ``{"concept", "caption", "prompt", "seconds"}`` ; lève RuntimeError
+    si aucun modèle ne répond ou si les statistiques manquent.
+    """
+    cur, items = dataset()
+    if not items:
+        raise RuntimeError("Je n'ai pas encore les statistiques de tes vidéos TikTok.")
+    summary = account_summary(items)
+    idea = f"Contrainte du créateur : « {query.strip()[:300]} »\n" if query.strip() else ""
+    prompt = _VIRAL_BRIEF_INSTRUCTIONS.format(
+        seconds=seconds, idea=idea, template=_VIDEO_PROMPT_TEMPLATE,
+        account=_account_digest(cur, items, summary),
+    )
+    result: dict = {}
+    for engine in ("gemini", "azure"):
+        try:
+            result = _generate_json([prompt], TEXT_MODELS) if engine == "gemini" else _prompts_json_fallback(prompt)
+        except Exception as exc:
+            print(f"[Coach TikTok] concept viral ({engine}) : {str(exc)[:160]}")
+            continue
+        if isinstance(result, dict) and str(result.get("prompt") or "").strip():
+            break
+        result = {}
+    if not result:
+        raise RuntimeError("Aucun modèle n'a pu concevoir la vidéo pour le moment.")
+    return {
+        "concept": str(result.get("concept") or "").strip(),
+        "caption": str(result.get("caption") or "").strip(),
+        "prompt": str(result["prompt"]).strip(),
+        "seconds": seconds,
+    }
+
+
 def _video_prompts_section(generated: dict) -> list[str]:
     lines = ["## Prompts vidéo prêts à coller (Grok Imagine 15 s · Gemini Veo 10 s)", ""]
     if not generated:

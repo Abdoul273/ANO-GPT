@@ -107,7 +107,8 @@ PACKS: Mapping[str, ToolPack] = {
         }),
         triggers=_triggers(
             r"\b(image|images|photo de|illustration|dessine|dessin|logo|affiche)\b",
-            r"\b(gener(?:e|er)|cree|creer|fabrique)\b.{0,24}\b(image|video|visuel|illustration)\b",
+            r"\b(gener\w*|cree\w*|creer|fabrique\w*|fais[- ]?moi|produis\w*|realise\w*)\b.{0,40}\b(image|video|visuel|illustration|clip)\b",
+            r"\b(video|clip)\b.{0,30}\b(viral\w*|tiktok)\b",
             r"\b(galerie|montre[- ]?moi (?:une|des) (?:image|photo))\b",
         ),
     ),
