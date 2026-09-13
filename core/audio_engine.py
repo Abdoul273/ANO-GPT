@@ -35,6 +35,7 @@ import asyncio
 import collections
 import concurrent.futures
 import re
+import os
 import threading
 import time
 import uuid
@@ -1634,11 +1635,13 @@ class AudioEngine:
                 )
                 return
             listener = None
+            # Le flux d'écoute est épinglé sur la source AEC par PULSE_SOURCE :
+            # changer la source par défaut déplaçait aussi le micro principal
+            # sous PipeWire, et le flux AEC repartait sur le micro brut au
+            # moment de la remise en place.
+            previous_source = os.environ.get("PULSE_SOURCE")
+            os.environ["PULSE_SOURCE"] = aec_name
             try:
-                if not audio_router.set_default_source(aec_name):
-                    detector.close()
-                    return
-
                 def _on_interrupt(kind: str = "stop", text: str = "") -> None:
                     if self.ui.muted:
                         return
@@ -1662,7 +1665,11 @@ class AudioEngine:
                 )
                 if listener.start():
                     self._barge_listener = listener
-                    print("[ANO-GPT] ✋ Barge-in actif — stop / arrête-toi / écoute / Ano stop.")
+                    # La référence de l'annulation d'écho : la lecture d'ANO
+                    # passe par le puits AEC. Sans ça, Vosk entendait ANO.
+                    moved = audio_router.route_own_playback_to_aec()
+                    print(f"[ANO-GPT] ✋ Barge-in actif — stop / arrête-toi / écoute / Ano stop "
+                          f"(lecture routée via AEC : {moved} flux).")
                     loop.call_soon_threadsafe(
                         self.ui.write_log,
                         "SYS : interruption vocale active — dis « stop », « arrête-toi » ou "
@@ -1672,7 +1679,10 @@ class AudioEngine:
                     listener.stop()
                     listener = None
             finally:
-                audio_router.set_default_source(raw_name)
+                if previous_source is None:
+                    os.environ.pop("PULSE_SOURCE", None)
+                else:
+                    os.environ["PULSE_SOURCE"] = previous_source
             if listener is None:
                 detector.close()
                 audio_router.disable_echo_cancel()
@@ -1907,6 +1917,11 @@ class AudioEngine:
                     # le worker de sortie, jamais la boucle de réception Live.
                     await loop.run_in_executor(audio_executor, candidate.start)
                     stream = candidate
+                    # Un flux de sortie (ré)ouvert repart sur le puits par
+                    # défaut : s'il y a une annulation d'écho, il doit passer
+                    # par elle pour que « stop » reste audible.
+                    if audio_router.echo_cancel_active():
+                        loop.run_in_executor(None, audio_router.route_own_playback_to_aec)
                     # PortAudio négocie sa propre latence : le réglage demandé
                     # n'est qu'un souhait. Relever la valeur réelle garde le
                     # sous-titre calé quel que soit le périphérique.

@@ -40,6 +40,7 @@ continu), d'où la nécessité de fermer/rouvrir le flux à chaque changement.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -636,9 +637,15 @@ def enable_echo_cancel(master_source: str, master_sink: Optional[str] = None) ->
         "aec_method=webrtc",
         "aec_args=\"analog_gain_control=0 digital_gain_control=1\"",
     ]
+    # Sans référence de lecture, WebRTC n'a rien à soustraire : la source
+    # « nettoyée » contenait la voix d'ANO entière et « stop » restait
+    # inaudible. On crée donc toujours le puits AEC (sur le puits par défaut)
+    # et on y déplace la lecture de CE processus (voir route_own_playback_to_aec).
+    if not master_sink:
+        master_sink = default_sink_name()
     if master_sink:
         args.insert(1, f"sink_master={master_sink}")
-        args.insert(2, "sink_name=anogpt_speaker_aec")
+        args.insert(2, f"sink_name={_AEC_SINK}")
     try:
         r = kit.run([_PACTL, "load-module", "module-echo-cancel", *args], timeout=5)
         mod_id = (r.stdout or "").strip()
@@ -654,6 +661,62 @@ def enable_echo_cancel(master_source: str, master_sink: Optional[str] = None) ->
 
 def disable_echo_cancel() -> None:
     unload_all_echo_cancel()
+
+
+_AEC_SINK = "anogpt_speaker_aec"
+
+
+def default_sink_name() -> Optional[str]:
+    try:
+        r = kit.run([_PACTL, "get-default-sink"], timeout=3)
+        name = (r.stdout or "").strip()
+        return name if r.returncode == 0 and name and not name.startswith(_AEC_SINK) else None
+    except Exception:
+        return None
+
+
+def echo_cancel_active() -> bool:
+    return _echo_source_name is not None
+
+
+def route_own_playback_to_aec() -> int:
+    """Déplace les flux de lecture de ce processus vers le puits AEC.
+
+    C'est ce qui donne à l'annulation d'écho sa référence : ce qu'ANO joue
+    passe par le puits AEC, la source AEC le soustrait du micro, et le
+    détecteur n'entend plus que l'utilisateur. Renvoie le nombre de flux déplacés.
+    """
+    if _echo_source_name is None:
+        return 0
+    try:
+        r = kit.run([_PACTL, "list", "sink-inputs"], timeout=4)
+    except Exception:
+        return 0
+    if r.returncode != 0:
+        return 0
+    pid = str(os.getpid())
+    moved = 0
+    current_id: Optional[str] = None
+    current_pid: Optional[str] = None
+
+    def _flush() -> None:
+        nonlocal moved
+        # `Sink:` donne un index, pas un nom : on déplace sans comparer,
+        # l'opération est idempotente.
+        if current_id and current_pid == pid:
+            if _pactl("move-sink-input", current_id, _AEC_SINK):
+                moved += 1
+
+    for line in (r.stdout or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Sink Input #"):
+            _flush()
+            current_id = stripped.split("#", 1)[1].strip()
+            current_pid = None
+        elif stripped.startswith("application.process.id"):
+            current_pid = stripped.split("=", 1)[1].strip().strip('"')
+    _flush()
+    return moved
 
 
 # ═══════════════════════════════════════════════════════════════════════════
