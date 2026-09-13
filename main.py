@@ -1491,7 +1491,10 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
             if tg is not seen_tg:
                 seen_tg, aborting_since = tg, None
             tasks = {t for t in getattr(tg, "_tasks", ()) if not t.done()}
-            if not (getattr(tg, "_aborting", False) or getattr(tg, "_exiting", False)) or not tasks:
+            # `_exiting` est l'état NORMAL d'une session (le corps du
+            # `async with` ne fait que créer les tâches) : seul `_aborting`
+            # signifie qu'une fermeture a été demandée.
+            if not getattr(tg, "_aborting", False) or not tasks:
                 aborting_since = None
                 continue
             now = time.monotonic()
