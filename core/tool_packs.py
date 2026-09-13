@@ -47,6 +47,7 @@ CORE: frozenset[str] = frozenset({
     "system_status", "open_app", "close_app", "shell_exec", "undo_action",
     # Cadre de session
     "report_capability_gap", "shutdown_jarvis", "voice_style",
+    "capability_guide",
     # TikTok de l'utilisateur : toujours à portée. Le modèle agit souvent sur
     # l'audio avant que la transcription n'ouvre un paquet ; sans ces outils
     # dans le noyau, « combien de vues a fait ma dernière vidéo » partait en

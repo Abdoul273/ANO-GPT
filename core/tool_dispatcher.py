@@ -74,6 +74,7 @@ from actions.contacts import contacts_control
 from actions.sparring_partner import sparring_partner
 from actions.background_tasks import BackgroundTaskService, format_tasks, format_agent_result
 from actions.system_monitor import get_system_status
+from actions.capability_guide import capability_guide as capability_guide_action
 
 types = _MainAttr("types")
 
@@ -2155,6 +2156,38 @@ TOOL_DECLARATIONS.append({
     },
 })
 TOOL_DECLARATIONS.append({
+    "name": "capability_guide",
+    "description": (
+        "OBLIGATOIRE dès que l'utilisateur demande tes compétences, ce que tu "
+        "peux faire, tes fonctionnalités, tes outils, un guide d'utilisation, "
+        "ou de noter / ouvrir / mettre à jour ce guide. Ne récite JAMAIS la "
+        "liste de mémoire et ne l'invente pas. action='brief' (défaut) : "
+        "résumé parlé des meilleures fonctions, puis la question de tout noter "
+        "dans un Markdown. action='write' si l'utilisateur accepte, ou demande "
+        "d'écrire / rafraîchir le fichier. action='open' pour ouvrir le guide "
+        "déjà prêt. Le fichier n'est recréé que s'il manque ou n'est plus à "
+        "jour. Passe toujours la phrase entendue dans query."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": "brief (défaut) | write | open | status",
+            },
+            "query": {
+                "type": "STRING",
+                "description": "Phrase exacte de l'utilisateur",
+            },
+            "open_after": {
+                "type": "BOOLEAN",
+                "description": "Ouvrir le fichier après écriture (défaut : oui s'il vient d'être écrit)",
+            },
+        },
+        "required": [],
+    },
+})
+TOOL_DECLARATIONS.append({
     "name": "search_personal_docs",
     "description": (
         "Recherche chirurgicale et sémantique dans les documents personnels et code source "
@@ -2260,6 +2293,7 @@ _TOOL_LABELS = {
     "devsecops": "DevSecOps & Système",
     "hypr_orchestrator": "Orchestrateur Hyprland",
     "point_on_screen": "Pointeur visuel",
+    "capability_guide": "Compétences",
 }
 
 
@@ -3754,6 +3788,14 @@ class ToolDispatcher:
                               + "\n- ".join(entries)) if entries else "Aucune action annulable."
                 else:
                     result = await loop.run_in_executor(None, undo_stack.undo_last)
+
+            elif name == "capability_guide":
+                payload = dict(args)
+                if not str(payload.get("query") or "").strip():
+                    payload["query"] = str(getattr(self, "_live_user_text", "") or "")
+                result = await asyncio.to_thread(
+                    capability_guide_action, parameters=payload, player=self.ui,
+                )
 
             elif name == "plugin_manager":
                 action = str(args.get("action") or "list").casefold()

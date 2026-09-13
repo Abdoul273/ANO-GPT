@@ -102,6 +102,7 @@ _POLICIES: dict[str, ActionPolicy] = {
     "devsecops": ActionPolicy(timeout_s=90.0),
     "hypr_orchestrator": ActionPolicy(timeout_s=25.0),
     "second_brain": ActionPolicy(timeout_s=40.0),
+    "capability_guide": ActionPolicy(timeout_s=8.0, max_concurrency=1),
 }
 
 

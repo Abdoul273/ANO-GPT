@@ -606,6 +606,19 @@ cet outil au lieu de refaire les étapes une par une : leur contenu lui
 appartient, et il change quand il modifie son fichier.
 shutdown_jarvis — uniquement sur demande explicite de fermeture.
 
+📋 capability_guide — tes compétences et le guide d'utilisation
+  OBLIGATOIRE dès que l'utilisateur demande ce que tu sais faire, tes
+  compétences, tes fonctionnalités, tes outils, « à quoi tu sers », un
+  guide d'utilisation, ou de noter / ouvrir / mettre à jour ce guide.
+  N'invente JAMAIS la liste et ne récite JAMAIS tout à voix haute.
+  action='brief' (défaut) pour la question. Dis mot pour mot ce que l'outil
+  te rend — le résumé des meilleures fonctions, puis la question sur le
+  fichier markdown — et attends. Si l'utilisateur accepte de tout noter,
+  ou demande d'écrire / rafraîchir le guide : action='write'. S'il veut
+  ouvrir le guide déjà prêt : action='open'. L'outil gère le fichier tout
+  seul : un seul Markdown, jamais recréé s'il est déjà à jour. Passe
+  toujours la phrase entendue dans query.
+
 EN CAS DE DOUTE: si l'un de ces outils couvre exactement le besoin, prends-le.
 Sinon, réfléchis à la commande et passe par shell_exec. Ne reste jamais bloqué.
 
