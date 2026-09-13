@@ -192,3 +192,32 @@ def test_watchdog_rate_limiting():
     assert triggered is True
     assert len(called) == 1
     assert called[0] == "watchdog_inactivity"
+
+
+def test_watchdog_releases_speech_flag_stuck_without_audio():
+    """Session tombée en pleine réponse : `_is_speaking` reste levé, plus
+    aucun son n'arrive. Le micro doit être rendu au lieu de rester retenu."""
+    host = DummyHost()
+    host._is_speaking = True
+    called = []
+    host.reset_audio_and_turn_state = lambda source="unknown": called.append(source)
+    host.check_audio_watchdog = AudioEngine.check_audio_watchdog.__get__(host)
+
+    host._last_model_turn_data_at = 90.0
+    assert host.check_audio_watchdog(now=93.0) is False   # 3 s : encore normal
+    assert called == []
+    assert host.check_audio_watchdog(now=97.0) is True    # > 6 s sans son
+    assert called == ["watchdog_stalled_speech"]
+
+
+def test_watchdog_keeps_speech_flag_while_audio_is_queued():
+    host = DummyHost()
+    host._is_speaking = True
+    host.audio_in_queue.put_nowait(b"\x00\x00")
+    called = []
+    host.reset_audio_and_turn_state = lambda source="unknown": called.append(source)
+    host.check_audio_watchdog = AudioEngine.check_audio_watchdog.__get__(host)
+
+    host._last_model_turn_data_at = 90.0
+    assert host.check_audio_watchdog(now=100.0) is False
+    assert called == []

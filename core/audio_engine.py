@@ -268,6 +268,10 @@ class AudioCallbacks(Protocol):
     def check_speaker(self) -> None: ...
 
 
+# Silence maximal toléré pendant qu'une réponse est censée sortir.
+STALLED_SPEECH_S = 6.0
+
+
 class AudioEngine:
     """Capture InputStream 16 kHz + playback RawOutputStream 24 kHz.
 
@@ -361,38 +365,46 @@ class AudioEngine:
                 break
 
     def _flush_synced_speech_text(self, force: bool = False) -> None:
-        """Display queued assistant text only while audio is actually playing."""
+        """Affiche le texte entendu, avec rattrapage borné des transcriptions tardives."""
         q = self.speech_text_queue
         if not q:
             return
+        # Gemini peut envoyer quelques secondes de PCM avant sa transcription.
+        # Un seul groupe de deux mots par tranche audio (20 ms) entretenait
+        # alors un retard très visible. On vide les groupes déjà échus par lot
+        # court : l'affichage rattrape immédiatement, sans jamais afficher un
+        # mot dont l'instant audio n'est pas encore atteint.
+        max_units = 64 if force else 8
+        heard_sec = float("inf")
         if not force:
+            # ``_audio_played_sec`` compte ce qui a été REMIS à PortAudio, pas
+            # ce qui est sorti des haut-parleurs : le tampon du périphérique
+            # retarde l'écoute d'autant. Sans cette soustraction, le sous-titre
+            # devançait la voix de toute la latence de sortie.
+            heard_sec = self._audio_played_sec - getattr(
+                self, "_audio_output_latency", _OUTPUT_LATENCY_S)
+
+        for _ in range(max_units):
             try:
                 target_sec, _txt = q._queue[0]
             except Exception:
                 return
-            # ``_audio_played_sec`` compte ce qui a été REMIS à PortAudio, pas
-            # ce qui est sorti des haut-parleurs : le tampon du périphérique
-            # retarde l'écoute d'autant. Sans cette soustraction, le sous-titre
-            # devançait la voix de toute la latence de sortie — le défaut le
-            # plus audible, et il s'aggravait sur les périphériques lents.
-            heard_sec = self._audio_played_sec - getattr(
-                self, "_audio_output_latency", _OUTPUT_LATENCY_S)
             # La carte texte est mise à jour sur le thread Qt au prochain tour
             # d'événements. Une avance de 35 ms absorbe ce passage sans faire
             # apparaître le mot visiblement avant la voix.
-            if target_sec > heard_sec + 0.035:
+            if not force and target_sec > heard_sec + 0.035:
                 return
-        try:
-            item = q.get_nowait()
-        except asyncio.QueueEmpty:
-            return
-        try:
-            _target_sec, txt = item
-        except Exception:
-            txt = str(item)
-        prefix = "[INLINE]" if self._speech_display_open else f"[INLINE_START]{self._asst_name}: "
-        self.ui.write_log(f"{prefix}{txt}")
-        self._speech_display_open = True
+            try:
+                item = q.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            try:
+                _target_sec, txt = item
+            except Exception:
+                txt = str(item)
+            prefix = "[INLINE]" if self._speech_display_open else f"[INLINE_START]{self._asst_name}: "
+            self.ui.write_log(f"{prefix}{txt}")
+            self._speech_display_open = True
 
     def _reset_speech_sync(self) -> None:
         self._drain_spoken_text_queue()
@@ -682,6 +694,34 @@ class AudioEngine:
                 f"({now_mono - last_io:.1f}s sans I/O) — déblocage du micro."
             )
             self.reset_audio_and_turn_state(source="watchdog_inactivity")
+            return True
+
+        # Voix « fantôme » : le drapeau parlant reste levé alors que plus
+        # aucune tranche PCM n'arrive ni ne joue. Cela arrive quand la
+        # session Live tombe en pleine réponse — `turn_complete` n'est jamais
+        # reçu, donc la boucle de lecture ne rabaisse jamais le drapeau. Dans
+        # cet état le micro est retenu (« speaking »), chaque transcription
+        # est refusée et l'assistant paraît endormi bien qu'à l'écoute. Aucun
+        # vrai tour audio ne laisse un tel silence : Gemini envoie sa voix
+        # plus vite que le temps réel.
+        q_in = getattr(self, "audio_in_queue", None)
+        queue_empty = True
+        if q_in is not None:
+            try:
+                queue_empty = q_in.empty()
+            except Exception:
+                queue_empty = True
+        if (
+            jarvis_speaking
+            and queue_empty
+            and (now_mono - last_io > STALLED_SPEECH_S)
+        ):
+            self._last_watchdog_trigger = now_mono
+            print(
+                f"[JARVIS] ⚠️ Watchdog audio : voix restée « active » "
+                f"{now_mono - last_io:.1f}s sans aucun son — tour clos, micro rendu."
+            )
+            self.reset_audio_and_turn_state(source="watchdog_stalled_speech")
             return True
 
         return False
