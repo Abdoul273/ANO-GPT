@@ -119,7 +119,7 @@ class InterruptPhraseDetector:
             # KaldiRecognizer sans grammaire est utilisé, classify() filtre les commandes.
             try:
                 self._rec = KaldiRecognizer(
-                    model, sample_rate, json.dumps(list(INTERRUPT_GRAMMAR)),
+                    model, sample_rate, json.dumps(list(INTERRUPT_GRAMMAR), ensure_ascii=False),
                 )
             except Exception:
                 self._rec = KaldiRecognizer(model, sample_rate)
@@ -345,6 +345,8 @@ class LocalBargeInListener:
         self._stream = None
         self._fired = False
         self._armed_logged = False
+        self._blocks = 0
+        self._peak = 0.0
 
     @property
     def active(self) -> bool:
@@ -390,8 +392,18 @@ class LocalBargeInListener:
                     return
                 if not self._armed_logged:
                     self._armed_logged = True
+                    self._blocks = 0
+                    self._peak = 0.0
                     rms = float(np.sqrt(np.mean(pcm.astype(np.float32) ** 2))) if pcm.size else 0.0
                     logger.info("barge-in armé (niveau AEC %.0f)", rms)
+                self._blocks += 1
+                rms_now = float(np.sqrt(np.mean(pcm.astype(np.float32) ** 2))) if pcm.size else 0.0
+                self._peak = max(self._peak, rms_now)
+                if self._blocks % 100 == 0:  # toutes les 2 s environ
+                    logger.info("barge-in écoute : %d blocs, pic %.0f, worker=%s, dernier=%r",
+                                self._blocks, self._peak, getattr(self._detector, "available", None),
+                                getattr(self._detector, "last_text", ""))
+                    self._peak = 0.0
 
                 # Chemin 1 : Vosk local
                 if getattr(self._detector, "available", False) and self._detector.process(np.ascontiguousarray(pcm)):
@@ -401,6 +413,8 @@ class LocalBargeInListener:
                         self._detector.reset()
                         return
                     self._fired = True
+                    logger.info("barge-in détecté : %r (%s)", getattr(self._detector, "last_text", ""),
+                                getattr(self._detector, "last_kind", ""))
                     try:
                         self._on_interrupt(
                             getattr(self._detector, "last_kind", "redirect"),

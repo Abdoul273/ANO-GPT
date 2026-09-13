@@ -44,7 +44,7 @@ def main():
     # (ex: grand modèle Kaldi), repli sur le recognizer complet.
     try:
         recognizer = KaldiRecognizer(
-            model, int(sys.argv[2]), json.dumps(list(INTERRUPT_GRAMMAR)),
+            model, int(sys.argv[2]), json.dumps(list(INTERRUPT_GRAMMAR), ensure_ascii=False),
         )
     except Exception:
         recognizer = KaldiRecognizer(model, int(sys.argv[2]))

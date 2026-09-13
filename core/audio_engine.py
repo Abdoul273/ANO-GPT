@@ -35,6 +35,7 @@ import asyncio
 import collections
 import concurrent.futures
 import re
+import logging
 import os
 import threading
 import time
@@ -1643,6 +1644,8 @@ class AudioEngine:
             os.environ["PULSE_SOURCE"] = aec_name
             try:
                 def _on_interrupt(kind: str = "stop", text: str = "") -> None:
+                    logging.getLogger("anogpt.barge_in").info(
+                        "stop vocal → interrupt() (muted=%s, speaking=%s)", self.ui.muted, self._is_speaking)
                     if self.ui.muted:
                         return
                     if kind == "stop":
