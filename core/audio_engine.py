@@ -1595,6 +1595,100 @@ class AudioEngine:
             if _barge_listener is not None:
                 _barge_listener.stop()
             audio_router.disable_echo_cancel()
+    def _start_barge_in(self, raw_name: str, loop) -> None:
+        """Interruption vocale locale pour la capture Mark-LII.
+
+        Second flux PortAudio branché sur la source AEC (la voix d'ANO en est
+        soustraite), décodé par Vosk dans un processus isolé : « stop »,
+        « arrête-toi », « écoute », « Ano stop » coupent la voix aussitôt.
+        Le flux principal, lui, reste strictement half-duplex : rien de ce
+        qu'ANO dit ne part au modèle. Tout se charge en arrière-plan.
+        """
+        if not raw_name or getattr(self, "_barge_listener", None) is not None:
+            return
+
+        def _speaking_now() -> bool:
+            if self.ui.muted:
+                return False
+            with self._speaking_lock:
+                return self._is_speaking
+
+        def _loader() -> None:
+            detector = InterruptPhraseDetector(sample_rate=SEND_SAMPLE_RATE, mode="commands")
+            if detector.available:
+                detector.wait_ready(35.0)
+            if not detector.available:
+                reason = getattr(detector, "fail_reason", "") or "détecteur local inactif"
+                loop.call_soon_threadsafe(
+                    self.ui.write_log,
+                    f"SYS : interruption vocale locale indisponible ({reason}) ; "
+                    "seuls Échap ou le bouton Interrompre coupent la voix.",
+                )
+                return
+            aec_name = audio_router.enable_echo_cancel(raw_name)
+            if not aec_name:
+                detector.close()
+                loop.call_soon_threadsafe(
+                    self.ui.write_log,
+                    "SYS : interruption vocale inactive (annulation d'écho PipeWire indisponible).",
+                )
+                return
+            listener = None
+            try:
+                if not audio_router.set_default_source(aec_name):
+                    detector.close()
+                    return
+
+                def _on_interrupt(kind: str = "stop", text: str = "") -> None:
+                    if self.ui.muted:
+                        return
+                    if kind == "stop":
+                        self._barge_stop_event.set()
+                    bus = getattr(self, "_event_bus", None)
+                    if bus is not None:
+                        bus.publish_sync(BargeInDetectedEvent(
+                            trigger_type=f"local-{kind}", confidence=1.0,
+                        ))
+                    loop.call_soon_threadsafe(self.interrupt)
+                    loop.call_soon_threadsafe(
+                        self.ui.write_log, f"SYS : stop vocal — « {text or kind} »",
+                    )
+
+                listener = LocalBargeInListener(
+                    sd, detector, _speaking_now, _on_interrupt,
+                    sample_rate=SEND_SAMPLE_RATE, blocksize=320,
+                    input_device=audio_router.portaudio_input_device(sd),
+                    is_enabled=lambda: not self.ui.muted,
+                )
+                if listener.start():
+                    self._barge_listener = listener
+                    print("[ANO-GPT] ✋ Barge-in actif — stop / arrête-toi / écoute / Ano stop.")
+                    loop.call_soon_threadsafe(
+                        self.ui.write_log,
+                        "SYS : interruption vocale active — dis « stop », « arrête-toi » ou "
+                        "« écoute » pendant qu'ANO parle.",
+                    )
+                else:
+                    listener.stop()
+                    listener = None
+            finally:
+                audio_router.set_default_source(raw_name)
+            if listener is None:
+                detector.close()
+                audio_router.disable_echo_cancel()
+
+        threading.Thread(target=_loader, name="anogpt-barge-loader", daemon=True).start()
+
+    def _stop_barge_in(self) -> None:
+        listener = getattr(self, "_barge_listener", None)
+        self._barge_listener = None
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception:
+                pass
+            audio_router.disable_echo_cancel()
+
     async def _listen_audio(self):
         """Capture Mark-LII : PCM brut directement vers Gemini Live.
 
@@ -1652,6 +1746,7 @@ class AudioEngine:
 
         reopen = threading.Event()
         self._mic_reopen_evt = reopen
+        stop_quiet = {"n": 0}
 
         def callback(indata, _frames, _time_info, status):
             nonlocal music_gate_visible, music_wake_pending
@@ -1693,7 +1788,25 @@ class AudioEngine:
                 # Invariant du projet : la voix d'ANO ne doit jamais rentrer
                 # dans le modèle. C'est exactement le callback half-duplex de
                 # Mark-LII, sans traitement audio dans le thread PortAudio.
-                if speaking or getattr(self, "_model_turn_active", False) or getattr(self, "_is_thinking", False):
+                interrupted = bool(getattr(self, "_interrupted", False))
+                if speaking or (
+                    (getattr(self, "_model_turn_active", False) or getattr(self, "_is_thinking", False))
+                    and not interrupted
+                ):
+                    return
+                # « Stop » vient d'être dit : ce mot-là ne doit pas partir au
+                # modèle (il répondrait « d'accord »). On jette le son jusqu'à
+                # ~400 ms de calme, puis le micro repart normalement.
+                stop_event = getattr(self, "_barge_stop_event", None)
+                if stop_event is not None and stop_event.is_set():
+                    rms_raw = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2))) if samples.size else 0.0
+                    if rms_raw < 400.0:
+                        stop_quiet["n"] += 1
+                    else:
+                        stop_quiet["n"] = 0
+                    if stop_quiet["n"] >= 6:
+                        stop_quiet["n"] = 0
+                        stop_event.clear()
                     return
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
@@ -1720,6 +1833,11 @@ class AudioEngine:
             except Exception as exc:
                 print(f"[ANO-GPT] ⚠️ Politique micro : {exc}")
             device = audio_router.portaudio_input_device(sd)
+            raw_name = None
+            try:
+                raw_name = chosen.device.name if getattr(chosen, "device", None) else None
+            except Exception:
+                raw_name = None
             try:
                 with sd.InputStream(
                     samplerate=SEND_SAMPLE_RATE,
@@ -1731,8 +1849,12 @@ class AudioEngine:
                     latency="high",
                 ):
                     print("[ANO-GPT] 🎤 Flux micro Mark-LII ouvert (16 kHz mono PCM)")
-                    while not reopen.is_set():
-                        await asyncio.sleep(0.2)
+                    self._start_barge_in(raw_name, loop)
+                    try:
+                        while not reopen.is_set():
+                            await asyncio.sleep(0.2)
+                    finally:
+                        self._stop_barge_in()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

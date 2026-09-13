@@ -84,8 +84,10 @@ class InterruptPhraseDetector:
 
     def __init__(self, model=None, model_path: Optional[Path] = None,
                  sample_rate: int = 16000, addressed_only: bool = False,
-                 isolated: Optional[Any] = None) -> None:
+                 isolated: Optional[Any] = None, mode: str = "") -> None:
         self.addressed_only = addressed_only
+        # "" (historique) | "commands" : ordres avec ou sans nom, jamais le nom seul.
+        self.mode = mode
         self.available = False
         self.fail_reason = ""
         self._rec = None
@@ -173,6 +175,33 @@ class InterruptPhraseDetector:
         return None
 
     @staticmethod
+    def classify_command(text: str) -> str | None:
+        """Ordres de coupure, avec ou sans le nom — mais jamais le nom seul.
+
+        « stop », « arrête-toi », « écoute », « Ano stop » coupent ; « écoute,
+        cherche plutôt… » redirige. « Anneau » seul (faux positif classique de
+        Vosk sur un écho) ne fait rien.
+        """
+        value = _normalise(text)
+        if not value:
+            return None
+        for name in sorted(_ANO_FORMS, key=len, reverse=True):
+            if value == name:
+                return None
+            if value.startswith(name + " "):
+                value = value[len(name):].strip()
+                break
+        for prefix in _STOP_PREFIXES:
+            if value == prefix or value.startswith(prefix + " "):
+                return "stop"
+        for prefix in _LISTEN_PREFIXES:
+            if value == prefix:
+                return "stop"
+            if value.startswith(prefix + " "):
+                return "redirect"
+        return None
+
+    @staticmethod
     def classify_addressed(text: str) -> str | None:
         value = _normalise(text)
         if not any(value.startswith(name + " ") for name in _ANO_FORMS):
@@ -201,6 +230,9 @@ class InterruptPhraseDetector:
         return None
 
     def _classify_detected(self, text: str) -> str | None:
+        mode = getattr(self, "mode", "")
+        if mode == "commands":
+            return self.classify_command(text)
         if getattr(self, "addressed_only", False):
             return self.classify_strict_interrupt(text)
         return self.classify(text)
