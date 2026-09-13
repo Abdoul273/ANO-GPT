@@ -598,6 +598,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
     _run_gmail_watch = ProactiveEngine._run_gmail_watch
     _run_system_monitor = ProactiveEngine._run_system_monitor
     _run_tiktok_watch = ProactiveEngine._run_tiktok_watch
+    _run_live_liveness_watch = SessionManager._run_live_liveness_watch
     _run_proactive_mode = ProactiveEngine._run_proactive_mode
     _run_habit_model = ProactiveEngine._run_habit_model
     _maybe_routine = ProactiveEngine._maybe_routine
@@ -778,6 +779,9 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self._turn_done_event: asyncio.Event | None = None
         self._turn_submit_lock: asyncio.Lock | None = None
         self._audio_turn_pending = False
+        self._awaiting_server_since = 0.0
+        self._last_server_message_at = 0.0
+        self._live_unresponsive_reconnect = False
         # Reprise de session : poignée Gemini, rythme des tentatives et
         # décision de se taire ou non sur une coupure brève.
         self._conn          = ConnectionState()
@@ -1747,6 +1751,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     tg.create_task(self._run_github_backup_watch())
                     tg.create_task(self._run_auto_extension_watch())
                     tg.create_task(self._watch_live_voice_change())
+                    tg.create_task(self._run_live_liveness_watch())
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
@@ -1779,10 +1784,13 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     self._toolkit_reconnect_requested = False
                     self._voice_reconnect_requested = False
                     self._voice_change_event.clear()
-                    self.ui.write_log(
-                        "SYS : outils élargis — "
-                        f"{tool_packs.labels(self._active_tool_packs)}."
-                    )
+                    if self._live_unresponsive_reconnect:
+                        self._live_unresponsive_reconnect = False
+                    else:
+                        self.ui.write_log(
+                            "SYS : outils élargis — "
+                            f"{tool_packs.labels(self._active_tool_packs)}."
+                        )
                     continue
                 if self._voice_reconnect_requested:
                     self._voice_reconnect_requested = False

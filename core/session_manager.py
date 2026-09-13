@@ -98,6 +98,9 @@ LIVE_FALLBACK_MODEL = DEFAULT_FALLBACK_MODEL
 # perdu. Le conserver indéfiniment empêche toutes les commandes texte suivantes
 # (interface et ANO Remote) de partir.
 _STALE_AUDIO_TURN_S = 8.0
+# Silence serveur toléré après une demande (voix, texte, réponse d'outil)
+# avant de tenir la session pour morte et de la rouvrir.
+_LIVE_REPLY_TIMEOUT_S = 30.0
 _TIME_PARTICLE_RE = re.compile(
     r"\b(?:quelle?\s+heure|heure\s+est.il|l['’]heure|heure\s+actuelle|"
     r"il\s+est(?:\s+actuellement)?\s+\d{1,2}(?:\s*(?:h|:)\s*\d{0,2}|\s+heures?)?|"
@@ -356,6 +359,51 @@ class SessionManager:
         if self._loop and self._loop.is_running() and event is not None:
             self._loop.call_soon_threadsafe(event.set)
         return True
+
+    async def _run_live_liveness_watch(self) -> None:
+        """Rouvre la session quand Gemini Live se tait sans raccrocher.
+
+        Symptôme vécu : après une réponse d'outil (ou une phrase), plus aucun
+        message serveur — ni transcription, ni audio, ni erreur. Le WebSocket
+        reste « ouvert », donc aucune reconnexion ne part ; l'utilisateur parle
+        et écrit dans le vide, sans la moindre trace dans le journal. Ici, une
+        demande restée sans aucune réaction pendant ``_LIVE_REPLY_TIMEOUT_S``
+        (hors outil encore en cours) déclenche la même reconnexion discrète
+        que l'élargissement d'outils : poignée de reprise conservée, dernière
+        demande renvoyée par ``_resend_unanswered``.
+        """
+        while True:
+            await asyncio.sleep(2.0)
+            since = float(getattr(self, "_awaiting_server_since", 0.0) or 0.0)
+            if not since:
+                continue
+            if getattr(self, "_active_tool_tasks", None):
+                continue
+            if getattr(self, "_is_speaking", False):
+                continue
+            waited = time.monotonic() - since
+            if waited < _LIVE_REPLY_TIMEOUT_S:
+                continue
+            self._awaiting_server_since = 0.0
+            text = str(getattr(self, "_live_user_text", "") or "")
+            if text:
+                self._unanswered.append(text)
+                del self._unanswered[:-2]
+                self._live_user_text = ""
+            self.ui.write_log(
+                f"SYS : Gemini Live sans réaction depuis {waited:.0f} s — reconnexion, "
+                "ta dernière demande sera renvoyée."
+            )
+            print(f"[JARVIS] ⚠️ Session Live muette ({waited:.0f}s) — reconnexion.")
+            if hasattr(self, "reset_audio_and_turn_state"):
+                self.reset_audio_and_turn_state("live_unresponsive")
+            self._live_unresponsive_reconnect = True
+            self._toolkit_reconnect_requested = True
+            self._voice_reconnect_requested = True
+            event = self._voice_change_event
+            if event is not None:
+                event.set()
+            return
 
     async def _watch_live_voice_change(self) -> None:
         """Termine le TaskGroup quand un réglage de session immuable change."""
@@ -684,6 +732,7 @@ class SessionManager:
             # code 1007. Le texte temps réel clôt lui-même son entrée et
             # déclenche normalement la réponse audio.
             await session.send_realtime_input(text=text)
+            self._awaiting_server_since = time.monotonic()
             if done is not None:
                 try:
                     self._active_turn_task = asyncio.current_task()
@@ -1054,6 +1103,9 @@ class SessionManager:
         try:
             while True:
                 async for response in self.session.receive():
+                    self._last_server_message_at = time.monotonic()
+                    if response.server_content is not None or response.tool_call is not None:
+                        self._awaiting_server_since = 0.0
 
                     # Reprise : le serveur renouvelle sa poignée en cours de
                     # route. C'est le seul moment où on peut la saisir.
@@ -1495,6 +1547,7 @@ class SessionManager:
                             await self.session.send_tool_response(
                                 function_responses=fn_responses
                             )
+                            self._awaiting_server_since = time.monotonic()
                         elif fn_responses:
                             await self.session.send_tool_response(
                                 function_responses=fn_responses

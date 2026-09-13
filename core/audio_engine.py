@@ -567,6 +567,7 @@ class AudioEngine:
         self._noise_turn = False
         self._activity_open = False
         self._last_model_turn_data_at = 0.0
+        self._awaiting_server_since = 0.0
 
         loop = getattr(self, "_loop", None)
         if loop is not None and loop.is_running():
@@ -861,6 +862,9 @@ class AudioEngine:
                 if getattr(self, "out_queue", None) is not None else 0
             ),
         })
+        # À partir d'ici, le serveur nous doit une réaction (transcription,
+        # réponse ou appel d'outil). La veille de vivacité s'en sert.
+        self._awaiting_server_since = now
         self._check_speaker()
         if hasattr(self, "_proactive"):
             self._proactive.wake()
