@@ -267,7 +267,7 @@ def _call_serpapi(params: dict) -> dict:
     params["api_key"] = key
     if "hl" not in params or "gl" not in params:
         params.update({k: v for k, v in _geo_params("").items() if k not in params})
-    r = requests.get("https://serpapi.com/search.json", params=params, timeout=8)
+    r = kit.http().get("https://serpapi.com/search.json", params=params, timeout=8)
     r.raise_for_status()
     return r.json()
 
@@ -831,8 +831,8 @@ def _gemini_headlines(n: int = 5) -> tuple:
 
 
 # ── Modes ───────────────────────────────────────────────────────────────────
-@kit.memo(_RESULT_TTL, key=lambda query, player=None: query.casefold().strip())
-def _search(query: str, player=None) -> str:
+@kit.memo(_RESULT_TTL, key=lambda query, player=None, budget_s=15.0: query.casefold().strip())
+def _search(query: str, player=None, budget_s: float = 15.0) -> str:
     print("[WebSearch] 🤖 Recherche standard avec Gemini Grounding (couverte DDG)...")
     if player:
         player.write_log("[Search:Gemini] Recherche standard...")
@@ -844,7 +844,8 @@ def _search(query: str, player=None) -> str:
 
     # Appel direct de l'implémentation : `_hedged` borne déjà le temps, et un
     # `submit` imbriqué dans le même pool pourrait l'épuiser.
-    return _hedged(lambda: _gemini_search_impl(query), _ddg, timeout=_GEMINI_TIMEOUT + 4.0)
+    return _hedged(lambda: _gemini_search_impl(query), _ddg,
+                   timeout=min(_GEMINI_TIMEOUT + 4.0, max(1.0, budget_s)))
 
 
 def _news(query: str, player=None) -> str:
@@ -918,8 +919,8 @@ def _headlines(count: int = 5, player=None) -> str:
         return _format_news("IA & cybersécurité — titres du jour", results)
 
 
-@kit.memo(_RESULT_TTL, key=lambda query, player=None: ("research", query.casefold().strip()))
-def _research(query: str, player=None) -> str:
+@kit.memo(_RESULT_TTL, key=lambda query, player=None, budget_s=15.0: ("research", query.casefold().strip()))
+def _research(query: str, player=None, budget_s: float = 15.0) -> str:
     print("[WebSearch] 🔬 Recherche approfondie avec Gemini Grounding (couverte DDG)...")
     if player:
         player.write_log("[Search:Gemini] Recherche approfondie...")
@@ -934,8 +935,8 @@ def _research(query: str, player=None) -> str:
         return _format_ddg(query, _ddg_search(query, max_results=10))
 
     # Une recherche approfondie mérite un peu plus de patience côté Gemini.
-    return _hedged(lambda: _gemini_search_impl(research_query),
-                   _ddg, timeout=_GEMINI_TIMEOUT + 8.0, hedge_after=4.0)
+    return _hedged(lambda: _gemini_search_impl(research_query), _ddg,
+                   timeout=min(_GEMINI_TIMEOUT + 8.0, max(1.0, budget_s)), hedge_after=4.0)
 
 
 def _price(query: str, player=None) -> str:
@@ -1099,6 +1100,10 @@ def web_search(
     Modes : search, social, news, research, price, nearby, compare, headlines.
     """
     params = parameters or {}
+    try:
+        budget_s = max(1.0, float(params.get("_budget_s", 15.0)))
+    except (TypeError, ValueError):
+        budget_s = 15.0
     description = params.get("description", "").strip()
     query  = params.get("query", "").strip()
     mode   = params.get("mode", "search").lower().strip()
@@ -1185,12 +1190,12 @@ def web_search(
         if mode == "news":
             return _news(query, player=player)
         if mode == "research":
-            return _research(query, player=player)
+            return _research(query, player=player, budget_s=budget_s)
         if mode == "price":
             return _price(query, player=player)
         if mode == "headlines":
             return _headlines(count, player=player)
-        return _search(query, player=player)
+        return _search(query, player=player, budget_s=budget_s)
     except Exception as e:
         print(f"[WebSearch] ❌ Tous les backends ont échoué : {e}")
         return f"Échec de la recherche : {e}"

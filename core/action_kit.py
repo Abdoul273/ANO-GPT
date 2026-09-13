@@ -78,6 +78,43 @@ DEFAULT_TIMEOUT = 8.0
 # Les travaux longs (ffmpeg, yt-dlp, conversion LibreOffice…) ne prennent pas
 # de place : un encodage de vingt minutes ne doit pas bloquer les `hyprctl`.
 _PROC_SLOTS = threading.BoundedSemaphore(4)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP : même règle que les processus — aucun appel sans délai.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# (connexion, lecture) : un service local muet (ZapZap, Hyprland, un agent MCP
+# en panne) échoue en 2 s au lieu de retenir l'action — et le micro — jusqu'au
+# plafond du répartiteur.
+HTTP_TIMEOUT: tuple[float, float] = (2.0, 5.0)
+_http_lock = threading.Lock()
+_http_client: Any = None
+
+
+def http() -> Any:
+    """Client ``requests.Session`` partagé, délai ``HTTP_TIMEOUT`` imposé.
+
+    Un ``timeout=`` explicite reste possible pour un appel long connu
+    (téléchargement, API distante), mais l'absence de délai n'existe plus.
+    Les actions n'appellent jamais ``requests`` directement (voir
+    ``tests/test_subprocess_contract.py``).
+    """
+    global _http_client
+    with _http_lock:
+        if _http_client is None:
+            import requests
+
+            class _Session(requests.Session):
+                def request(self, method, url, **kwargs):  # type: ignore[override]
+                    if kwargs.get("timeout") is None:
+                        kwargs["timeout"] = HTTP_TIMEOUT
+                    return super().request(method, url, **kwargs)
+
+            client = _Session()
+            client.headers["User-Agent"] = "ANO-GPT/1.0"
+            _http_client = client
+        return _http_client
 _SLOT_MAX_TIMEOUT = 30.0
 
 
@@ -238,6 +275,7 @@ def run(
     cwd: str | None = None,
     env: Mapping[str, str] | None = None,
     stdin: str | None = None,
+    preexec_fn: Callable[[], Any] | None = None,
     capture: bool = True,
     text_errors: str = "replace",
     cache_ttl: float = 0.0,
@@ -303,6 +341,7 @@ def run(
                     errors=text_errors,
                     # Groupe dédié : indispensable pour tuer toute la descendance.
                     start_new_session=True,
+                    preexec_fn=preexec_fn,
                 )
                 try:
                     out, err = proc.communicate(input=stdin, timeout=timeout)

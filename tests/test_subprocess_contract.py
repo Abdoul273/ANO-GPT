@@ -100,3 +100,74 @@ def test_le_kit_reste_la_reference():
     source = KIT.read_text(encoding="utf-8")
     assert "timeout" in source
     assert "killpg" in source or "setsid" in source or "start_new_session" in source
+
+
+# ── HTTP : même contrat que les processus ────────────────────────────────────
+
+HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "request", "urlopen"}
+
+
+def _http_calls(tree):
+    """Appels ``requests.X(``, ``urllib.request.urlopen(``, ``<session>.request(``."""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr not in HTTP_METHODS:
+            continue
+        base = node.func.value
+        if isinstance(base, ast.Name) and base.id in {"requests", "httpx"}:
+            yield node, base.id
+        elif (isinstance(base, ast.Attribute) and base.attr == "request"
+                and isinstance(base.value, ast.Name) and base.value.id == "urllib"):
+            yield node, "urllib"
+        elif node.func.attr == "request" and isinstance(base, (ast.Name, ast.Attribute)):
+            name = base.id if isinstance(base, ast.Name) else base.attr
+            if "session" in name.lower():
+                yield node, "session"
+
+
+def test_aucun_appel_http_sans_delai():
+    faults = []
+    for relative, tree in _sources():
+        for node, _ in _http_calls(tree):
+            keywords = {keyword.arg for keyword in node.keywords}
+            if "timeout" in keywords or None in keywords:  # **kwargs : délai posé en amont
+                continue
+            faults.append(f"{relative}:{node.lineno} {ast.unparse(node.func)}()")
+    assert not faults, (
+        "appel HTTP sans timeout — un service muet retient l'action et le micro :\n  "
+        + "\n  ".join(faults)
+    )
+
+
+def test_les_actions_passent_par_kit_http():
+    """Dans ``actions/``, pas de ``requests`` direct : ``kit.http()`` impose le délai."""
+    faults = [
+        f"{relative}:{node.lineno} {lib}.{node.func.attr}()"
+        for relative, tree in _sources() if relative.startswith("actions/")
+        for node, lib in _http_calls(tree) if lib in {"requests", "httpx"}
+    ]
+    assert not faults, (
+        "requests direct dans une action — utilise core.action_kit.http() :\n  "
+        + "\n  ".join(faults)
+    )
+
+
+def test_kit_http_impose_un_delai(monkeypatch):
+    import core.action_kit as kit
+
+    monkeypatch.setattr(kit, "_http_client", None)
+    client = kit.http()
+    seen = {}
+
+    def fake_request(self, method, url, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    import requests
+    monkeypatch.setattr(requests.Session, "request", fake_request)
+    client.get("http://localhost:1/")
+    assert seen["timeout"] == kit.HTTP_TIMEOUT
+    client.get("http://localhost:1/", timeout=30)
+    assert seen["timeout"] == 30
+    assert kit.http() is client

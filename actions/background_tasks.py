@@ -591,9 +591,9 @@ class BackgroundTaskService:
                 headers["If-Modified-Since"] = state["last_modified"]
         interval = int(spec.get("interval_seconds") or 900)
         try:
-            import requests
+            from core import action_kit as kit
 
-            response = requests.get(spec["url"], headers=headers, timeout=15)
+            response = kit.http().get(spec["url"], headers=headers, timeout=15)
             if response.status_code == 304:
                 with self._lock:
                     state["next_check"] = _now() + interval

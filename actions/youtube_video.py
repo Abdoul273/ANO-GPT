@@ -150,7 +150,7 @@ def _attach_thumbnails(results: list[dict]) -> list[dict]:
             return index, b""
         url = str(item.get("thumbnail_url") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg")
         try:
-            response = requests.get(url, headers=HEADERS, timeout=(3, 6))
+            response = kit.http().get(url, headers=HEADERS, timeout=(3, 6))
             payload = response.content if response.ok else b""
             content_type = response.headers.get("content-type", "").lower()
             if not content_type.startswith("image/") or len(payload) > 2_500_000:
@@ -258,7 +258,7 @@ def _scrape_first_video_url(query: str) -> Optional[str]:
         f"&sp={_YT_VIDEO_FILTER}"
     )
     try:
-        r    = requests.get(search_url, headers=HEADERS, timeout=10)
+        r    = kit.http().get(search_url, headers=HEADERS, timeout=10)
         html = r.text
         video_ids = re.findall(r'"videoId":"([A-Za-z0-9_-]{11})"', html)
         seen = set()
@@ -395,7 +395,7 @@ def _scrape_video_info(video_id: str) -> dict:
         return {}
     url = f"https://www.youtube.com/watch?v={video_id}"
     try:
-        r    = requests.get(url, headers=HEADERS, timeout=12)
+        r    = kit.http().get(url, headers=HEADERS, timeout=12)
         html = r.text
         info = {}
         for key, pattern in [
@@ -425,7 +425,7 @@ def _scrape_trending(region: str = "FR", max_results: int = 8) -> list:
         return []
     url = f"https://www.youtube.com/feed/trending?gl={region.upper()}"
     try:
-        r    = requests.get(url, headers=HEADERS, timeout=12)
+        r    = kit.http().get(url, headers=HEADERS, timeout=12)
         html = r.text
         titles   = re.findall(r'"title":{"runs":\[{"text":"([^"]+)"}]', html)
         channels = re.findall(r'"ownerText":{"runs":\[{"text":"([^"]+)"', html)

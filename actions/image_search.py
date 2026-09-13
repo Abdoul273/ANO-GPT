@@ -174,7 +174,7 @@ def _open_public_response(url: str) -> requests.Response:
     for _ in range(4):
         if not _public_http_url(current):
             raise ValueError("destination réseau non publique")
-        response = requests.get(
+        response = kit.http().get(
             current,
             timeout=(4.0, 10.0),
             stream=True,

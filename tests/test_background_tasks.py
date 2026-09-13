@@ -102,11 +102,11 @@ def test_la_page_inchangee_utilise_etag_puis_une_baisse_declenche(tmp_path, monk
         def raise_for_status(self):
             return None
 
-    def get(url, headers, timeout):
+    def get(self, url, headers, timeout):
         calls.append((url, dict(headers), timeout))
         return Response()
 
-    monkeypatch.setattr(requests, "get", get)
+    monkeypatch.setattr(requests.Session, "get", get)
     service._check_price(task["id"])
     assert published == []
     service._check_price(task["id"])
