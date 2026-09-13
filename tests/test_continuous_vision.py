@@ -331,10 +331,16 @@ def test_session_manager_voice_trigger_dispatch():
     assert ack == "J'observe la scène en direct, Monsieur."
     assert mock_engine.start.called
 
-    # 2. Désactivation vocale
+    # 2. Désactivation vocale : « ferme la caméra » éteint tout ce qui filme
+    # (studio caméra compris), pas seulement la vision continue.
+    mock_engine.is_active = True
+    studio = MagicMock(active=True)
+    sm._camera = studio
     ack_stop = sm.check_continuous_vision_voice_trigger("Arrête la caméra")
-    assert ack_stop == "Flux vidéo coupé, Monsieur."
+    assert ack_stop == "Caméra fermée (caméra, vision continue)."
     assert mock_engine.stop.called
+    assert studio.close.called
+    assert sm.ui.stop_camera_stream.called
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -379,6 +379,49 @@ from core.tool_dispatcher import (
 from core.proactive_engine import ProactiveEngine
 from core.phone_relay import PhoneRelay
 
+def _unwrap_exception_group(exc: BaseException) -> BaseException:
+    """Première vraie exception d'un (Base)ExceptionGroup, récursivement."""
+    seen = 0
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions and seen < 8:
+        exc = exc.exceptions[0]
+        seen += 1
+    return exc
+
+
+_DROPPED_MARKERS = (
+    "keepalive ping timeout", "no close frame received", "abnormal closure",
+    "connectionclosed", "going away",
+    "connection reset", "broken pipe", "eof occurred",
+)
+
+
+def is_connection_dropped_error(exc: BaseException) -> bool:
+    """Le WebSocket Live s'est fermé sans qu'on l'ait demandé.
+
+    Le ping de maintien expire quand la boucle a été retenue trop longtemps
+    (GIL, réseau saturé) : le serveur ferme en 1006/1011. Ce n'est pas une
+    erreur à réparer, c'est une reconnexion à faire.
+    """
+    names = {type(exc).__name__, *(type(c).__name__ for c in _causes(exc))}
+    if any(n.startswith("ConnectionClosed") for n in names):
+        return True
+    text = " ".join(str(c) for c in (exc, *_causes(exc))).casefold()
+    if re.search(r"\b(?:1001|1006|1011)\b", text) and ("closure" in text or "close" in text or "ping" in text):
+        return True
+    return any(m in text for m in _DROPPED_MARKERS)
+
+
+def _causes(exc: BaseException) -> list[BaseException]:
+    out: list[BaseException] = []
+    cur = exc
+    for _ in range(6):
+        cur = cur.__cause__ or cur.__context__
+        if cur is None or cur in out:
+            break
+        out.append(cur)
+    return out
+
+
 class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, PhoneRelay):
     """Orchestrateur vocal : compose audio, session Live, outils, proactivité, téléphone.
 
@@ -445,6 +488,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
     continuous_vision = SessionManager.continuous_vision
     start_continuous_vision = SessionManager.start_continuous_vision
     stop_continuous_vision = SessionManager.stop_continuous_vision
+    close_all_cameras = SessionManager.close_all_cameras
     toggle_continuous_vision = SessionManager.toggle_continuous_vision
     send_video_frame = SessionManager.send_video_frame
     check_continuous_vision_voice_trigger = SessionManager.check_continuous_vision_voice_trigger
@@ -1704,6 +1748,14 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 # exception escape the while-loop and causing asyncio.run() to
                 # start shutdown — resulting in "executor after shutdown" errors).
                 err_str = str(e)
+                # Un TaskGroup enveloppe la vraie cause : on la déplie pour que
+                # les tests ci-dessous (réseau, clé, setup) la voient telle
+                # quelle, et pour ne pas annoncer « unhandled errors in a
+                # TaskGroup » à voix haute.
+                root_exc = _unwrap_exception_group(e)
+                root_str = f"{type(root_exc).__name__}: {root_exc}"
+                if root_exc is not e:
+                    err_str = f"{err_str} — {root_str}"
                 if self._toolkit_reconnect_requested:
                     # Élargissement de la boîte à outils : contrairement à un
                     # changement de voix, la poignée de reprise est conservée —
@@ -1732,14 +1784,19 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     )
                     continue
                 print(f"[JARVIS] Error ({type(e).__name__}): {e}")
-                try:
-                    from core import incident_log
-                    incident_log.record("session vocale", e, message=err_str[:200])
-                except Exception:
-                    pass
+                # Une coupure WebSocket (keepalive ping timeout, 1006, 1011…)
+                # est une perte de réseau, pas une faute du code : on se
+                # reconnecte sans proposer de « corriger » quoi que ce soit.
+                dropped = is_connection_dropped_error(root_exc)
+                if not dropped:
+                    try:
+                        from core import incident_log
+                        incident_log.record("session vocale", root_exc, message=root_str[:200])
+                    except Exception:
+                        pass
                 self._event_bus.publish_sync(SystemAlertEvent(
-                    severity="ERROR", source="gemini-live",
-                    message=f"{type(e).__name__}: {e}",
+                    severity="WARNING" if dropped else "ERROR", source="gemini-live",
+                    message=root_str,
                 ))
                 traceback.print_exc()
 
@@ -1806,7 +1863,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     continue
 
                 # Network / timeout errors — log clearly and back off
-                is_net_err = any(k in err_str for k in (
+                is_net_err = dropped or any(k in err_str for k in (
                     "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
                     "ConnectionRefusedError", "OSError", "Cannot connect",
                 ))

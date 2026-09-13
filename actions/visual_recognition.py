@@ -104,27 +104,95 @@ Réponds en JSON strict :
 Rends UNIQUEMENT le JSON."""
 
 
+# Le quota Gemini se signale ainsi ; dès qu'il est atteint, Azure prend le relais
+# sans attendre la fin de la cascade Gemini (inutile de frapper trois fois).
+_QUOTA_MARKERS = ("429", "resource_exhausted", "quota", "rate limit", "too many requests")
+
+# Bascule durable : après un quota atteint, Azure passe devant pendant ce délai
+# pour ne pas payer un aller-retour 429 à chaque objet.
+_GEMINI_QUOTA_HOLD_S = 600.0
+_gemini_quota_until = 0.0
+
+
+def _is_quota(exc: BaseException) -> bool:
+    text = str(exc).casefold()
+    return any(m in text for m in _QUOTA_MARKERS)
+
+
+def _object_prompt(question: str) -> str:
+    prompt = _OBJECT_PROMPT
+    if question:
+        prompt += f"\n\nQuestion de l'utilisateur : « {question[:200]} »"
+    return prompt
+
+
+def _identify_gemini(image_bytes: bytes, mime: str, prompt: str) -> dict:
+    from core import multimodal_vision as mv
+    from google import genai
+    from google.genai import types as gtypes
+    client = genai.Client(api_key=mv._get_api_key())
+    contents = [gtypes.Part.from_bytes(data=image_bytes, mime_type=mime), prompt]
+    resp, model = mv._call_gemini_vision(client, gtypes, contents, mv.vision_model_cascade())
+    data = mv._parse_vision_json(resp.text)
+    data["model_used"] = model
+    return data
+
+
+def _identify_azure(image_bytes: bytes, mime: str, prompt: str) -> dict:
+    from core import azure_specialists, multimodal_vision as mv
+    text, model = azure_specialists.vision(
+        image_bytes, mime, prompt,
+        system="Tu es un système de reconnaissance visuelle précis. Réponds en JSON strict.",
+    )
+    data = mv._parse_vision_json(text)
+    data["model_used"] = f"azure:{model}"
+    return data
+
+
+def _azure_ready() -> bool:
+    try:
+        from core.llm_client import _load_config
+        cfg = _load_config()
+        return bool(cfg.get("azure_openai_endpoint") and cfg.get("azure_openai_api_key"))
+    except Exception:
+        return False
+
+
 def identify_object(image_bytes: bytes, mime: str, question: str = "") -> dict:
-    """Ce que montre l'image, d'après Gemini. Dict vide si la vision est indisponible."""
+    """Ce que montre l'image : Gemini d'abord, Azure dès que le quota Gemini est
+    atteint (ou que Gemini ne répond pas). Dict avec ``error`` si tout échoue."""
+    global _gemini_quota_until
     from core import multimodal_vision as mv
 
-    api_key = mv._get_api_key()
-    if not api_key:
-        return {"error": "clé API Gemini absente"}
-    try:
-        from google import genai
-        from google.genai import types as gtypes
-        client = genai.Client(api_key=api_key)
-        prompt = _OBJECT_PROMPT
-        if question:
-            prompt += f"\n\nQuestion de l'utilisateur : « {question[:200]} »"
-        contents = [gtypes.Part.from_bytes(data=image_bytes, mime_type=mime), prompt]
-        resp, model = mv._call_gemini_vision(client, gtypes, contents, mv.vision_model_cascade())
-        data = mv._parse_vision_json(resp.text)
-        data["model_used"] = model
-        return data
-    except Exception as exc:
-        return {"error": str(exc)[:200]}
+    prompt = _object_prompt(question)
+    errors: list[str] = []
+    gemini_key = mv._get_api_key()
+    azure_ok = _azure_ready()
+    gemini_first = bool(gemini_key) and time.monotonic() >= _gemini_quota_until
+
+    order = ["gemini", "azure"] if gemini_first else ["azure", "gemini"]
+    for engine in order:
+        if engine == "gemini" and not gemini_key:
+            continue
+        if engine == "azure" and not azure_ok:
+            continue
+        try:
+            if engine == "gemini":
+                data = _identify_gemini(image_bytes, mime, prompt)
+                if str(data.get("model_used", "")).startswith("azure:"):
+                    # La cascade Gemini a déjà passé la main à Azure : on
+                    # évite de refrapper Gemini pour les prochains objets.
+                    _gemini_quota_until = time.monotonic() + _GEMINI_QUOTA_HOLD_S
+                return data
+            return _identify_azure(image_bytes, mime, prompt)
+        except Exception as exc:
+            if engine == "gemini" and _is_quota(exc):
+                _gemini_quota_until = time.monotonic() + _GEMINI_QUOTA_HOLD_S
+                print("[VisualRecognition] quota Gemini atteint — relais Azure pendant 10 min.")
+            errors.append(f"{engine} : {str(exc)[:160]}")
+    if not errors:
+        return {"error": "aucune clé de vision (Gemini ou Azure) n'est configurée"}
+    return {"error": " ; ".join(errors)[:300]}
 
 
 def _search_object(query: str, budget_s: float = _SEARCH_BUDGET_S) -> str:

@@ -490,6 +490,41 @@ class SessionManager:
         """Désactive la vision continue."""
         return self.continuous_vision.stop()
 
+    def close_all_cameras(self) -> str:
+        """« Ferme la caméra » : tout ce qui filme s'arrête, quel que soit le
+        chemin qui l'a ouvert (studio caméra, vision continue, veille des
+        visages, flux de l'overlay). Répondre « fermée » alors que le studio
+        tournait encore trompait l'utilisateur.
+        """
+        closed: list[str] = []
+        try:
+            from actions.visual_recognition import stop_watcher, watcher_running
+            if watcher_running():
+                stop_watcher()
+                closed.append("veille des visages")
+        except Exception:
+            pass
+        studio = getattr(self, "_camera", None)
+        if studio is not None and getattr(studio, "active", False):
+            try:
+                studio.close()
+                closed.append("caméra")
+            except Exception as exc:
+                print(f"[Caméra] fermeture du studio : {exc}")
+        try:
+            if getattr(self.continuous_vision, "is_active", False):
+                self.continuous_vision.stop()
+                closed.append("vision continue")
+        except Exception as exc:
+            print(f"[Caméra] arrêt de la vision continue : {exc}")
+        try:
+            self.ui.stop_camera_stream()
+        except Exception:
+            pass
+        if not closed:
+            return "La caméra est déjà fermée."
+        return "Caméra fermée (" + ", ".join(closed) + ")."
+
     def toggle_continuous_vision(self) -> str:
         """Bascule l'état de la vision continue."""
         return self.continuous_vision.toggle()
@@ -524,7 +559,7 @@ class SessionManager:
         if is_vision_activation_phrase(transcript):
             return self.start_continuous_vision()
         elif is_vision_deactivation_phrase(transcript):
-            return self.stop_continuous_vision()
+            return self.close_all_cameras()
         return None
 
     # ── Persona Manager (Modes Métiers & Personas Dynamiques) ─────────────

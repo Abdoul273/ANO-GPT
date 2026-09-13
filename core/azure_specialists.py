@@ -114,6 +114,101 @@ def text(role: str, prompt: str, *, system: str = "", timeout: int = 90) -> str:
     return answer
 
 
+# Déploiements capables de lire une image, du plus fort au plus économe. Seuls
+# ceux réellement déployés sur la ressource sont appelés ; « anogpt-brain » est
+# le déploiement principal (gpt-5.6-terra).
+_VISION_CASCADE = ("gpt-6-astra", "anogpt-brain", "gpt-5.6-terra", "gpt-5.1", "gpt-5-mini")
+_VISION_SKIP = ("codex", "image", "sora", "flux", "embedding", "whisper", "tts", "realtime")
+
+
+def vision_models() -> list[str]:
+    """Cascade vision : choix explicite, modèle profond, puis les déploiements connus."""
+    cfg = _load_config()
+    ordered: list[str] = []
+    for name in (
+        str(cfg.get("azure_vision_model") or "").strip(),
+        str(cfg.get("azure_deep_model") or "").strip(),
+        str(cfg.get("azure_openai_model") or "").strip(),
+        *_VISION_CASCADE,
+    ):
+        if name and name not in ordered and not any(k in name.lower() for k in _VISION_SKIP):
+            ordered.append(name)
+    try:
+        from core.llm_client import azure_deployments
+        deployed = set(azure_deployments())
+    except Exception:
+        deployed = set()
+    if deployed:
+        # Un nom jamais déployé ne mérite pas un aller-retour DeploymentNotFound.
+        ordered = [m for m in ordered if m in deployed]
+    return ordered
+
+
+def vision(image_bytes: bytes, mime: str, prompt: str, *, system: str = "",
+           json_mode: bool = True, timeout: int = 60) -> tuple[str, str]:
+    """Décrit une image avec le premier déploiement Azure multimodal qui répond.
+
+    Renvoie ``(texte, modèle)``. Sert de relais quand le quota Gemini est
+    épuisé : la vision ne doit jamais s'arrêter sur un compteur.
+    """
+    cfg = _load_config()
+    endpoint = str(cfg.get("azure_openai_endpoint") or "").strip()
+    key = str(cfg.get("azure_openai_api_key") or "").strip()
+    if not endpoint or not key:
+        raise RuntimeError("La clé ou l'endpoint Azure Foundry manque.")
+    models = vision_models()
+    if not models:
+        raise RuntimeError("Aucun déploiement Azure multimodal n'est disponible.")
+    data_url = f"data:{mime or 'image/jpeg'};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
+    ]})
+    last = ""
+    for model in models:
+        field = "max_tokens" if model.lower().startswith("claude-") else "max_completion_tokens"
+        payload = {"model": model, "messages": messages, field: 1500, "stream": False}
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        try:
+            response = _post_with_retry(
+                _azure_openai_endpoint(endpoint, model), payload, timeout,
+                headers={"api-key": key}, retries=1,
+            )
+        except Exception as exc:
+            last = f"{model} : {exc}"
+            continue
+        if response.status_code >= 400:
+            body = response.text[:200]
+            last = f"{model} : HTTP {response.status_code} {body}"
+            if response.status_code == 400 and json_mode and "response_format" in body.lower():
+                # Ce déploiement ignore le mode JSON : on redemande en texte libre.
+                payload.pop("response_format", None)
+                try:
+                    response = _post_with_retry(
+                        _azure_openai_endpoint(endpoint, model), payload, timeout,
+                        headers={"api-key": key}, retries=0,
+                    )
+                except Exception as exc:
+                    last = f"{model} : {exc}"
+                    continue
+                if response.status_code >= 400:
+                    continue
+            else:
+                continue
+        try:
+            answer = str(response.json().get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        except Exception:
+            answer = ""
+        if answer:
+            return answer, model
+        last = f"{model} : réponse vide"
+    raise RuntimeError(f"Aucun modèle Azure n'a lu l'image ({last}).")
+
+
 def image(prompt: str, output_path: Path, *, size: str = "1024x1024", timeout: int = 180) -> bytes:
     """Generate one image with the configured Azure image deployment."""
     _cfg, model, endpoint, key = _settings("image")

@@ -827,17 +827,24 @@ TOOL_DECLARATIONS = [
             "liste les vidéos du dossier ~/Vidéos/ANO-GPT/TIKTOK et demande laquelle publier. "
             "'draft' — « analyse cette vidéo avant que je la poste », « la 2 », « la dernière du dossier » : "
             "visionne le fichier choisi (query = numéro, ordinal, mots du nom ou chemin ; par défaut "
-            "la plus récente du dossier TikTok), donne un verdict publie/corrige, l'accroche, la "
-            "rétention, le montage, la description, les hashtags, le son, la couverture, le commentaire "
-            "à épingler et la meilleure heure (note = précisions de l'utilisateur sur son intention). "
+            "la plus récente du dossier TikTok), visionne la vidéo entière et des images repères HD ; "
+            "il donne un verdict publie/corrige fondé sur des timecodes, une grille accroche/lisibilité/"
+            "rythme/son/chute/boucle, les blocages P0, les retouches P1/P2 et trois accroches alternatives "
+            "propres à cette vidéo — jamais des conseils génériques. Il prépare aussi la description, les "
+            "hashtags, le son, la couverture, le commentaire à épingler et la meilleure heure (note = "
+            "précisions de l'utilisateur sur son intention). "
             "'best_time' — meilleure heure pour poster. diagnose et draft lancent le visionnage EN FOND "
             "et rendent tout de suite un premier constat à dire ; l'avis complet est annoncé tout seul "
-            "environ une minute plus tard : ne relance pas l'outil, ne dis pas que c'est fini."
+            "environ une minute plus tard : ne relance pas l'outil, ne dis pas que c'est fini. Après un "
+            "diagnostic terminé, l'utilisateur se voit proposer un rapport complet. S'il répond oui ou "
+            "demande le fichier, appelle tiktok_coach avec action='report' (query facultative) : cela crée "
+            "un .md ultra-complet dans ~/Documents/ANO-GPT/Diagnostics TikTok. Ne crée jamais ce fichier "
+            "avant cet accord explicite."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "diagnose | review | list | draft | best_time"},
+                "action": {"type": "STRING", "description": "diagnose | report (après oui explicite) | review | list | draft | best_time"},
                 "query": {"type": "STRING", "description": "Vidéo visée (diagnose) ou fichier (draft : numéro de la liste, ordinal, mots du nom, chemin), tel que dit"},
                 "path": {"type": "STRING", "description": "Pour draft : chemin du fichier si connu"},
                 "note": {"type": "STRING", "description": "Pour draft : ce que l'utilisateur veut obtenir avec cette vidéo"},
@@ -3427,18 +3434,8 @@ class ToolDispatcher:
                 )
 
             elif name == "close_camera":
-                try:
-                    from actions.visual_recognition import stop_watcher
-                    stop_watcher()
-                except Exception:
-                    pass
-                self.ui.stop_camera_stream()
-                if hasattr(self, "stop_continuous_vision"):
-                    try:
-                        self.stop_continuous_vision()
-                    except Exception as exc:
-                        print(f"[Dispatcher] Arrêt de la vision continue : {exc}")
-                result = "Camera closed."
+                # Le studio peut attendre son worker : hors de la boucle vocale.
+                result = await loop.run_in_executor(None, self.close_all_cameras)
 
             elif name == "show_map":
                 query = (args.get("query") or "").strip()

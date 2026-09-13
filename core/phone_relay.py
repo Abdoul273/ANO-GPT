@@ -185,7 +185,8 @@ class PhoneRelay:
                 if studio.source == SOURCE_PHONE:
                     message = self._confirm_phone_camera(studio, message)
             elif action in ("close", "stop"):
-                message = studio.close()
+                # Tout ce qui filme s'éteint, pas seulement le studio.
+                message = self.close_all_cameras()
             else:
                 return f"Action caméra inconnue : {action}."
         except CameraUnavailable as exc:

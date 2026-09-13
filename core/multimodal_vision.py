@@ -439,9 +439,48 @@ def _call_gemini_vision(client: Any, gtypes: Any, contents: list, models: Sequen
             continue
         _working_vision_model = model
         return resp, model
+    # Toute la cascade Gemini a échoué (quota, panne) : Azure prend le relais
+    # avec la même image et la même consigne, pour que la vision ne s'arrête
+    # jamais sur un compteur.
+    azure = _azure_vision_relay(contents, last_exc)
+    if azure is not None:
+        return azure
     if last_exc is not None:
         raise last_exc
     raise RuntimeError("Aucun modèle vision n'a répondu.")
+
+
+class _TextResponse:
+    """Réponse minimale (``.text``) pour les appelants du relais Azure."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+def _azure_vision_relay(contents: list, cause: Optional[BaseException]) -> Optional[Tuple[Any, str]]:
+    image: Optional[bytes] = None
+    mime = "image/jpeg"
+    prompt_parts: List[str] = []
+    for item in contents:
+        if isinstance(item, str):
+            prompt_parts.append(item)
+            continue
+        inline = getattr(item, "inline_data", None)
+        if inline is not None and getattr(inline, "data", None) and image is None:
+            image = bytes(inline.data)
+            mime = str(getattr(inline, "mime_type", None) or mime)
+        elif getattr(item, "text", None):
+            prompt_parts.append(str(item.text))
+    if image is None or not prompt_parts:
+        return None
+    try:
+        from core import azure_specialists
+        text, model = azure_specialists.vision(image, mime, "\n\n".join(prompt_parts))
+    except Exception as exc:
+        print(f"[Vision] relais Azure impossible : {exc} (cause Gemini : {cause})")
+        return None
+    print(f"[Vision] Gemini indisponible ({cause}) — réponse fournie par Azure {model}.")
+    return _TextResponse(text), f"azure:{model}"
 
 
 def _boxes_to_pixels(
