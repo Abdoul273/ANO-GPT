@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QSizePolicy
 
+from core import freeze_watch
 from ui.core.qtflags import _GL_BASE
 from ui.orb.arc_paint import _HudPaintMixin
 from ui.orb.arc_sprites import _HudSpritesMixin
@@ -66,14 +67,10 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
 
     _ZBUCKETS = 4    # niveaux de profondeur (1 tracé groupé par niveau)
     _CAM  = 3.1      # distance caméra (perspective) pour le nuage
-    _RING_CAM = 7.0  # les anneaux, plus larges, gardent une ellipse lisible
     _SPEC_N = 48     # barres du spectre radial
     # Rayon de la sphère par rapport au petit côté : le réticule extérieur
     # (1,56 R) doit tenir dans le cadre même sur une fenêtre carrée.
     _ORB_SCALE = 0.31
-    # Anneaux gyroscopiques : (rayon relatif, inclinaison, vitesse °/s).
-    _RING_SPECS = ((1.12, 1.15, 22.0), (1.24, -0.85, -31.0), (1.38, 0.38, 15.0))
-    _RING_SEG = 48
     # Cadence : 30 images/s dès que l'orbe est visible. Le coût mesuré d'une
     # image (simulation + peinture) fait reculer la cadence avant qu'elle ne
     # mange le temps de la voix : jamais plus de ~40 % du thread Qt.
@@ -84,9 +81,21 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
     _FRAME_MS_BATTERY = 40
     _FRAME_MS_MAX = 80
     _FRAME_MS_SLEEP = 500
+    # Pendant la voix, une image qui coûte plus que ce seuil force 60 ms sans
+    # attendre la moyenne glissée : le régulateur réagissait trop tard.
+    _VOICE_COST_MS = 12.0
+    _FRAME_MS_VOICE_HEAVY = 60
+    # Battement de la boucle audio en retard de plus de 0,8 s → cadence
+    # minimale pendant 2 s, quoi qu'en dise le coût mesuré.
+    _AUDIO_LAG_S = 0.8
+    _AUDIO_LAG_HOLD_S = 2.0
     # Un canevas Qt/Python ne bénéficie pas du parallélisme du WebGL : limiter
     # aussi le *calcul* (pas seulement le dessin) est indispensable au micro.
-    _PARTICLE_N = 240
+    # Le pool complet (300) n'est dessiné qu'au repos : dès que la voix ou le
+    # micro travaillent, le budget actif redescend à 240. Le gel du 13/09
+    # (boucle audio muette 3 s, thread Qt dans _draw_particle_cloud) venait
+    # de 300 points projetés à 25 images/s pendant la synthèse.
+    _PARTICLE_N = 300
     # L'horloge concentre les photons dans une zone réduite. Ce budget supérieur
     # rend chaque chiffre immédiatement lisible, même à travers la lueur du HUD.
     _CLOCK_PARTICLE_BUDGET = 240
@@ -97,7 +106,7 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
     # 50 Hz font monopoliser un coeur entier, même quand l'assistant ne parle
     # pas. Ce budget garde la forme organique tout en laissant la priorité à
     # la capture et à la voix sur une machine deux coeurs.
-    _IDLE_PARTICLE_BUDGET = 160
+    _IDLE_PARTICLE_BUDGET = 300
     _ACTIVE_PARTICLE_BUDGET = 240
     # +45 % : augmentation volontairement visible, demandée pour donner au
     # nuage une présence forte même derrière les panneaux de l'interface.
@@ -206,9 +215,6 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         # ── Systèmes dynamiques ─────────────────────────────────────────────
         self._spec = [0.0] * self._SPEC_N
         self._spec_seed = [random.uniform(0, 6.28318) for _ in range(self._SPEC_N)]
-        self._ring_specs = self._RING_SPECS
-        self._ring_pts = self._build_circle(self._RING_SEG)
-        self._ring_phase = [random.uniform(0.0, 360.0) for _ in self._RING_SPECS]
         # Ondes vocales en vol : âge normalisé 0 → 1.
         self._waves: list[float] = []
         self._next_wave_at = 0.0
@@ -238,6 +244,7 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         self._paint_ms = 4.0
         self._interval = self._FRAME_MS
         self._low_power = False
+        self._throttle_until = 0.0
         self._anim_tmr = QTimer(self)
         self._anim_tmr.setTimerType(Qt.TimerType.PreciseTimer)
         self._anim_tmr.timeout.connect(self._tick)
@@ -621,11 +628,6 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
             self._update_particle_links(t)
 
     @staticmethod
-    def _build_circle(n: int) -> list[tuple[float, float, float]]:
-        return [(math.cos(2 * math.pi * k / n), 0.0, math.sin(2 * math.pi * k / n))
-                for k in range(n + 1)]
-
-    @staticmethod
     def _matrix(yaw: float, pitch: float, roll: float):
         cy, sy = math.cos(yaw), math.sin(yaw)
         cp, sp = math.cos(pitch), math.sin(pitch)
@@ -692,6 +694,14 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         # on espace les images plutôt que de laisser la voix attendre le GIL.
         cost = self._sim_ms + self._paint_ms
         want = max(base, int(cost * 2.5))
+        voice = self._ws in ("listening", "speaking")
+        if voice and cost > self._VOICE_COST_MS:
+            want = max(want, self._FRAME_MS_VOICE_HEAVY)
+        now = time.monotonic()
+        if freeze_watch.lag("boucle audio") > self._AUDIO_LAG_S:
+            self._throttle_until = now + self._AUDIO_LAG_HOLD_S
+        if now < self._throttle_until:
+            return self._FRAME_MS_MAX
         return min(self._FRAME_MS_MAX, want)
 
     def _apply_interval(self) -> None:

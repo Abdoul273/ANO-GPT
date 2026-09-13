@@ -17,11 +17,11 @@ def test_le_corps_est_un_nuage_dense_de_particules_borne(qapp):
     orb = HudCanvas("")
     try:
         assert len(orb._particles) == orb._PARTICLE_N
-        assert orb._PARTICLE_N == 240
-        # Points plus larges : le nuage reste dense à l'œil sans monter le
-        # nombre de particules, seul levier qui coûte vraiment du CPU.
+        assert orb._PARTICLE_N == 300
+        # Les points restent larges, avec un budget dense mais borné pour ne
+        # pas voler le temps CPU nécessaire à la voix.
         assert orb._PARTICLE_POINT_SCALE == 2.20
-        assert orb._IDLE_PARTICLE_BUDGET == 160
+        assert orb._IDLE_PARTICLE_BUDGET == 300
         assert orb._ACTIVE_PARTICLE_BUDGET == 240
         assert all(0.0 < pt["home_r"] <= 1.0 for pt in orb._particles)
         assert all({"x", "y", "z", "vx", "vy", "vz", "phase", "form_phase", "form_u", "lane"} <= pt.keys()
@@ -96,13 +96,13 @@ def test_lorbe_compose_une_scene_holographique(qapp):
     # Le nuage reste le corps de l'orbe, confiné dans la sphère.
     assert "_draw_particle_cloud" in neural
     assert "setClipPath" in neural
-    # Autour : réticule, spectre, anneaux gyroscopiques (deux moitiés), noyau,
-    # limbe et ondes vocales. Les indicateurs (œil, geste) sont bien dessinés.
-    for layer in ("_draw_reticle", "_draw_spectrum", "_draw_rings", "_draw_nucleus",
+    # Autour : réticule, spectre, noyau, limbe et ondes vocales. Les fils
+    # elliptiques orbitaux ont été retirés ; les indicateurs restent dessinés.
+    for layer in ("_draw_reticle", "_draw_spectrum", "_draw_nucleus",
                   "_draw_limb", "_draw_shockwaves", "_draw_neon_eye_indicator",
                   "_draw_holographic_gesture_badge"):
         assert layer in paint, layer
-    assert paint.count("_draw_rings") == 2
+    assert "_draw_rings" not in paint
     # Le fond et l'aura sont cuits : un seul blit, jamais un dégradé plein cadre.
     assert 'self._pm["scene"]' in paint
     assert "QRadialGradient" not in paint
@@ -156,10 +156,34 @@ def test_la_cadence_reste_bornee_et_cede_a_la_voix(qapp):
         assert orb._desired_interval() == orb._FRAME_MS
         orb.state = "SPEAKING"
         assert orb._desired_interval() == orb._FRAME_MS_VOICE
+        # Pendant la voix, un coût modéré force tout de suite 60 ms : la
+        # moyenne glissée du régulateur mettait plusieurs images à réagir.
+        orb._paint_ms = 12.0
+        assert orb._desired_interval() == orb._FRAME_MS_VOICE_HEAVY
         orb._paint_ms = 60.0
         assert orb._desired_interval() == orb._FRAME_MS_MAX
         orb.set_low_power(True)
         assert orb._desired_interval() == orb._FRAME_MS_SLEEP
+    finally:
+        orb.close()
+
+
+def test_le_retard_de_la_boucle_audio_ralentit_lorbe(qapp, monkeypatch):
+    from core import freeze_watch
+    orb = HudCanvas("")
+    try:
+        orb.show()
+        qapp.processEvents()
+        orb._on_battery = False
+        orb._sim_ms = orb._paint_ms = 1.0
+        assert orb._desired_interval() == orb._FRAME_MS
+        monkeypatch.setattr(freeze_watch, "lag", lambda name: 1.2)
+        assert orb._desired_interval() == orb._FRAME_MS_MAX
+        # Le battement revient : l'orbe garde la cadence minimale 2 s.
+        monkeypatch.setattr(freeze_watch, "lag", lambda name: 0.0)
+        assert orb._desired_interval() == orb._FRAME_MS_MAX
+        orb._throttle_until = 0.0
+        assert orb._desired_interval() == orb._FRAME_MS
     finally:
         orb.close()
 

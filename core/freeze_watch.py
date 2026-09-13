@@ -32,6 +32,16 @@ def beat(name: str) -> None:
     _beats[name] = time.monotonic()
 
 
+def lag(name: str) -> float:
+    """Retard du battement ``name`` en secondes (0 s'il n'a jamais battu).
+
+    Lu depuis le thread Qt pour ralentir l'orbe dès que la boucle audio
+    prend du retard — sans attendre le rapport de gel à 3 s.
+    """
+    last = _beats.get(name)
+    return 0.0 if last is None else max(0.0, time.monotonic() - last)
+
+
 def dump_all_threads(reason: str) -> Path | None:
     """Écrit la pile de chaque thread ; retourne le fichier produit."""
     global _last_report
