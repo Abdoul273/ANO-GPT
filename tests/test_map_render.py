@@ -208,3 +208,14 @@ def test_a_query_with_html_cannot_break_out_of_the_hud():
     html = render_map("<script>alert(1)</script>", CONAKRY, places=[_place()])
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_map_has_no_looping_animation_left_running():
+    """Carte ouverte, aucune animation en boucle : le CPU appartient au micro."""
+    from core.map_render import render_map
+
+    html = render_map("Test", (9.5, -13.7), places=[], radius_km=2.0,
+                      center_label="Ici", mark_center=True)
+    css_tail = html[html.rfind("Machine à deux cœurs"):]
+    assert "animation:none !important" in css_tail
+    assert "zoomAnimation: false" in html and "updateWhenIdle: true" in html

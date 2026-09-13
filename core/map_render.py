@@ -368,18 +368,32 @@ _STYLE = """
     path.routeline { animation:none !important; }
     .sweep { display:none; }
   }
+
+  /* Machine à deux cœurs : une grille qui dérive, un balayage, des anneaux
+     qui pulsent et des cartes qui flottent en boucle font repeindre toute la
+     page à 60 images par seconde dans Chromium, et ce temps est pris au
+     micro — carte ouverte, l'assistant n'entendait plus. Les animations en
+     boucle sont donc coupées d'office (l'entrée « bootin », jouée une fois,
+     reste). La vue garde son style, immobile. */
+  .grid, .sweep, .hud .s i, .hud .bar::after, .me .radar, .me .ring, .pin,
+  .halo, .ping, .card, .card .in::after, .route, path.routeline
+    { animation:none !important; }
+  .sweep { display:none; }
 """
 
 
 _SCRIPT = """
   var center = @@CENTER@@;
   var userPos = [center[0], center[1]];
+  // Sans animation de zoom ni fondu des tuiles, et tuiles chargées seulement
+  // une fois le déplacement fini : moins de trames à composer pour Chromium.
   var map = L.map('map', { zoomControl: false, attributionControl: true,
-                           zoomAnimation: true, fadeAnimation: true })
+                           zoomAnimation: false, fadeAnimation: false,
+                           markerZoomAnimation: false, preferCanvas: true })
              .setView(center, @@ZOOM@@);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   L.tileLayer('@@TILES@@', {
-    maxZoom: 19, updateWhenIdle: false,
+    maxZoom: 19, updateWhenIdle: true,
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
 
