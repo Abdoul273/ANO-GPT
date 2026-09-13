@@ -344,6 +344,7 @@ class LocalBargeInListener:
         self._was_speaking = False
         self._stream = None
         self._fired = False
+        self._armed_logged = False
 
     @property
     def active(self) -> bool:
@@ -362,6 +363,7 @@ class LocalBargeInListener:
                     self._fired = False
                     self._was_speaking = False
                     self._quiet_s = 0.0
+                    self._armed_logged = False
                     if getattr(self._detector, "available", False):
                         self._detector.reset()
                     return
@@ -375,17 +377,21 @@ class LocalBargeInListener:
                     if getattr(self._detector, "available", False):
                         self._detector.reset()
 
-                # Le flux est la source AEC. Si elle contient encore une voix
-                # forte, ce n'est pas un moment sûr pour interpréter Vosk.
-                rms = float(np.sqrt(np.mean(pcm.astype(np.float32) ** 2))) if pcm.size else 0.0
+                # Armement après un court délai depuis le début de la voix :
+                # le transitoire des haut-parleurs et la fin de phrase de
+                # l'utilisateur ne doivent pas être décodés. L'ancien critère
+                # « niveau AEC < 550 » n'était jamais atteint sur ce micro
+                # (bruit ambiant ≈ 450, résidu d'écho par-dessus) : le
+                # détecteur restait désarmé et « stop » n'existait pas.
                 if self._quiet_s < self._quiet_arm_s:
-                    if rms < 550.0:
-                        self._quiet_s += len(pcm) / float(self._sample_rate)
-                    else:
-                        self._quiet_s = 0.0
+                    self._quiet_s += len(pcm) / float(self._sample_rate)
                     if getattr(self._detector, "available", False):
                         self._detector.reset()
                     return
+                if not self._armed_logged:
+                    self._armed_logged = True
+                    rms = float(np.sqrt(np.mean(pcm.astype(np.float32) ** 2))) if pcm.size else 0.0
+                    logger.info("barge-in armé (niveau AEC %.0f)", rms)
 
                 # Chemin 1 : Vosk local
                 if getattr(self._detector, "available", False) and self._detector.process(np.ascontiguousarray(pcm)):
