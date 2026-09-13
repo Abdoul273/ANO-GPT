@@ -11,6 +11,9 @@ Concurrence
 * **asyncio** — ``ScreenConsciousness.run`` est une tâche de la session
   (ou du process). Le tick bloquant (grim, DCT, WebP, OCR) quitte la
   boucle via le pool ``compute-light`` ou ``asyncio.to_thread``.
+  WebP : une passe ``method=0`` à 1024 px, ``stall_timeout=8 s`` — plus
+  de boucle qualité qui prenait un cœur pendant 3 s et faisait bégayer
+  la voix.
 * **thread Hyprland** — la socket ``.socket2.sock`` réveille le démon au
   changement de fenêtre, sans sondage ``hyprctl`` entre deux ticks.
 * **Qt / audio** — aucune image n'est décodée sur le thread principal, et
@@ -65,9 +68,11 @@ PHASH_HARD = 22         # Hamming ≥ 22     → changement visuel
 SSIM_SIZE = 64
 SSIM_THRESHOLD = 0.90   # en dessous → changement
 
-WEBP_QUALITY = 80
+WEBP_QUALITY = 70
 WEBP_MAX_BYTES = 40_000
-WEBP_MAX_SIDE = 960
+WEBP_MAX_SIDE = 1024
+WEBP_METHOD = 0          # 0 = le plus rapide ; method=4 prenait ~3 s sur 2 cœurs
+SCREEN_TICK_STALL_S = 8.0
 
 OCR_TIMEOUT_S = 0.80
 GRIM_PROBE_TIMEOUT_S = 1.2
@@ -360,6 +365,17 @@ def ssim_score(a: np.ndarray, b: np.ndarray) -> float:
     return float(max(0.0, min(1.0, num / den)))
 
 
+def snapshot_capture_scale(
+    size: tuple[int, int],
+    *,
+    max_side: int = WEBP_MAX_SIDE,
+    cap: float = SNAPSHOT_SCALE,
+) -> float:
+    """Échelle grim : jamais plus que ``max_side`` px, déjà assez pour WebP et OCR."""
+    longest = max(int(size[0]), int(size[1]), 1)
+    return float(min(cap, max_side / float(longest)))
+
+
 def compress_webp(
     src: Any,
     *,
@@ -367,49 +383,69 @@ def compress_webp(
     max_bytes: int = WEBP_MAX_BYTES,
     max_side: int = WEBP_MAX_SIDE,
 ) -> tuple[bytes, str]:
-    """WebP q80, plafonné à 40 Ko. Repli JPEG si le codec WebP manque."""
+    """WebP q70, 1024 px, une seule passe. Repli JPEG si le codec WebP manque.
+
+    ``method=0`` et le redimensionnement *avant* l'encode tiennent le budget
+    CPU (< 300 ms sur deux cœurs). Si le fichier dépasse encore ``max_bytes``
+    (scène très bruitée), on le rend tel quel : reboucler jusqu'à cinq fois
+    bloquait le pool ``compute-light`` et faisait bégayer la voix.
+    """
     if not _PIL_AVAILABLE:
         raw = bytes(src) if isinstance(src, (bytes, bytearray)) else b""
         return raw, "image/png"
 
     original, owned = _open_image(src)
     try:
+        try:
+            # JPEG : décoder déjà à 1024 px (DCT 1/2, 1/4, 1/8) au lieu
+            # de matérialiser le plein cadre puis de le réduire.
+            original.draft("RGB", (max_side, max_side))
+        except Exception:
+            pass
         img = original.convert("RGB")
+        if img is original:
+            img = original.copy()
     finally:
         if owned:
             original.close()
 
-    img.thumbnail((max_side, max_side), PIL.Image.Resampling.BILINEAR)
-
-    def _save(image: Any, fmt: str, q: int) -> bytes:
-        buf = io.BytesIO()
-        kwargs: dict[str, Any] = {"quality": int(q)}
-        if fmt == "WEBP":
-            kwargs["method"] = 4
-        else:
-            kwargs["optimize"] = True
-        image.save(buf, format=fmt, **kwargs)
-        return buf.getvalue()
-
-    fmt = "WEBP"
-    mime = "image/webp"
-    q = int(quality)
-    payload = b""
     try:
-        payload = _save(img, fmt, q)
-    except Exception:
-        fmt, mime = "JPEG", "image/jpeg"
-        payload = _save(img, fmt, min(q, 75))
+        if max(img.size) > max_side:
+            img.thumbnail((max_side, max_side), PIL.Image.Resampling.BOX)
 
-    side = max_side
-    while len(payload) > max_bytes and (q > 45 or side > 480):
-        if q > 50:
-            q -= 10
-        else:
-            side = int(side * 0.75)
-            img.thumbnail((side, side), PIL.Image.Resampling.BILINEAR)
-        payload = _save(img, fmt, q)
-    return payload, mime
+        q = int(quality)
+
+        def _save(fmt: str) -> bytes:
+            buf = io.BytesIO()
+            if fmt == "WEBP":
+                img.save(
+                    buf,
+                    format="WEBP",
+                    quality=q,
+                    method=WEBP_METHOD,
+                )
+            else:
+                img.save(
+                    buf,
+                    format="JPEG",
+                    quality=min(q, 75),
+                    optimize=False,
+                    progressive=False,
+                    subsampling="4:2:0",
+                )
+            return buf.getvalue()
+
+        try:
+            payload = _save("WEBP")
+            mime = "image/webp"
+        except Exception:
+            payload = _save("JPEG")
+            mime = "image/jpeg"
+        # max_bytes : cible, pas une boucle. Au-delà on rend le fichier tel quel
+        # (un bureau photographique à 1024 px / q70 peut dépasser 40 Ko).
+        return payload, mime
+    finally:
+        img.close()
 
 
 def diff_snapshots(
@@ -509,11 +545,15 @@ def ocr_tesseract(
     try:
         im, owned = _open_image(image_bytes)
         try:
+            try:
+                im.draft("L", (OCR_MAX_SIDE, OCR_MAX_SIDE))
+            except Exception:
+                pass
             gray = im.convert("L")
             gray.thumbnail((OCR_MAX_SIDE, OCR_MAX_SIDE), PIL.Image.Resampling.BILINEAR)
             enhanced = PIL.ImageOps.autocontrast(gray, cutoff=2)
             buf = io.BytesIO()
-            enhanced.save(buf, format="PNG", optimize=True)
+            enhanced.save(buf, format="PNG", optimize=False)
             png = buf.getvalue()
         finally:
             if owned:
@@ -899,7 +939,7 @@ class ScreenConsciousness:
         try:
             raw = self._capture_fn(
                 window.geometry_str,
-                scale=SNAPSHOT_SCALE,
+                scale=snapshot_capture_scale(window.size),
                 fmt="jpeg",
                 quality=WEBP_QUALITY,
                 timeout=GRIM_SNAP_TIMEOUT_S,
@@ -948,7 +988,7 @@ class ScreenConsciousness:
             print(
                 f"[Écran] Δ {diff.reason} {window.window_class} "
                 f"d={diff.phash_distance} ssim={diff.ssim:.2f} "
-                f"{len(webp)} o {stats.total_ms:.0f}ms"
+                f"{len(webp)} o webp={stats.webp_ms:.0f}ms tot={stats.total_ms:.0f}ms"
                 + (" ⚠" if signals.has_error else "")
             )
         return stats
@@ -1132,7 +1172,7 @@ class ScreenConsciousness:
                 "compute-light",
                 self.tick,
                 task_name="scrn",
-                stall_timeout=2.8,
+                stall_timeout=SCREEN_TICK_STALL_S,
                 force=force,
             )
             return await future
@@ -1285,7 +1325,7 @@ def _print_benchmark(report: dict[str, Any]) -> None:
     print("=" * 72)
     print(f"  pHash DCT 32×32          : {report['phash_ms']:.3f} ms")
     print(f"  SSIM 64×64               : {report['ssim_ms']:.3f} ms")
-    print(f"  WebP q80 (cible <40 Ko)  : {report['webp_ms']:.3f} ms  → {report['webp_bytes']} o ({report['webp_mime']})")
+    print(f"  WebP q70 une passe (<40 Ko visé) : {report['webp_ms']:.3f} ms  → {report['webp_bytes']} o ({report['webp_mime']})")
     print(f"  Hamming 2 frames bruitées: {report['hamming_same_seed_noise']}")
     print(f"  Tick FIRST (WebP+OCR)    : {report['tick_first_ms']:.2f} ms  ≈ {report['cpu_pct_first_one_core']:.3f} % d'un cœur")
     print(f"  Tick STATIC p50          : {report['tick_static_p50_ms']:.3f} ms  ≈ {report['cpu_pct_static_one_core']:.4f} % d'un cœur")

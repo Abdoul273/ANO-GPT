@@ -17,16 +17,23 @@ from core.event_bus import ScreenChangeEvent
 from core.screen_capture import WindowInfo
 from core.screen_consciousness import (
     DEFAULT_INTERVAL_S,
+    PROBE_SCALE,
+    SCREEN_TICK_STALL_S,
     WEBP_MAX_BYTES,
+    WEBP_MAX_SIDE,
+    WEBP_METHOD,
+    WEBP_QUALITY,
     DiffResult,
     ScreenConsciousness,
     ScreenSnapshot,
+    TickStats,
     benchmark_cpu,
     compress_webp,
     diff_snapshots,
     extract_signals,
     hamming_distance,
     perceptual_hash,
+    snapshot_capture_scale,
     ssim_score,
     wants_screen_context,
 )
@@ -50,13 +57,18 @@ def _terminal(text: str = "error: failed to compile main.py", color: str = "red"
     return img
 
 
-def _window(cls: str = "kitty", title: str = "zsh", address: str = "0x1") -> WindowInfo:
+def _window(
+    cls: str = "kitty",
+    title: str = "zsh",
+    address: str = "0x1",
+    size: tuple[int, int] = (800, 600),
+) -> WindowInfo:
     return WindowInfo(
         address=address,
         window_class=cls,
         title=title,
         at=(10, 20),
-        size=(800, 600),
+        size=size,
     )
 
 
@@ -94,6 +106,109 @@ def test_webp_stays_under_forty_kilobytes():
     payload, mime = compress_webp(img)
     assert mime in {"image/webp", "image/jpeg"}
     assert 0 < len(payload) <= WEBP_MAX_BYTES
+
+
+def test_webp_resizes_before_encode_and_uses_fast_method(monkeypatch):
+    saves: list[tuple[str | None, dict, tuple[int, int]]] = []
+    original_save = Image.Image.save
+
+    def _spy(self, fp, format=None, **kwargs):
+        saves.append((format, kwargs, self.size))
+        return original_save(self, fp, format=format, **kwargs)
+
+    monkeypatch.setattr(Image.Image, "save", _spy)
+    img = Image.new("RGB", (1920, 1080), (30, 40, 50))
+    payload, mime = compress_webp(img)
+    assert mime == "image/webp"
+    assert payload.startswith(b"RIFF")
+    assert len(saves) == 1
+    fmt, kwargs, size = saves[0]
+    assert fmt == "WEBP"
+    assert kwargs.get("method") == WEBP_METHOD == 0
+    assert kwargs.get("quality") == WEBP_QUALITY == 70
+    assert max(size) <= WEBP_MAX_SIDE == 1024
+
+
+def test_webp_single_pass_even_on_noisy_fullscreen(monkeypatch):
+    saves: list[str | None] = []
+    original_save = Image.Image.save
+
+    def _spy(self, fp, format=None, **kwargs):
+        saves.append(format)
+        return original_save(self, fp, format=format, **kwargs)
+
+    monkeypatch.setattr(Image.Image, "save", _spy)
+    rng = np.random.default_rng(0)
+    noise = rng.integers(0, 256, (1080, 1920, 3), dtype=np.uint8)
+    started = time.perf_counter()
+    payload, mime = compress_webp(Image.fromarray(noise, "RGB"))
+    elapsed_s = time.perf_counter() - started
+    assert mime in {"image/webp", "image/jpeg"}
+    assert len(payload) > 0
+    assert saves == ["WEBP"]
+    assert elapsed_s < 0.30
+
+
+def test_webp_from_jpeg_bytes_does_not_keep_full_frame():
+    buf = io.BytesIO()
+    Image.new("RGB", (1920, 1080), (12, 24, 48)).save(buf, format="JPEG", quality=85)
+    payload, mime = compress_webp(buf.getvalue())
+    assert mime == "image/webp"
+    assert 0 < len(payload) <= WEBP_MAX_BYTES
+
+
+def test_snapshot_scale_caps_4k_to_1024px():
+    assert snapshot_capture_scale((1920, 1080)) == pytest.approx(0.5)
+    assert snapshot_capture_scale((3840, 2160)) == pytest.approx(1024 / 3840)
+    assert snapshot_capture_scale((800, 600)) == pytest.approx(0.5)
+
+
+def test_change_tick_asks_grim_for_1024px_on_4k_window():
+    scales: list[float] = []
+
+    def capture(geometry: str, **kwargs):
+        scales.append(float(kwargs.get("scale", 1.0)))
+        return _jpeg(_terminal())
+
+    mind = ScreenConsciousness(
+        capture_fn=capture,
+        window_fn=lambda: _window("kitty", "zsh", "0x4k", size=(3840, 2160)),
+        ocr_fn=lambda _b: "error: failed to compile main.py",
+    )
+    stats = mind.tick(force=True)
+    assert stats.action in {"first", "change"}
+    assert scales[0] == pytest.approx(PROBE_SCALE)
+    assert scales[1] == pytest.approx(1024 / 3840)
+
+
+def test_run_tick_uses_eight_second_stall(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _Fut:
+        def __await__(self):
+            async def _ok():
+                return TickStats(action="skip")
+
+            return _ok().__await__()
+
+    class _Pool:
+        def submit(self, pool, fn, *args, **kwargs):
+            captured["pool"] = pool
+            captured["task_name"] = kwargs.get("task_name")
+            captured["stall_timeout"] = kwargs.get("stall_timeout")
+            return _Fut()
+
+    monkeypatch.setattr("core.thread_pool.get_thread_pool", lambda: _Pool())
+    mind = ScreenConsciousness(
+        capture_fn=lambda geometry, **k: _jpeg(_solid((0, 0, 0))),
+        window_fn=lambda: _window(),
+        ocr_fn=lambda _b: "",
+    )
+    stats = asyncio.run(mind._run_tick(force=False))
+    assert stats.action == "skip"
+    assert captured["pool"] == "compute-light"
+    assert captured["task_name"] == "scrn"
+    assert captured["stall_timeout"] == SCREEN_TICK_STALL_S == 8.0
 
 
 def test_extract_signals_finds_errors_and_filenames():
