@@ -1,5 +1,6 @@
 """Toutes les ouvertures ANO-GPT restent dans Chrome, même après une session Firefox."""
 from unittest.mock import Mock
+import asyncio
 
 from core import browser_policy as policy
 
@@ -78,6 +79,51 @@ def test_browser_session_cannot_start_firefox():
     session = BrowserSession("firefox")
     assert session.name == "chrome"
     assert session._resolve_engine() == "chromium"
+
+
+def test_closed_chrome_is_relaunched_once_before_the_next_action(monkeypatch):
+    """Une fermeture manuelle ne laisse pas un contexte Playwright mort."""
+    from actions.browser_control import BrowserSession
+
+    class DeadBrowser:
+        def is_connected(self):
+            return False
+
+    class Page:
+        def is_closed(self):
+            return False
+
+        async def evaluate(self, *_args, **_kwargs):
+            return 1
+
+    class LiveContext:
+        pages = []
+
+        async def new_page(self):
+            return Page()
+
+    session = BrowserSession("chrome")
+    session._browser = DeadBrowser()
+    session._context = object()
+    calls = []
+
+    async def relaunch():
+        calls.append("relaunch")
+        session._browser = None
+        session._context = None
+        session._page = None
+
+    async def launch(*_args, **_kwargs):
+        calls.append("launch")
+        session._context = LiveContext()
+
+    monkeypatch.setattr(session, "_relaunch_disconnected_browser", relaunch)
+    monkeypatch.setattr(session, "_launch", launch)
+
+    page = asyncio.run(session.get_page())
+
+    assert isinstance(page, Page)
+    assert calls == ["relaunch", "launch"]
 
 
 def test_local_web_documents_open_in_chrome(tmp_path, monkeypatch):

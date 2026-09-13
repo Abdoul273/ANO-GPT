@@ -26,6 +26,34 @@ def test_full_capture_uses_caelestia_and_preserves_requested_output(monkeypatch,
     assert "Caelestia" in result["message"]
 
 
+def test_caelestia_capture_file_is_success_even_if_cli_does_not_exit(monkeypatch, tmp_path):
+    """Le shell peut laisser son CLI vivant après avoir écrit l'image."""
+    caelestia_dir = tmp_path / "caelestia"
+    monkeypatch.setattr(capture, "_hypr_env", lambda: {})
+    monkeypatch.setattr(capture, "_have", lambda binary: binary == "caelestia")
+    monkeypatch.setattr(capture, "_caelestia_screenshots_dir", lambda env: caelestia_dir)
+
+    def fake_run(cmd, **kwargs):
+        assert kwargs["timeout"] == 7
+        caelestia_dir.mkdir()
+        (caelestia_dir / "completed.png").write_bytes(b"png-data")
+        return capture.kit.ProcResult(cmd=tuple(cmd), code=-9, timed_out=True)
+
+    monkeypatch.setattr(capture.kit, "run", fake_run)
+    result = capture.take_screenshot()
+
+    assert result["ok"] is True
+    assert "completed.png" in result["message"]
+
+
+def test_capture_policy_leaves_margin_after_caelestia_timeout():
+    """Le CLI Caelestia est tué à 7 s, le tour Live garde sa marge."""
+    from core.action_runtime import ActionRuntime
+    from core.tool_dispatcher import TOOL_DECLARATIONS
+
+    assert ActionRuntime(TOOL_DECLARATIONS).policy_for("capture_control").timeout_s == 10.0
+
+
 def test_region_uses_caelestia_native_picker(monkeypatch):
     seen = []
     monkeypatch.setattr(capture, "_hypr_env", lambda: {})

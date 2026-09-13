@@ -277,12 +277,12 @@ def _take_screenshot_caelestia(
     env["CAELESTIA_SCREENSHOTS_DIR"] = str(target_dir)
     before = {p.resolve() for p in target_dir.glob("*.png")} if target_dir.exists() else set()
     started = time.time()
-    result = kit.run(["caelestia", "screenshot"], timeout=30, env=env)
-    if result.timed_out or result.not_found:
-        return {"ok": False, "path": "", "message": f"Échec de Caelestia : {result.reason()}"}
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "commande interrompue").strip()
-        return {"ok": False, "path": "", "message": f"Échec de Caelestia : {detail}"}
+    # Certaines versions de Caelestia créent l'image immédiatement mais
+    # gardent leur CLI attaché au shell. Attendre 30 s faisait croire à ANO-GPT
+    # que la capture était encore en cours alors que le fichier existait déjà.
+    # La présence d'une nouvelle image est la source de vérité ; le processus
+    # n'est qu'un moyen de la demander.
+    result = kit.run(["caelestia", "screenshot"], timeout=7, env=env)
 
     # Le nom est horodaté à la seconde : utiliser aussi la date de modification
     # pour éviter de confondre une ancienne capture réalisée le même jour.
@@ -298,7 +298,10 @@ def _take_screenshot_caelestia(
     if not candidates:
         return {
             "ok": False, "path": "",
-            "message": "Caelestia n'a produit aucune image exploitable.",
+            "message": (
+                "Caelestia n'a produit aucune image exploitable. "
+                f"{result.reason() if not result.ok else ''}"
+            ).strip(),
         }
     source = max(candidates, key=lambda p: p.stat().st_mtime)
     path = Path(output).expanduser() if output else source

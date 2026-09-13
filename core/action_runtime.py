@@ -67,6 +67,9 @@ _POLICIES: dict[str, ActionPolicy] = {
     "generate_video": ActionPolicy(timeout_s=60.0),
     "generate_document": ActionPolicy(timeout_s=210.0),
     "weather_report": ActionPolicy(timeout_s=25.0, max_concurrency=2),
+    # Caelestia est borné à 7 s : garder 3 s pour le dispatcher et la copie
+    # éventuelle du fichier sans retenir un tour Live trente secondes.
+    "capture_control": ActionPolicy(timeout_s=10.0),
     "find_nearby": ActionPolicy(timeout_s=20.0),
     "email_control": ActionPolicy(timeout_s=45.0),
     "youtube_video": ActionPolicy(timeout_s=70.0),

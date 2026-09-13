@@ -566,6 +566,37 @@ class BrowserSession:
             raise RuntimeError("Playwright n'est pas installé.")
         self._pw = await async_playwright().start()
 
+    def _browser_is_disconnected(self) -> bool:
+        """Vrai si Chrome a été fermé hors du contrôle de Playwright."""
+        browser = self._browser
+        if browser is None and self._context is not None:
+            browser = getattr(self._context, "browser", None)
+        if browser is None:
+            return False
+        try:
+            return not browser.is_connected()
+        except Exception:
+            # Un handle Playwright devenu invalide équivaut à un navigateur
+            # déconnecté ; le relancer est plus sûr que réutiliser ce contexte.
+            return True
+
+    async def _relaunch_disconnected_browser(self) -> None:
+        """Purge un contexte mort puis redémarre Playwright, une seule fois."""
+        logger.info("Chrome fermé manuellement : réinitialisation Playwright.")
+        try:
+            if self._context is not None:
+                await self._context.close()
+        except Exception:
+            pass
+        try:
+            if self._pw is not None:
+                await self._pw.stop()
+        except Exception:
+            pass
+        self._pw = self._browser = self._context = self._page = None
+        self._is_cdp = False
+        await self._init_playwright()
+
     def run(self, coro, timeout: float = 60.0) -> str:
         if self._closed:
             raise RuntimeError("Session fermée")
@@ -610,7 +641,15 @@ class BrowserSession:
             pass
 
     # ── Lancement / contexte ──────────────────────────────────────────────
-    async def _ensure_context(self):
+    async def _ensure_context(self, *, relaunch_attempted: bool = False):
+        # Chrome peut être fermé manuellement entre deux commandes. Ne jamais
+        # laisser « Target page, context or browser has been closed » fuiter :
+        # une reconnexion est tentée, exactement une fois par action.
+        if self._browser_is_disconnected():
+            if relaunch_attempted:
+                raise RuntimeError("Chrome est resté fermé après la relance Playwright.")
+            await self._relaunch_disconnected_browser()
+            return await self._ensure_context(relaunch_attempted=True)
         if self._context is None:
             await self._launch(retry=RETRY_COUNT)
         if self._page is None or self._page.is_closed():
