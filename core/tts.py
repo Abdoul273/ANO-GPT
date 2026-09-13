@@ -205,6 +205,22 @@ class ElevenLabsConfig:
     max_retries: int = 1
 
 
+def _run_sync(coro_factory, executor: ThreadPoolExecutor):
+    """Exécute une coroutine depuis du code synchrone, sans boucle jetable.
+
+    ``asyncio.run`` gère lui-même la boucle et sa fermeture (générateurs
+    asynchrones, executor par défaut compris) — ce que ``new_event_loop()`` +
+    ``run_until_complete`` ne faisait pas, en laissant une boucle orpheline par
+    phrase. Appelé depuis un thread qui a déjà une boucle en cours, le travail
+    part dans le worker du moteur pour ne pas la bloquer ni la réentrer.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_factory())
+    return executor.submit(lambda: asyncio.run(coro_factory())).result()
+
+
 # ---------------------------------------------------------------------------
 # EdgeTTS – ultra‑robust with retries & async
 # ---------------------------------------------------------------------------
@@ -219,11 +235,7 @@ class EdgeTTSEngine(BaseTTSEngine):
 
     def speak(self, text: str) -> None:
         """Synthesise and play (blocking)."""
-        try:
-            loop = asyncio.new_event_loop()
-            audio_bytes = loop.run_until_complete(self._synth(text))
-        finally:
-            loop.close()
+        audio_bytes = _run_sync(lambda: self._synth(text), self._executor)
         if audio_bytes:
             _play_audio_bytes(audio_bytes)
 
@@ -565,11 +577,7 @@ class ElevenLabsTTSEngine(BaseTTSEngine):
         self._executor = ThreadPoolExecutor(max_workers=1)
 
     def speak(self, text: str) -> None:
-        loop = asyncio.new_event_loop()
-        try:
-            audio_bytes = loop.run_until_complete(self._synth(text))
-        finally:
-            loop.close()
+        audio_bytes = _run_sync(lambda: self._synth(text), self._executor)
         if audio_bytes:
             _play_audio_bytes(audio_bytes)
 

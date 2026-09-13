@@ -44,16 +44,15 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
 from enum import Enum
-from typing import Callable, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
-from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QLineF, QPointF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
-    QBrush, QColor, QImage, QLinearGradient, QPainter,
-    QPainterPath, QPen, QRadialGradient,
+    QBrush, QColor, QImage, QPainter,
+    QPen,
 )
 from PyQt6.QtWidgets import QApplication, QMainWindow, QSizePolicy, QWidget
 
@@ -1033,7 +1032,7 @@ class SpectralBenchmarks:
         results["particles_physics_us"] = ((t1 - t0) * 1000.0 / iterations) * 1000.0
 
         # ── Test C : Rendu QPainter Offscreen 600x600 (HUD standard) ──────────
-        app = QApplication.instance() or QApplication(["--platform", "offscreen"])
+        QApplication.instance() or QApplication(["--platform", "offscreen"])
         canvas = QImage(600, 600, QImage.Format.Format_ARGB32_Premultiplied)
 
         for n_bands in (64, 128):
@@ -1090,7 +1089,7 @@ class SpectralBenchmarks:
         print(f"{'-' * 76}")
         cpu_60fps_64  = (results['fft_filterbank_64_us'] / 1000.0 + results['render_64_ms']) / 16.67 * 100.0
         cpu_60fps_128 = (results['fft_filterbank_128_us'] / 1000.0 + results['render_128_ms']) / 16.67 * 100.0
-        print(f"  3. CHARGE CPU ESTIMÉE À 60 FPS V-SYNC (CPU SOFTWARE RASTERIZER) :")
+        print("  3. CHARGE CPU ESTIMÉE À 60 FPS V-SYNC (CPU SOFTWARE RASTERIZER) :")
         print(f"     • Mode 64 bandes  : ~{min(100.0, cpu_60fps_64):4.1f}% d'un cœur CPU")
         print(f"     • Mode 128 bandes : ~{min(100.0, cpu_60fps_128):4.1f}% d'un cœur CPU")
         print("     * Note : En mode QOpenGLWidget matériel, la charge CPU chute à < 2%.")
@@ -1118,7 +1117,6 @@ def run_demo(num_bands: int = 128, layout: str = "symmetric") -> None:
     synth_timer = QTimer()
 
     def _synth_audio():
-        nonlocal t_ref
         t = time.perf_counter() - t_ref
         n_samples = 1024
         sr = 44100

@@ -3788,11 +3788,10 @@ class ToolDispatcher:
                 self.ui.write_log("SYS: Shutdown requested.")
                 from core.personality_modes import user_address
                 self.speak(f"Au revoir, {user_address()}.")
-                def _shutdown():
-                    import time, os
-                    time.sleep(1)
-                    os._exit(0)
-                threading.Thread(target=_shutdown, daemon=True).start()
+                # Une seconde pour laisser partir l'adieu, puis sortie : sur
+                # la boucle elle-même, sans thread ni sommeil bloquant.
+                import os as _os
+                loop.call_later(1.0, _os._exit, 0)
 
             else:
                 if name in self._plugins.plugins:

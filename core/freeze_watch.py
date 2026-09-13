@@ -68,15 +68,26 @@ def dump_all_threads(reason: str) -> Path | None:
     return path
 
 
+# Dernier rapport émis par battement : le battement lui-même n'est jamais
+# réarmé par le veilleur, sinon la durée affichée repartait de zéro à chaque
+# rapport et un gel de deux minutes se lisait « 3 s » quatre fois de suite.
+_reported: dict[str, float] = {}
+
+
 def _watch() -> None:
     while True:
         time.sleep(0.5)
         now = time.monotonic()
         for name, last in list(_beats.items()):
             stalled = now - last
-            if stalled >= STALL_S:
-                dump_all_threads(f"{name} ne répond plus depuis {stalled:.1f} s")
-                _beats[name] = now   # nouveau départ, sinon un rapport par tour
+            if stalled < STALL_S:
+                _reported.pop(name, None)
+                continue
+            last_report = _reported.get(name)
+            if last_report is not None and now - last_report < REPORT_COOLDOWN_S:
+                continue
+            if dump_all_threads(f"{name} ne répond plus depuis {stalled:.1f} s (cumulé)") is not None:
+                _reported[name] = now
 
 
 def start() -> None:

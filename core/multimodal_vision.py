@@ -146,7 +146,6 @@ def vision_model_cascade(cfg: Optional[dict] = None) -> List[str]:
     for name in (primary, *_DEFAULT_VISION_MODELS, fallback, BALANCED_MODEL):
         if name and name not in ordered:
             ordered.append(name)
-    global _working_vision_model
     # Un modèle déjà validé passe devant les replis, jamais devant le choix
     # explicite de l'utilisateur.
     if _working_vision_model and _working_vision_model in ordered and not primary:

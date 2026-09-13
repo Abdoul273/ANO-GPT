@@ -637,8 +637,8 @@ class ProactiveEngine:
         """Extrait la langue préférée depuis la mémoire."""
         try:
             identity = memory.get("identity", {}) or {}
-            for field in ("language", "langue", "preferred_language"):
-                val = identity.get(field)
+            for fld in ("language", "langue", "preferred_language"):
+                val = identity.get(fld)
                 if isinstance(val, dict):
                     val = val.get("value")
                 if val:
