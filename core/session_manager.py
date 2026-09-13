@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Protocol
 
+from core.background_task import spawn_logged
 from core.ai_stt_corrector import STTCorrector, TranscriptAssembler, TranscriptGuard
 from core.audio_engine import (
     CHANNELS,
@@ -665,26 +666,50 @@ class SessionManager:
         lecture, pas seulement jusqu'à l'écriture du WebSocket.
         """
         text = str(text or "").strip()
-        if not text or not self.session:
+        if not text:
+            return False
+        if not self.session:
+            # Résultat d'une tâche longue arrivé pendant une reconnexion : on
+            # le garde, `_resend_unanswered` le livrera sur la session suivante.
+            self._defer_turn(text)
             return False
         self._maybe_show_clock_particles(text)
         deferred = [
+            *[str(item or "").strip() for item in getattr(self, "_deferred_turns", ())],
             str(getattr(self, "_deferred_voice_note", "") or "").strip(),
             str(getattr(self, "_deferred_context", "") or "").strip(),
         ]
         deferred = [item for item in deferred if item]
         if deferred:
             text = "\n\n".join((*deferred, text))
+            self._deferred_turns = []
             self._deferred_voice_note = ""
             self._deferred_context = ""
+        # Le verrou est créé une seule fois (constructeur) : il sérialise les
+        # tours texte, pas une connexion WebSocket. Le recréer à chaque
+        # reconnexion laissait une tâche de fond (vidéo, image, recherche)
+        # attendre un verrou que plus personne ne relâchait, ou relâcher un
+        # verrou qu'elle ne tenait plus (« Lock is not acquired »).
         lock = getattr(self, "_turn_submit_lock", None)
         if lock is None:
             lock = asyncio.Lock()
             self._turn_submit_lock = lock
+        session_before = self.session
         async with lock:
             session = self.session
             if session is None:
+                self._defer_turn(text)
                 return False
+            if session is not session_before:
+                # La connexion a été remplacée pendant l'attente du verrou : la
+                # nouvelle session est saine, on lui livre le résultat plutôt
+                # que de le perdre — c'est précisément ce qu'attend une tâche
+                # de deux minutes qui a survécu à une coupure.
+                print("[JARVIS] Tour texte livré sur la session reconnectée.")
+            # Le tour en vol est annulable dès maintenant par « stop » ou par
+            # `reset_audio_and_turn_state` : c'est la coroutine annulée qui
+            # relâche le verrou en sortant du `async with`, jamais un tiers.
+            self._active_turn_task = asyncio.current_task()
             # Un tour micro ouvert au moment du briefing/rappel est de l'écho
             # naissant : l'annuler évite que Transcribe attende une phrase
             # fantôme et fasse tomber la session pendant que la voix sort.
@@ -705,6 +730,10 @@ class SessionManager:
             if getattr(self, "_audio_turn_pending", False) and done is not None:
                 try:
                     await asyncio.wait_for(done.wait(), timeout=pending_timeout_s)
+                except asyncio.CancelledError:
+                    self._active_turn_task = None
+                    print("[JARVIS] ⚠️ Tour texte annulé avant envoi.")
+                    return False
                 except asyncio.TimeoutError:
                     # Gemini ne renvoie pas toujours `turn_complete` pour un
                     # faux départ VAD, une phrase coupée au moment du mute ou
@@ -731,20 +760,47 @@ class SessionManager:
             # Les modèles Live 3.1 refusent désormais client_content avec le
             # code 1007. Le texte temps réel clôt lui-même son entrée et
             # déclenche normalement la réponse audio.
-            await session.send_realtime_input(text=text)
+            try:
+                await session.send_realtime_input(text=text)
+            except asyncio.CancelledError:
+                self._active_turn_task = None
+                print("[JARVIS] ⚠️ Tour texte annulé pendant l'envoi.")
+                return False
             self._awaiting_server_since = time.monotonic()
             if done is not None:
                 try:
-                    self._active_turn_task = asyncio.current_task()
                     await asyncio.wait_for(done.wait(), timeout=timeout_s)
                 except (asyncio.TimeoutError, asyncio.CancelledError):
                     print("[JARVIS] ⚠️ Tour texte interrompu ou sans confirmation de fin.")
+                    # Se retirer avant le reset : il annule le tour en vol, et
+                    # ce tour, c'est nous — inutile de nous annuler nous-mêmes.
+                    self._active_turn_task = None
                     if hasattr(self, "reset_audio_and_turn_state"):
                         self.reset_audio_and_turn_state("text_turn_timeout_or_cancel")
                     return False
                 finally:
                     self._active_turn_task = None
+            self._active_turn_task = None
             return True
+
+    def _defer_turn(self, text: str) -> None:
+        """Conserve un tour texte qui n'a pas pu partir (session absente).
+
+        Il sera préfixé au prochain tour texte, ou renvoyé tel quel par
+        `_resend_unanswered` dès que la connexion est rétablie. On ne garde
+        que les derniers : un résultat vieux de plusieurs reconnexions n'a
+        plus d'intérêt vocal, il reste de toute façon dans sa carte.
+        """
+        text = str(text or "").strip()
+        if not text:
+            return
+        pending = list(getattr(self, "_deferred_turns", None) or [])
+        if text not in pending:
+            pending.append(text)
+        self._deferred_turns = pending[-3:]
+        ui = getattr(self, "ui", None)
+        if ui is not None and hasattr(ui, "write_log"):
+            ui.write_log("SYS : résultat conservé — il sera annoncé dès la reconnexion.")
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
@@ -1240,9 +1296,9 @@ class SessionManager:
                                 if auto_persona and getattr(
                                     getattr(self, "_current_persona", None), "id", None
                                 ) != auto_persona:
-                                    asyncio.create_task(
+                                    spawn_logged(
                                         self.switch_persona(auto_persona, full_in=merged),
-                                        name="contextual-persona-switch",
+                                        name="contextual-persona-switch", ui=self.ui,
                                     )
                                 self._live_user_text = merged
                                 self._last_user_speech = time.monotonic()
@@ -1374,11 +1430,11 @@ class SessionManager:
                                     if screen is not None:
                                         try:
                                             if screen.wants_context(merged or txt):
-                                                asyncio.create_task(
+                                                spawn_logged(
                                                     screen.inject_into_live(
                                                         self, merged or txt
                                                     ),
-                                                    name="screen-context-inject",
+                                                    name="screen-context-inject", ui=self.ui,
                                                 )
                                         except Exception:
                                             pass
@@ -1453,9 +1509,9 @@ class SessionManager:
                                 # Commutation vocale dynamique de persona / mode métier ("Jarvis, passe en mode DevOps", etc.)
                                 persona_match = self.check_persona_voice_trigger(full_in)
                                 if persona_match:
-                                    asyncio.create_task(
+                                    spawn_logged(
                                         self.switch_persona(persona_match, full_in=full_in),
-                                        name="persona-voice-switch",
+                                        name="persona-voice-switch", ui=self.ui,
                                     )
 
                                 # Pendant un entraînement, conserver la phrase
@@ -1576,7 +1632,10 @@ class SessionManager:
         La demande repart en texte, et non en audio : la transcription existe
         déjà, elle est fidèle, et la réémettre ne coûte pas une seconde de son.
         """
-        if not self._unanswered or not self.session:
+        if not self.session:
+            return
+        if not self._unanswered:
+            await self._flush_deferred_turns()
             return
         pending, self._unanswered = self._unanswered[-2:], []
         # Laisse la session finir de s'établir : une entrée envoyée sur le
@@ -1600,3 +1659,21 @@ class SessionManager:
         except Exception as exc:
             print(f"[JARVIS] Reprise impossible : {exc}")
             self._unanswered = pending
+
+    async def _flush_deferred_turns(self) -> None:
+        """Livre les résultats de tâches longues arrivés sans session."""
+        pending = list(getattr(self, "_deferred_turns", None) or [])
+        if not pending:
+            return
+        await asyncio.sleep(0.4)
+        if not self.session:
+            return
+        self._deferred_turns = []
+        text = "\n\n".join(pending)
+        try:
+            delivered = await self._submit_text_turn(text)
+        except Exception as exc:
+            print(f"[JARVIS] Livraison différée impossible : {exc}")
+            delivered = False
+        if delivered:
+            self.ui.write_log("SYS : résultat différé annoncé après la reconnexion.")

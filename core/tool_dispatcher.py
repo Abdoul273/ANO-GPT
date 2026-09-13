@@ -27,6 +27,7 @@ from core.action_runtime import (
     friendly_runtime_error,
 )
 from core.audio_engine import SEND_SAMPLE_RATE, _MainAttr
+from core.background_task import spawn_logged
 from core.event_bus import ToolExecutionFinishedEvent, ToolExecutionRequestedEvent
 from core.live_model_policy import DEFAULT_PRIMARY_MODEL as LIVE_MODEL
 from core.live_speech_config import FRENCH_TECH_PHRASES
@@ -466,6 +467,24 @@ TOOL_DECLARATIONS = [
             },
             "required": ["receiver", "message_text", "platform"]
         }
+    },
+    {
+        "name": "whatsapp_control",
+        "description": (
+            "Contrôle ZapZap, le client WhatsApp installé : état, ouverture d'une "
+            "conversation et composition. Pour envoyer, utilise send_message avec "
+            "confirmation utilisateur (action='send' rappelle cette règle). "
+            "Ne prétends jamais qu'une livraison est confirmée : ZapZap ne fournit pas cette API."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "status | open | compose | send"},
+                "receiver": {"type": "STRING", "description": "Contact ANO-GPT ou numéro international +indicatif"},
+                "message": {"type": "STRING", "description": "Texte pour compose ou send"},
+            },
+            "required": ["action"],
+        },
     },
     {
         "name": "reminder",
@@ -2320,6 +2339,10 @@ class ToolDispatcher:
                             response={"result": "Action annulée par interruption utilisateur", "ok": False},
                         )
                     timeout_s = policy.timeout_s
+                    # L'action termine elle-même avant le garde-fou Live :
+                    # deux secondes restent disponibles pour restituer un
+                    # résultat ou une erreur propre.
+                    prepared["_budget_s"] = max(0.1, policy.timeout_s - 2.0)
                     if name == "email_control" and str(prepared.get("action", "")).lower() in {
                         "connect", "login", "authorize",
                     }:
@@ -2587,19 +2610,8 @@ class ToolDispatcher:
         self._ui_card("dismiss_cards", "task", "Réflexion approfondie")
         self._ui_card("show_card", "result", "Réflexion approfondie", result)
 
-        # La session peut être brièvement en reprise pour une autre raison.
-        # Attendre son retour évite de perdre un calcul déjà terminé.
-        for _ in range(120):
-            if self.session is not None:
-                break
-            await asyncio.sleep(0.25)
-        if self.session is None:
-            self.ui.write_log(
-                "ERR: résultat de recherche disponible dans la carte, "
-                "mais la session vocale est hors ligne."
-            )
-            return
-
+        # Session absente (reconnexion en cours) : `_submit_text_turn`
+        # conserve le tour et le livre dès la connexion rétablie.
         prompt = (
             "[RÉSULTAT DE RECHERCHE APPROFONDIE TERMINÉ]\n"
             f"Question originale : {question}\n\n"
@@ -2625,12 +2637,69 @@ class ToolDispatcher:
         tasks.intersection_update({task for task in tasks if not task.done()})
         if tasks:
             return False
-        task = asyncio.create_task(
+        spawn_logged(
             self._deliver_deep_research(question, context),
-            name="deep-research-background",
+            name="deep-research-background", ui=self.ui, registry=tasks,
         )
-        tasks.add(task)
-        task.add_done_callback(tasks.discard)
+        return True
+
+    async def _deliver_deferred_tool(self, name: str, args: dict) -> None:
+        """Travail long hors du tool call, puis restitution dans un nouveau tour."""
+        title = _TOOL_LABELS.get(name, name)
+        self._ui_card("show_card", "task", title, f"{title} en cours…")
+        try:
+            if name == "consult_brain":
+                from core import brain_relay
+                result = await brain_relay.run_turn(
+                    self, str(args.get("question") or ""),
+                    context=str(args.get("context") or ""),
+                    declarations=self._relay_declarations(), base_prompt=self._relay_base_prompt(),
+                    timeout=float(args.get("_budget_s") or 18.0),
+                )
+            elif name == "generate_document":
+                result = await asyncio.to_thread(generate_document_action, parameters=args, player=self.ui)
+            elif name == "email_control":
+                result = await asyncio.to_thread(
+                    email_control, parameters=args, session_memory=self._tool_session_memory, ui=self.ui,
+                )
+            elif name == "download_music":
+                # La recherche YouTube qui précède le worker yt-dlp peut elle
+                # aussi être lente : elle ne doit jamais garder le tool call.
+                result = await asyncio.to_thread(
+                    download_music, parameters=args, player=self.ui, speak=self.speak,
+                )
+            else:
+                return
+        except Exception as exc:
+            result = f"{title} a échoué : {str(exc)[:300]}"
+
+        result = str(result or f"{title} terminé.").strip()
+        self._ui_card("dismiss_cards", "task", title)
+        self._ui_card("show_card", "result", title, result[:12_000])
+        if self.session is not None:
+            try:
+                await self._submit_text_turn(
+                    f"[RÉSULTAT {title.upper()}]\n{result[:8_000]}\n\n"
+                    "Annonce directement ce résultat en français, sans rappeler d'outil.",
+                    timeout_s=35.0,
+                )
+            except Exception as exc:
+                self.ui.write_log(f"WARN: livraison différée {name} indisponible : {exc}")
+
+    def _start_deferred_tool(self, name: str, args: dict) -> bool:
+        """Un seul travail long du même type, accusé immédiat pour le micro."""
+        tasks = getattr(self, "_deferred_tool_tasks", None)
+        if tasks is None:
+            tasks = self._deferred_tool_tasks = {}
+        current = tasks.get(name)
+        if current is not None and not current.done():
+            return False
+        task = asyncio.create_task(self._deliver_deferred_tool(name, dict(args)),
+                                   name=f"deferred-{name}")
+        tasks[name] = task
+        task.add_done_callback(
+            lambda done, key=name: tasks.pop(key, None) if tasks.get(key) is done else None
+        )
         return True
 
     async def _deliver_image_generation(self, args: dict) -> None:
@@ -2666,15 +2735,18 @@ class ToolDispatcher:
         result = str(result or "La génération d'image n'a rien renvoyé.").strip()
         self._ui_card("dismiss_cards", "task", "Création d'image")
         self._ui_card("show_card", "result", "Création d'image", result)
-        if self.session is not None:
-            await self._submit_text_turn(
-                "[RÉSULTAT DE GÉNÉRATION D'IMAGE]\n"
-                f"Demande : {prompt}\nRésultat : {result}\n\n"
-                "Annonce uniquement le résultat en français, avec le ton Majeur. "
-                "Si l'image est créée, confirme qu'elle est prête et indique son chemin. "
-                "Si elle a échoué, explique la raison en français sans proposer de la relancer automatiquement.",
-                timeout_s=35.0,
-            )
+        # Pas de test `self.session is not None` : si la connexion est en
+        # reprise, le tour est conservé puis livré après la reconnexion.
+        delivered = await self._submit_text_turn(
+            "[RÉSULTAT DE GÉNÉRATION D'IMAGE]\n"
+            f"Demande : {prompt}\nRésultat : {result}\n\n"
+            "Annonce uniquement le résultat en français, avec le ton Majeur. "
+            "Si l'image est créée, confirme qu'elle est prête et indique son chemin. "
+            "Si elle a échoué, explique la raison en français sans proposer de la relancer automatiquement.",
+            timeout_s=35.0,
+        )
+        if not delivered:
+            self.ui.write_log("WARN: image prête ; annonce vocale différée (carte disponible).")
 
     def _start_image_generation(self, args: dict) -> bool:
         """Une image Azure à la fois : elle peut prendre plusieurs minutes."""
@@ -2684,11 +2756,10 @@ class ToolDispatcher:
         tasks.intersection_update({task for task in tasks if not task.done()})
         if tasks:
             return False
-        task = asyncio.create_task(
-            self._deliver_image_generation(dict(args)), name="azure-image-background",
+        spawn_logged(
+            self._deliver_image_generation(dict(args)),
+            name="azure-image-background", ui=self.ui, registry=tasks,
         )
-        tasks.add(task)
-        task.add_done_callback(tasks.discard)
         return True
 
     async def _deliver_video_generation(self, args: dict) -> None:
@@ -2731,15 +2802,16 @@ class ToolDispatcher:
         result = str(result or "La génération vidéo n'a rien renvoyé.").strip()
         self._ui_card("dismiss_cards", "task", title)
         self._ui_card("show_card", "result", title, result)
-        if self.session is not None:
-            await self._submit_text_turn(
-                "[RÉSULTAT DE GÉNÉRATION VIDÉO]\n"
-                f"Demande : {prompt}\nRésultat : {result}\n\n"
-                "Annonce uniquement le résultat en français, avec le ton Majeur. "
-                "Si la vidéo est créée, confirme qu'elle est prête et indique son chemin. "
-                "Si elle a échoué, explique la raison sans relancer la génération.",
-                timeout_s=35.0,
-            )
+        delivered = await self._submit_text_turn(
+            "[RÉSULTAT DE GÉNÉRATION VIDÉO]\n"
+            f"Demande : {prompt}\nRésultat : {result}\n\n"
+            "Annonce uniquement le résultat en français, avec le ton Majeur. "
+            "Si la vidéo est créée, confirme qu'elle est prête et indique son chemin. "
+            "Si elle a échoué, explique la raison sans relancer la génération.",
+            timeout_s=35.0,
+        )
+        if not delivered:
+            self.ui.write_log("WARN: vidéo prête ; annonce vocale différée (carte disponible).")
 
     def _ui_card(self, method: str, *args) -> None:
         """Appelle `show_card` / `update_card` / `dismiss_cards` sans jamais
@@ -2761,11 +2833,10 @@ class ToolDispatcher:
         tasks.intersection_update({task for task in tasks if not task.done()})
         if tasks:
             return False
-        task = asyncio.create_task(
-            self._deliver_video_generation(dict(args)), name="azure-video-background",
+        spawn_logged(
+            self._deliver_video_generation(dict(args)),
+            name="azure-video-background", ui=self.ui, registry=tasks,
         )
-        tasks.add(task)
-        task.add_done_callback(tasks.discard)
         return True
 
     async def _deliver_decision_simulation(self, decision: str, options: list[str]) -> None:
@@ -2820,12 +2891,10 @@ class ToolDispatcher:
         tasks.intersection_update({task for task in tasks if not task.done()})
         if tasks:
             return False
-        task = asyncio.create_task(
+        spawn_logged(
             self._deliver_decision_simulation(decision, list(options or [])),
-            name="decision-simulation-background",
+            name="decision-simulation-background", ui=self.ui, registry=tasks,
         )
-        tasks.add(task)
-        task.add_done_callback(tasks.discard)
         return True
 
     async def _execute_tool_impl(self, fc, prepared_args: dict | None = None) -> types.FunctionResponse:
@@ -2912,29 +2981,13 @@ class ToolDispatcher:
         slow_card_task = asyncio.ensure_future(_slow_task_card())
         try:
             if name == "consult_brain":
-                # Le fournisseur choisi par l'utilisateur pense et agit ; la
-                # voix ne fait que lire ce qu'il renvoie.
-                from core import brain_relay
-                from core.llm_client import main_brain_label
-
-                try:
-                    result = await brain_relay.run_turn(
-                        self,
-                        str(args.get("question") or ""),
-                        context=str(args.get("context") or ""),
-                        declarations=self._relay_declarations(),
-                        base_prompt=self._relay_base_prompt(),
-                    )
-                    print(f"[Relais] Réponse fournie par {main_brain_label()}.")
-                except Exception as exc:
-                    # Le cerveau externe est injoignable : plutôt qu'un
-                    # silence, Gemini reprend la main pour ce tour-là.
-                    print(f"[Relais] ⚠️ échec du cerveau externe : {exc}")
+                if self._start_deferred_tool(name, args):
                     result = (
-                        "Le cerveau externe n'a pas répondu "
-                        f"({str(exc)[:120]}). Réponds toi-même à la demande, "
-                        "sans rappeler cet outil."
+                        "La réflexion est lancée en arrière-plan. Dis-le immédiatement ; "
+                        "le résultat sera annoncé dès qu'il sera prêt."
                     )
+                else:
+                    result = "Une réflexion est déjà en cours. Dis-le brièvement."
 
             elif name == "deep_think":
                 question = args.get("question", "")
@@ -3030,6 +3083,16 @@ class ToolDispatcher:
                     )
                     result = (f"Aperçu affiché à l'utilisateur pour confirmation avant envoi "
                               f"(ne dis pas que c'est envoyé) : {_plat} → {_recv} : {_txt}")
+
+            elif name == "whatsapp_control":
+                from core.zapzap_controller import control as zapzap_control
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: zapzap_control(
+                        args.get("action", "status"), args.get("receiver", ""),
+                        args.get("message", ""),
+                    ),
+                )
 
             elif name == "reminder":
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
@@ -3300,20 +3363,24 @@ class ToolDispatcher:
                 # vieille de plusieurs heures.
                 around_user = not (args.get("near") or "").strip()
                 fresh_location = False
-                if around_user and self._dashboard:
-                    fresh_location = await self._dashboard.request_fresh_location(timeout=8.0)
+                if around_user:
+                    # Ne garde pas le micro fermé en attendant un téléphone :
+                    # une mesure de plus de cinq minutes est trop ancienne
+                    # pour annoncer des distances de proximité.
+                    from core.geolocation import get_precise_user_coords
+                    fresh_location = get_precise_user_coords(max_age_s=300.0) is not None
 
                 if around_user and not fresh_location:
                     result = (
-                        "Je n'ai reçu aucun relevé GPS frais. Connecte ANO Remote sur "
-                        "ton téléphone, ouvre le contrôle à distance et autorise la "
-                        "localisation, puis redemande. Je n'utiliserai ni Kouriah, ni "
-                        "Conakry, ni la position IP comme position fixe."
+                        "Je n'ai aucune position GPS de moins de cinq minutes. Ouvre ANO "
+                        "Remote, autorise la localisation, puis redemande ; je n'utiliserai "
+                        "pas une position IP ou une ancienne position comme position précise."
                     )
                 else:
                     lookup_args = dict(args)
                     if around_user:
                         lookup_args["_require_precise_gps"] = True
+                        lookup_args["_max_location_age_s"] = 300.0
 
                     def _do_find_nearby():
                         return find_nearby(
@@ -3328,9 +3395,11 @@ class ToolDispatcher:
                 result = "Carte fermée."
 
             elif name == "email_control":
-                def _do_email_control():
-                    return email_control(parameters=args, session_memory=self._tool_session_memory, ui=self.ui)
-                result = await loop.run_in_executor(None, _do_email_control)
+                if self._start_deferred_tool(name, args):
+                    result = ("Je traite les e-mails en arrière-plan. Dis-le immédiatement ; "
+                              "le résultat sera annoncé dès qu'il sera prêt.")
+                else:
+                    result = "Un traitement d'e-mails est déjà en cours."
 
             elif name == "github_control":
                 result = await loop.run_in_executor(None, lambda: github_control(args, ui=self.ui))
@@ -3477,11 +3546,10 @@ class ToolDispatcher:
                         "sans relancer la génération."
                     )
             elif name == "generate_document":
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: generate_document_action(parameters=args, player=self.ui),
-                )
-                result = r or "Document généré."
+                if self._start_deferred_tool(name, args):
+                    result = "La rédaction est lancée. Dis-le immédiatement ; le document sera annoncé dès qu'il sera prêt."
+                else:
+                    result = "Un document est déjà en cours de rédaction."
             elif name == "close_image_gallery":
                 self.ui.close_image_gallery()
                 result = "Galerie d'images fermée."
@@ -3537,13 +3605,11 @@ class ToolDispatcher:
                 result = r or "Lecture lancée."
 
             elif name == "download_music":
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: download_music(
-                        parameters=args, player=self.ui, speak=self.speak,
-                    ),
-                )
-                result = r or "Téléchargement lancé."
+                if self._start_deferred_tool(name, args):
+                    result = ("Je prépare le téléchargement en arrière-plan. Dis-le immédiatement ; "
+                              "je confirmerai le lancement dès que la recherche sera terminée.")
+                else:
+                    result = "Un téléchargement est déjà en cours de préparation."
 
             elif name == "background_tasks":
                 result = self._background_tasks_control(args)

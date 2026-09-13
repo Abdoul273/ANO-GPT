@@ -130,6 +130,9 @@ def test_watchdog_triggers_when_held_and_stalled():
     host.check_audio_watchdog = AudioEngine.check_audio_watchdog.__get__(host)
     host.set_speaking = Mock()
     host._reset_speech_sync = Mock()
+    turn_task = Mock()
+    turn_task.done.return_value = False
+    host._active_turn_task = turn_task
 
     now = 100.0
     host._last_model_turn_data_at = 90.0  # 10s ago (> 5s threshold)
@@ -147,7 +150,11 @@ def test_watchdog_triggers_when_held_and_stalled():
     assert not host._interrupted
     assert not host._noise_turn
     assert not host._activity_open
-    assert not host._turn_submit_lock.locked()
+    # Le verrou n'est plus forcé depuis le reset : il appartient au tour en
+    # vol, que le reset annule — c'est lui qui le relâchera.
+    assert host._turn_submit_lock.locked()
+    assert host._active_turn_task is None
+    turn_task.cancel.assert_called_once()
     assert host.audio_in_queue.empty()
     assert host.out_queue.empty()
     assert host.ui.set_state.called

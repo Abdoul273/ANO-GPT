@@ -647,12 +647,10 @@ class AudioEngine:
 
         self.set_speaking(False)
 
-        lock = getattr(self, "_turn_submit_lock", None)
-        if lock is not None and getattr(lock, "locked", None) and lock.locked():
-            try:
-                lock.release()
-            except (RuntimeError, ValueError):
-                pass
+        # Le verrou de soumission n'est jamais relâché d'ici : il l'est par la
+        # tâche annulée ci-dessus, en sortant de son `async with`. Le forcer
+        # depuis un tiers laissait cette tâche relâcher un verrou déjà libre
+        # (« RuntimeError: Lock is not acquired ») et perdre son résultat.
 
         if hasattr(self, "_wake") and hasattr(self._wake, "reset"):
             try:

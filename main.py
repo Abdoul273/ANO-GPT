@@ -783,7 +783,10 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self._preprocessor  = None   # défini dans _listen_audio, réglable en direct depuis l'UI
         self._mic_reopen_evt: threading.Event | None = None
         self._turn_done_event: asyncio.Event | None = None
-        self._turn_submit_lock: asyncio.Lock | None = None
+        # Créé une seule fois : il sérialise les tours texte, quelle que soit
+        # la connexion Live du moment (voir `_submit_text_turn`).
+        self._turn_submit_lock: asyncio.Lock = asyncio.Lock()
+        self._deferred_turns: list[str] = []
         self._audio_turn_pending = False
         self._awaiting_server_since = 0.0
         self._last_server_message_at = 0.0
@@ -1173,27 +1176,12 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
             if self._episode.idle_seconds > 600:
                 self._flush_episode("silence")
             self._episode.add_turn(user_text, assistant_text)
-            # L'indexation SQLite part hors de la boucle audio : la voix et le
-            # barge-in ne paient jamais le coût d'écriture du graphe.
-            get_thread_pool().submit(
-                "disk-io", self._record_second_brain_turn,
-                user_text, assistant_text,
-                task_name="record-conversation-turn",
-                stall_timeout=15.0,
-            )
+            # La mémoire groupe jusqu'à cinq tours (ou 2 s) avant de lancer
+            # une seule transaction disk-io. La voix ne paie aucun SQLite/ONNX.
+            from core.vector_memory import get_vector_memory
+            get_vector_memory().enqueue_turn(user_text, assistant_text)
         except Exception as exc:
             print(f"[Mémoire] tour non retenu : {exc}")
-
-    @staticmethod
-    def _record_second_brain_turn(user_text: str, assistant_text: str) -> None:
-        try:
-            from core.vector_memory import get_vector_memory
-            from core.knowledge_graph import record_conversation_turn
-
-            get_vector_memory().save_turn(user_text, assistant_text)
-            record_conversation_turn(user_text, assistant_text)
-        except Exception as exc:
-            print(f"[Second Brain] tour non indexé : {exc}")
 
     def _flush_episode(self, reason: str, *, allow_agent: bool = True) -> None:
         """Lance l'écriture du résumé sans jamais faire attendre la voix."""
@@ -1702,7 +1690,6 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     self._stt_provider = "gemini"
                     self.out_queue        = asyncio.Queue(maxsize=200)
                     self._turn_done_event = asyncio.Event()
-                    self._turn_submit_lock = asyncio.Lock()
                     self._audio_turn_pending = False
                     self._live_send_trace = collections.deque(maxlen=24)
 
