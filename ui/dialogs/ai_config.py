@@ -204,52 +204,6 @@ class AIConfigOverlay(FadeInWidget):
         key_row.addWidget(self._show_key_btn)
         pl.addLayout(key_row)
 
-        # Gemini seulement : une seconde clé, réservée à la voix (Gemini Live).
-        # Un second projet Google gratuit y suffit : la voix reste gratuite,
-        # pendant que la clé principale (payante) sert à la vision, au coach
-        # TikTok et aux résumés.
-        self._voice_widgets: list[QWidget] = []
-        self._voice_key_label = micro_label("Clé Gemini — voix (Gemini Live), second compte gratuit · optionnel")
-        pl.addWidget(self._voice_key_label)
-        self._voice_widgets.append(self._voice_key_label)
-        voice_row = QHBoxLayout(); voice_row.setSpacing(4)
-        self._voice_key_input = QLineEdit()
-        self._voice_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._voice_key_input.setPlaceholderText("Vide = la voix utilise la clé principale")
-        self._voice_key_input.setFont(QFont("Inter", 10))
-        self._voice_key_input.setFixedHeight(30)
-        self._voice_key_input.setToolTip(
-            "Clé d'un second projet Google AI Studio (jamais rechargé) : la session vocale "
-            "Gemini Live l'utilise seule. Tout le reste (vision, coach, résumés) garde la clé "
-            "principale ci-dessus."
-        )
-        voice_row.addWidget(self._voice_key_input)
-        self._show_voice_key_btn = QPushButton("👁")
-        self._show_voice_key_btn.setFixedSize(30, 30)
-        self._show_voice_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._show_voice_key_btn.clicked.connect(self._toggle_voice_key_visibility)
-        voice_row.addWidget(self._show_voice_key_btn)
-        self._test_voice_btn = QPushButton("◎ VOIX")
-        self._test_voice_btn.setFixedSize(64, 30)
-        self._test_voice_btn.setFont(QFont("Inter", 8, QFont.Weight.Bold))
-        self._test_voice_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._test_voice_btn.setToolTip("Vérifie cette clé auprès de Google avant de l'enregistrer.")
-        self._test_voice_btn.clicked.connect(self._test_voice_key)
-        voice_row.addWidget(self._test_voice_btn)
-        voice_holder = QWidget(); voice_holder.setLayout(voice_row)
-        voice_holder.setStyleSheet("background: transparent;")
-        pl.addWidget(voice_holder)
-        self._voice_widgets.append(voice_holder)
-        self._voice_hint = QLabel(
-            "Recharge la clé principale (vision, coach TikTok, modèles Pro) ; laisse ce second "
-            "compte gratuit : la voix ne te coûtera rien."
-        )
-        self._voice_hint.setWordWrap(True)
-        self._voice_hint.setFont(QFont("Inter", 8))
-        self._voice_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        pl.addWidget(self._voice_hint)
-        self._voice_widgets.append(self._voice_hint)
-
         self._url_label = micro_label("URL du serveur")
         pl.addWidget(self._url_label)
         self._url_input = QLineEdit()
@@ -400,6 +354,66 @@ class AIConfigOverlay(FadeInWidget):
         pl.addLayout(btn_row)
 
         outer.addWidget(self._panel)
+
+        # ── Voix Gemini Live : section à part, toujours visible ────────────
+        # Quel que soit le cerveau choisi (Azure, OpenRouter…), la voix reste
+        # Gemini Live. Sa clé se règle donc ici, pas dans le panneau Gemini.
+        outer.addSpacing(6)
+        outer.addWidget(micro_label("Voix — Gemini Live"))
+        self._voice_panel = cyber_section()
+        self._voice_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        vl = QVBoxLayout(self._voice_panel)
+        vl.setContentsMargins(12, 10, 12, 10)
+        vl.setSpacing(6)
+        vl.addWidget(micro_label("Clé Gemini réservée à la voix (second compte gratuit) · optionnel"))
+        voice_row = QHBoxLayout(); voice_row.setSpacing(4)
+        self._voice_key_input = QLineEdit()
+        self._voice_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._voice_key_input.setPlaceholderText("Vide = la voix utilise la clé Gemini principale")
+        self._voice_key_input.setFont(QFont("Inter", 10))
+        self._voice_key_input.setFixedHeight(30)
+        self._voice_key_input.setToolTip(
+            "Clé d'un second projet Google AI Studio (jamais rechargé) : la session vocale "
+            "Gemini Live l'utilise seule. Tout le reste (vision, coach, résumés) garde la clé "
+            "Gemini principale."
+        )
+        self._voice_key_input.setText(_read_full_config().get("gemini_live_api_key", "") or "")
+        voice_row.addWidget(self._voice_key_input)
+        self._show_voice_key_btn = QPushButton("👁")
+        self._show_voice_key_btn.setFixedSize(30, 30)
+        self._show_voice_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._show_voice_key_btn.clicked.connect(self._toggle_voice_key_visibility)
+        voice_row.addWidget(self._show_voice_key_btn)
+        vl.addLayout(voice_row)
+        self._voice_hint = QLabel(
+            "Recharge la clé Gemini principale (vision, coach TikTok, modèles Pro) et laisse ce "
+            "second compte gratuit : la voix ne te coûtera rien."
+        )
+        self._voice_hint.setWordWrap(True)
+        self._voice_hint.setFont(QFont("Inter", 8))
+        self._voice_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        vl.addWidget(self._voice_hint)
+        self._voice_status = QLabel("")
+        self._voice_status.setWordWrap(True)
+        self._voice_status.setFont(QFont("Inter", 8))
+        self._voice_status.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        vl.addWidget(self._voice_status)
+        voice_btns = QHBoxLayout(); voice_btns.setSpacing(8)
+        self._test_voice_btn = QPushButton("◎  TESTER LA CLÉ VOIX")
+        self._test_voice_btn.setFixedHeight(32)
+        self._test_voice_btn.setFont(QFont("Inter", 9, QFont.Weight.Bold))
+        self._test_voice_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._test_voice_btn.clicked.connect(self._test_voice_key)
+        voice_btns.addWidget(self._test_voice_btn)
+        self._save_voice_btn = QPushButton("▸  APPLIQUER À LA VOIX")
+        self._save_voice_btn.setFixedHeight(32)
+        self._save_voice_btn.setFont(QFont("Inter", 9, QFont.Weight.Bold))
+        self._save_voice_btn.setObjectName("CyberPrimary")
+        self._save_voice_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._save_voice_btn.clicked.connect(self._apply_voice_key)
+        voice_btns.addWidget(self._save_voice_btn)
+        vl.addLayout(voice_btns)
+        outer.addWidget(self._voice_panel)
         outer.addStretch()
 
 
@@ -586,8 +600,6 @@ class AIConfigOverlay(FadeInWidget):
                 widget.setVisible(False)
             for widget in self._azure_widgets:
                 widget.setVisible(False)
-            for widget in self._voice_widgets:
-                widget.setVisible(False)
             try:
                 from core.llm_client import PROVIDERS, configured_brain_providers
                 order = configured_brain_providers()
@@ -617,12 +629,6 @@ class AIConfigOverlay(FadeInWidget):
         self._key_input.setPlaceholderText(
             "Collez votre clé API ici…" if info["needs_key"] else "Optionnelle selon votre serveur"
         )
-
-        is_gemini = pid == "gemini"
-        for widget in self._voice_widgets:
-            widget.setVisible(is_gemini)
-        if is_gemini:
-            self._voice_key_input.setText(cfg.get("gemini_live_api_key", "") or "")
 
         self._url_label.setVisible(info["url_editable"])
         self._url_input.setVisible(info["url_editable"])
@@ -798,13 +804,17 @@ class AIConfigOverlay(FadeInWidget):
         self._voice_key_input.setEchoMode(
             QLineEdit.EchoMode.Normal if hidden else QLineEdit.EchoMode.Password)
 
+    def _set_voice_status(self, text: str, color: str) -> None:
+        self._voice_status.setText(text)
+        self._voice_status.setStyleSheet(f"color: {color}; background: transparent;")
+
     def _test_voice_key(self):
         key = self._voice_key_input.text().strip()
         if not key:
-            self._set_status("⚠ Colle d'abord la clé du second compte.", C.ACC2)
+            self._set_voice_status("⚠ Colle d'abord la clé du second compte.", C.ACC2)
             return
         self._test_voice_btn.setEnabled(False)
-        self._set_status("◌ Vérification de la clé voix auprès de Google…", C.TEXT_DIM)
+        self._set_voice_status("◌ Vérification de la clé voix auprès de Google…", C.TEXT_DIM)
         from core.live_model_policy import BALANCED_MODEL
         self._voice_worker = _KeyTestWorker("gemini", key, BALANCED_MODEL, "", parent=self)
         self._voice_worker.finished_ok.connect(self._on_voice_test_finished)
@@ -812,15 +822,31 @@ class AIConfigOverlay(FadeInWidget):
 
     def _on_voice_test_finished(self, ok: bool, msg: str):
         self._test_voice_btn.setEnabled(True)
-        self._set_status(
+        self._set_voice_status(
             f"✓ Clé voix valide — {msg}" if ok else f"✗ Clé voix refusée — {msg}",
             C.GREEN if ok else C.RED,
         )
 
+    def _apply_voice_key(self):
+        """Enregistre la clé voix et fait repartir Gemini Live avec elle."""
+        try:
+            changed = self._persist_voice_key()
+        except Exception as exc:
+            self._set_voice_status(f"✗ {exc}", C.RED)
+            return
+        if not changed:
+            self._set_voice_status("Clé voix inchangée : rien à faire.", C.TEXT_DIM)
+            return
+        key = self._voice_key_input.text().strip()
+        self._set_voice_status(
+            "✓ Clé voix enregistrée — la voix se reconnecte avec le second compte."
+            if key else "✓ Clé voix retirée — la voix revient à la clé Gemini principale.",
+            C.GREEN,
+        )
+        self.voice_key_changed.emit()
+
     def _persist_voice_key(self) -> bool:
         """Écrit la clé voix ; True si elle a changé (la voix doit se reconnecter)."""
-        if self._selected_provider != "gemini":
-            return False
         key = self._voice_key_input.text().strip()
         before = str(_read_full_config().get("gemini_live_api_key", "") or "").strip()
         if key == before:
