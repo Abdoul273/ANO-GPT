@@ -251,7 +251,7 @@ class PhoneRelay:
             studio = self.camera
             if not studio.active:
                 studio.open(studio.source)
-            frame = studio.latest_frame(timeout=3.0)
+            frame = studio.latest_still(timeout=3.0)
             if frame:
                 return frame, "image/jpeg"
         except Exception as exc:

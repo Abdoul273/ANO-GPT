@@ -344,6 +344,8 @@ class ThoughtNoiseFilter:
 
     # Dictionnaire de correspondance directe pour les noms d'outils ANO-GPT
     _TOOL_MAPPING: Dict[str, Tuple[str, str]] = {
+        "visual_recognition": ("Reconnaissance visuelle...", "Je prends la photo et je regarde de près, un instant."),
+        "music_recognition": ("Reconnaissance musicale...", "J'écoute, quelques secondes."),
         "file_search": ("Recherche de fichiers locaux...", "Un instant, je recherche dans vos fichiers..."),
         "file_processor": ("Traitement du document...", "Un instant, je traite le fichier..."),
         "web_search": ("Recherche web en cours...", "Un instant, je vérifie sur le web..."),
@@ -569,7 +571,8 @@ class ThoughtStreamer:
             "agent_brain", "deep_think", "simulate_decision", "web_search",
             "smart_search", "image_search", "youtube_video", "file_search",
             "screen_analysis", "analyze_screen", "analyze_image",
-            "download_music",
+            "download_music", "visual_recognition", "music_recognition",
+            "tiktok_coach", "screen_process", "generate_video", "generate_image",
         }
         if tool_name not in long_operations:
             return

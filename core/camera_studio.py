@@ -223,6 +223,7 @@ class CameraStudio:
         self._thread = None
         self._active = False
         self._last_jpeg = None
+        self._last_raw = None
         if self._phone_stop:
             self._phone_stop()
         self._publish_state()
@@ -454,8 +455,25 @@ class CameraStudio:
         ok, frame = capture.read()
         if not ok or frame is None:
             return None
+        # L'image brute est gardée pour les clichés haute qualité (vision) ;
+        # le flux d'aperçu, lui, reste léger.
+        self._last_raw = frame
         ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
         return buffer.tobytes() if ok else None
+
+    def latest_still(self, timeout: float = 0.0) -> bytes | None:
+        """Cliché haute qualité pour la reconnaissance : image brute ré-encodée à
+        95 %, sans la compression d'aperçu qui gomme textes et logos."""
+        jpeg = self.latest_frame(timeout)
+        raw = getattr(self, "_last_raw", None)
+        if raw is None or self._source != SOURCE_PC:
+            return jpeg
+        try:
+            cv2, _ = _cv2_numpy()
+            ok, buffer = cv2.imencode(".jpg", raw, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            return buffer.tobytes() if ok else jpeg
+        except Exception:
+            return jpeg
 
     @staticmethod
     def _release(capture) -> None:

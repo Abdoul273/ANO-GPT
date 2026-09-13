@@ -403,11 +403,30 @@ def _pick_pending(mem: fm.FaceMemory, pending_id: str, which: str) -> fm.Pending
     return pending[0]
 
 
+# Un même appel rejoué (reconnexion, modèle qui insiste) ne doit pas reprendre
+# une photo : l'utilisateur a peut-être déjà reposé l'objet, et le modèle
+# commenterait une image qui n'a plus rien à voir avec la question.
+_REPEAT_WINDOW_S = 25.0
+_last_identify: dict = {}
+
+
 def _identify(p: dict, player, session_memory, grab_frame, progress,
               save_photo: Callable[..., Any] | None = None) -> str:
     source = "screen" if str(p.get("source") or "camera").lower().startswith(("screen", "ecran", "écran")) else "camera"
     question = str(p.get("question") or p.get("text") or "").strip()
     want = str(p.get("expect") or "auto").lower()
+    key = (source, want, question.casefold()[:80])
+    last = _last_identify
+    if last and last.get("key") == key and time.monotonic() - float(last.get("at", 0.0)) < _REPEAT_WINDOW_S:
+        progress("même demande qu'il y a un instant : je réutilise la photo déjà prise")
+        return str(last["report"]) + "\n\n(Même photo que précédemment : ne reprends pas de photo, réponds avec ceci.)"
+    report = _identify_once(p, source, question, want, player, session_memory, grab_frame, progress, save_photo)
+    _last_identify.update({"key": key, "at": time.monotonic(), "report": report})
+    return report
+
+
+def _identify_once(p: dict, source: str, question: str, want: str, player, session_memory,
+                   grab_frame, progress, save_photo: Callable[..., Any] | None) -> str:
     mem = fm.get_face_memory()
 
     if want != "object" and not fm.models_present():

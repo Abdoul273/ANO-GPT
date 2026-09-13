@@ -1877,6 +1877,8 @@ TOOL_DECLARATIONS = [
             "« qui connais-tu ? », « prends une photo et dis-moi qui c'est / ce que c'est ». "
             "JAMAIS sur un simple « ouvre la caméra » (c'est camera_control, sans photo) : "
             "seulement quand l'utilisateur pose une question sur ce qu'il montre. "
+            "AVANT l'appel, dis une phrase courte du type « Je prends la photo et je regarde » puis appelle "
+            "l'outil UNE SEULE FOIS ; ne le rappelle jamais pour la même question (la photo est déjà prise). "
             "action='identify' (défaut) : ouvre la caméra si besoin (ne pas appeler camera avant), PREND LA "
             "PHOTO, l'enregistre et l'affiche à l'écran, puis reconnaît les visages avec la "
             "mémoire locale (connu ⇒ nom + lien ; inconnu ⇒ dossier en attente, DEMANDE qui c'est) et, "

@@ -1646,6 +1646,11 @@ class SessionManager:
                             await self.session.send_tool_response(
                                 function_responses=fn_responses
                             )
+                        # La demande a été EXÉCUTÉE (photo prise, message
+                        # envoyé…) : une reconnexion ne doit plus la rejouer,
+                        # sinon l'outil repart une seconde fois et le modèle
+                        # commente la deuxième photo au lieu de la première.
+                        self._live_user_text = ""
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
             if hasattr(self, "reset_audio_and_turn_state"):
