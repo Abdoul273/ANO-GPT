@@ -69,9 +69,12 @@ pypdf
 
 aiohttp>=3.10,<4
 # Reconnaissance musicale (actions/music_recognition.py) : empreinte Shazam.
-# 0.6.x est en Python pur ; 0.7+ dépend de shazamio-core (Rust) qui plante à
-# l'import sous Python 3.14 sur cette machine (segfault). Secours : `songrec`.
-shazamio==0.6.0
+# NE PAS pip-installer shazamio : 0.6.x exige pydantic<2 et anyio==4.3.0, ce qui
+# casse google-genai et mcp (l'appli ne démarre plus : « cannot import name
+# 'WrapValidator' from 'pydantic' ») ; 0.7+ dépend de shazamio-core (Rust) qui
+# plante à l'import sous Python 3.14 ici. Le moteur utilisé est le binaire
+# système `songrec` (Arch : pacman -S songrec), même base Shazam.
+# shazamio==0.6.0
 # Mémoire des visages (core/face_memory.py) : YuNet + SFace via cv2.FaceDetectorYN /
 # cv2.FaceRecognizerSF (opencv-python >= 4.8). Modèles : scripts/install_face_memory.sh
 # ou téléchargement automatique au premier « c'est qui ? ».
