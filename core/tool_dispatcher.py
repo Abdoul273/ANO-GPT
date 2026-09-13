@@ -3323,7 +3323,10 @@ class ToolDispatcher:
                                 _win_info = _sc.get_active_window(skip_anogpt=True)
                             except Exception:
                                 _win_info = None
-                            _domain = detect_visual_domain(user_text, _win_info)
+                            # Une image caméra n'a rien à voir avec la fenêtre
+                            # active : un terminal au premier plan ne fait pas
+                            # d'un visage une analyse de « code ».
+                            _domain = detect_visual_domain(user_text, None if angle == "camera" else _win_info)
                             _ocr_ok = bool(_read is not None and _read.usable)
                             if (
                                 not should_use_expert_vision(
@@ -3367,7 +3370,25 @@ class ToolDispatcher:
                                         )
                                     except Exception as _face_exc:
                                         print(f"[Visages] bloc vision impossible : {_face_exc}")
-                                if _diag is not None and _diag.spoken_summary and "clé api" not in _diag.spoken_summary.casefold():
+                                _vision_failed = (
+                                    _diag is None
+                                    or not _diag.spoken_summary
+                                    or "clé api" in _diag.spoken_summary.casefold()
+                                    or "rencontré une difficulté" in _diag.spoken_summary.casefold()
+                                )
+                                if _faces and _vision_failed:
+                                    # Gemini est indisponible mais la mémoire
+                                    # locale, elle, a répondu : c'est la réponse.
+                                    self._pending_vision = None
+                                    self._vision_busy = False
+                                    result = (
+                                        f"{_faces}\n\nL'analyse de scène Gemini est indisponible "
+                                        "pour l'instant, mais l'identification ci-dessus est fiable "
+                                        "et TERMINÉE : réponds à partir d'elle (nomme la personne "
+                                        "connue, ou demande qui c'est pour un inconnu). Ne rappelle "
+                                        "pas screen_process."
+                                    )
+                                elif not _vision_failed:
                                     self._pending_vision = None
                                     self._vision_busy = False
                                     result = _diag.as_tool_result(user_text)

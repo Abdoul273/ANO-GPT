@@ -870,6 +870,8 @@ def faces_block_for_vision(image_bytes: bytes) -> str:
     try:
         mem = get_face_memory()
         matches = mem.identify(image_bytes, source="vision")
+        print(f"[Visages] {len(matches)} visage(s) — "
+              + ", ".join(m.person.name if m.person else f"inconnu {m.pending_id}" for m in matches))
         if not matches:
             return ""
         return "[PERSONNES RECONNUES — mémoire des visages]\n" + mem.describe(matches)

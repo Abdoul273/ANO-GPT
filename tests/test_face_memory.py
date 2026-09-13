@@ -249,8 +249,8 @@ def test_vision_block_is_empty_without_models(monkeypatch):
 def test_pack_and_declaration():
     from core import tool_packs as tp
     from core.tool_dispatcher import TOOL_DECLARATIONS, _TOOL_LABELS
-    for phrase in ("c'est qui ?", "tu le connais ?", "c'est quoi cet objet", "regarde ce que je te montre",
-                   "retiens son visage", "c'est mon frère", "c'est moi", "oublie le visage de Karim"):
-        assert "reconnaissance" in tp.resolve(phrase), phrase
+    # Dans le noyau : disponible dès la première phrase, sans reconnexion.
+    assert "visual_recognition" in tp.CORE
+    assert "visual_recognition" in {d["name"] for d in tp.select_declarations(TOOL_DECLARATIONS, frozenset())}
     assert any(d["name"] == "visual_recognition" for d in TOOL_DECLARATIONS)
     assert "visual_recognition" in _TOOL_LABELS
