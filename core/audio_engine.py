@@ -925,7 +925,7 @@ class AudioEngine:
 
     async def _listen_audio_legacy(self):
         print("[JARVIS] 🎤 Mic started (PCM fidèle, VAD séparé)")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         preprocessor = AudioPreprocessor()
         self._preprocessor = preprocessor  # réglable en direct par le panneau Audio de l'UI
 

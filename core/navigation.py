@@ -16,6 +16,7 @@ Prend en charge :
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from dataclasses import dataclass, field
@@ -959,6 +960,26 @@ class NavigationSession:
 
 # ── Gestionnaire Global de Navigation (NavigationManager) ────────────────────
 
+def submit_on_loop(loop: Optional[asyncio.AbstractEventLoop], coro) -> None:
+    """Planifie ``coro`` sur ``loop``, y compris depuis un autre fil.
+
+    ``get_event_loop()`` hors de la boucle crée une boucle fantôme (3.10+) ou
+    lève ``RuntimeError`` (3.12+) : la diffusion dashboard n'arrivait jamais
+    au téléphone. ``create_task`` n'est sûr que sur le fil de la boucle.
+    """
+    if loop is None or not loop.is_running():
+        coro.close()
+        return
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        loop.create_task(coro)
+        return
+    asyncio.run_coroutine_threadsafe(coro, loop)
+
+
 class NavigationManager:
     """Gestionnaire singleton de navigation partagé entre UI, Dashboard et MCP."""
 
@@ -969,6 +990,7 @@ class NavigationManager:
         self._voice_speaker: Optional[Callable[[str], None]] = None
         self._ui_update_cb: Optional[Callable[[dict], None]] = None
         self._dashboard = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     @classmethod
     def get_instance(cls) -> NavigationManager:
@@ -984,9 +1006,26 @@ class NavigationManager:
         """Enregistre le callback de mise à jour UI/carte."""
         self._ui_update_cb = cb
 
+    def set_loop(self, loop: Optional[asyncio.AbstractEventLoop]) -> None:
+        """Boucle asyncio du processus (posée depuis ``JarvisLive.run``)."""
+        self._loop = loop
+
     def set_dashboard(self, dashboard) -> None:
         """Enregistre le serveur Dashboard pour la synchronisation mobile."""
         self._dashboard = dashboard
+        loop = getattr(dashboard, "_loop", None)
+        if loop is not None:
+            self._loop = loop
+
+    def _broadcast_dashboard(self, payload: dict[str, Any]) -> None:
+        dashboard = self._dashboard
+        if dashboard is None or not hasattr(dashboard, "broadcast"):
+            return
+        loop = self._loop or getattr(dashboard, "_loop", None)
+        try:
+            submit_on_loop(loop, dashboard.broadcast(payload))
+        except Exception as exc:
+            print(f"[Navigation] Diffusion dashboard ignorée : {exc}")
 
     @property
     def is_navigating(self) -> bool:
@@ -1028,19 +1067,11 @@ class NavigationManager:
             start_phrase = f"Guidage vers {destination_name}. {first_step.voice_text}"
             _speak(start_phrase)
 
-        # Synchronisation avec le Dashboard / Mobile
-        if self._dashboard:
-            try:
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self._dashboard.broadcast({
-                        "type": "navigation_state",
-                        "active": True,
-                        "destination": destination_name,
-                    }))
-            except Exception:
-                pass
+        self._broadcast_dashboard({
+            "type": "navigation_state",
+            "active": True,
+            "destination": destination_name,
+        })
 
         return route
 
@@ -1130,17 +1161,10 @@ class NavigationManager:
             except Exception:
                 pass
 
-        if self._dashboard:
-            try:
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self._dashboard.broadcast({
-                        "type": "navigation_state",
-                        "active": False,
-                    }))
-            except Exception:
-                pass
+        self._broadcast_dashboard({
+            "type": "navigation_state",
+            "active": False,
+        })
 
         return f"Navigation vers {dest_name} arrêtée."
 

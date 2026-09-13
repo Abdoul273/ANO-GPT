@@ -2640,7 +2640,7 @@ class ToolDispatcher:
             return False
         spawn_logged(
             self._deliver_deep_research(question, context),
-            name="deep-research-background", ui=self.ui, registry=tasks,
+            name="deep-research-background", ui=getattr(self, "ui", None), registry=tasks,
         )
         return True
 
@@ -2957,7 +2957,7 @@ class ToolDispatcher:
             return types.FunctionResponse(id=fc.id, name=name,
                                           response={"result": answer})
 
-        loop   = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = "Done."
 
         # Latence perçue : si l'outil prend plus d'1 s, une carte « tâche »

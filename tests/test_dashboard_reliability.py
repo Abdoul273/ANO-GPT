@@ -51,3 +51,62 @@ def test_diagnostics_require_session(dashboard, monkeypatch):
         response = client.get("/api/diagnostics", headers={"Authorization": "Bearer test-session"})
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
+
+
+def test_open_port_uses_running_loop_not_get_event_loop(monkeypatch):
+    import asyncio
+
+    called = {}
+
+    def fake_ensure(port, proto="TCP"):
+        called["port"] = port
+        called["proto"] = proto
+        return None
+
+    monkeypatch.setattr(server, "_ensure_network_access", fake_ensure)
+
+    async def scenario():
+        dash = server.DashboardServer()
+        dash._loop = asyncio.get_running_loop()
+        dash._open_port(8000, "TCP")
+        await asyncio.sleep(0.05)
+        assert called == {"port": 8000, "proto": "TCP"}
+
+    asyncio.run(scenario())
+
+
+def test_notify_capture_broadcasts_from_worker_thread(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+
+    monkeypatch.setattr(server, "_local_ip", lambda: "192.168.1.44")
+    received: list[dict] = []
+
+    async def scenario():
+        dash = server.DashboardServer()
+        dash._loop = asyncio.get_running_loop()
+        dash._uploads_dir = tmp_path
+
+        async def capture_broadcast(msg):
+            received.append(dict(msg))
+
+        dash.broadcast = capture_broadcast  # type: ignore[method-assign]
+        path = tmp_path / "photo.jpg"
+        path.write_bytes(b"jpg")
+        done = threading.Event()
+
+        def worker():
+            dash.notify_capture(path)
+            done.set()
+
+        threading.Thread(target=worker, daemon=True).start()
+        for _ in range(80):
+            await asyncio.sleep(0.02)
+            if received:
+                break
+        assert done.wait(1.0)
+        assert received
+        assert received[0]["type"] == "file_received"
+        assert received[0]["name"] == "photo.jpg"
+
+    asyncio.run(scenario())

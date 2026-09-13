@@ -908,6 +908,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         text = str(text or "").strip()
         if not text:
             return
+        ui = getattr(self, "ui", None)
         # « Mets-toi en veille » concerne l'assistant, jamais le processus.
         # Le traiter avant le modèle interdit un shutdown_jarvis accidentel.
         if is_assistant_sleep_request(text):
@@ -917,7 +918,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # doit réveiller l'assistant au même titre que le mot « ANO ». Sans ce
         # réveil, Gemini pouvait recevoir le texte alors que la sortie restait
         # muette après la veille, donnant l'impression qu'il ne répondait plus.
-        if getattr(self.ui, "muted", False):
+        if getattr(ui, "muted", False):
             self._wake_up("commande texte")
         if self._try_switch_conversation_language(text):
             return
@@ -1458,7 +1459,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
     # ── main loop ───────────────────────────────────────────────────────────
 
     async def run(self):
-        self._loop = asyncio.get_event_loop()
+        self._loop = asyncio.get_running_loop()
         from core.observability import install_asyncio_handler
         install_asyncio_handler(self._loop)
         # Tous les ``asyncio.to_thread`` et ``run_in_executor(None, ...)`` des
@@ -1570,6 +1571,8 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
 
             from core.navigation import get_navigation_manager
             nav_mgr = get_navigation_manager()
+            nav_mgr.set_loop(self._loop)
+            nav_mgr.set_dashboard(self._dashboard)
 
             def _location_event(position: dict) -> None:
                 lat = position.get("lat")
@@ -1654,7 +1657,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     bootstrap()
                     return get_file_indexer().scan_directory_incremental()
 
-                asyncio.get_event_loop().run_in_executor(None, _warm_second_brain)
+                self._loop.run_in_executor(None, _warm_second_brain)
             except Exception as e:
                 print(f"[Second Brain] Synchronisation initiale ignorée: {e}")
 
@@ -2026,8 +2029,15 @@ def main():
             loop.call_soon_threadsafe(task.cancel)
         except (RuntimeError, AttributeError):
             pass
-    runtime_thread.join(timeout=8.0)
+    # Deux secondes suffisent à une boucle asyncio annulée ; au-delà, c'est un
+    # appel C (PortAudio, WebSocket) qui ne rendra plus la main, et attendre
+    # huit secondes ne changeait rien — sauf pour l'utilisateur.
+    runtime_thread.join(timeout=2.0)
     shutdown_all(wait=False, cancel_futures=True)
+    # Un thread non-daemon survivant (bibliothèque tierce, pool oublié)
+    # empêcherait l'interpréteur de se terminer : le processus restait vivant
+    # avec son verrou d'instance, et ANO-GPT ne pouvait pas être relancé.
+    exit_process_bounded(grace_s=1.0)
 
 if __name__ == "__main__":
     main()

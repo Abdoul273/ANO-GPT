@@ -733,6 +733,7 @@ class DashboardServer:
         self._uploads_dir                 = UPLOADS_DIR
         self._login_html                  = _read("login.html")
         self._app_html                    = _read("app.html")
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.app                          = self._build_app()
 
     # ── one-time key management ───────────────────────────────────────────
@@ -835,7 +836,13 @@ class DashboardServer:
                 # faire mourir une Future ni polluer le journal du serveur.
                 print(f"[Dashboard] Vérification du pare-feu ignorée : {exc}")
 
-        asyncio.get_event_loop().run_in_executor(None, _work)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = self._loop
+        if loop is None or not loop.is_running():
+            return
+        loop.run_in_executor(None, _work)
 
     def firewall_warning(self) -> str:
         """Message prêt à afficher dans l'interface, vide si tout est ouvert."""
@@ -1051,10 +1058,7 @@ class DashboardServer:
             "size": size,
             "saved_to": str(self._uploads_dir),
         }
-        try:
-            asyncio.get_running_loop().create_task(self.broadcast(payload))
-        except RuntimeError:
-            pass  # appelé hors boucle asyncio : le fichier est là, c'est l'essentiel
+        self._schedule_coro(self.broadcast(payload))
 
     async def await_phone_camera(self, timeout: float = 8.0) -> bool:
         """Attend la première image après une demande de démarrage."""
@@ -1068,6 +1072,27 @@ class DashboardServer:
             return False
 
     # ── broadcast ────────────────────────────────────────────────────────
+
+    def _schedule_coro(self, coro) -> None:
+        """Planifie une coroutine sur la boucle du serveur, même depuis un autre fil."""
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                coro.close()
+                return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            loop.create_task(coro)
+            return
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, loop)
+            return
+        coro.close()
 
     async def broadcast(self, msg: dict) -> None:
         self._history.append(msg)
@@ -1701,6 +1726,8 @@ class DashboardServer:
             print("[Dashboard] fastapi/uvicorn not installed — dashboard disabled.")
             print("[Dashboard] Run:  pip install fastapi 'uvicorn[standard]' cryptography")
             return
+
+        self._loop = asyncio.get_running_loop()
 
         # Firewall setup runs in a thread — uvicorn starts immediately,
         # no waiting for UAC dialogs or subprocess timeouts.

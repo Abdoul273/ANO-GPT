@@ -495,3 +495,77 @@ def test_navigation_action():
 
         res_start = navigation_action({"action": "start", "destination": "Kaloum"})
         assert "Kaloum" in res_start
+
+
+def _tiny_route(name: str = "Kaloum") -> NavigationRoute:
+    origin = (9.50, -13.70)
+    dest = (9.51, -13.71)
+    step = RouteStep(
+        0, "Départ", "départ", "Partez.", "straight", "straight",
+        "depart", name, 1000, 120, origin,
+    )
+    return NavigationRoute(
+        origin=origin,
+        destination=dest,
+        destination_name=name,
+        distance_m=1000.0,
+        duration_s=120.0,
+        polyline=[origin, dest],
+        steps=[step],
+    )
+
+
+def test_navigation_broadcasts_from_worker_thread_without_get_event_loop():
+    """start/stop depuis un fil d'outil doit atteindre le dashboard."""
+    import asyncio
+    import threading
+
+    received: list[dict] = []
+
+    class FakeDash:
+        async def broadcast(self, msg):
+            received.append(dict(msg))
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        mgr = NavigationManager()
+        mgr.set_loop(loop)
+        mgr.set_dashboard(FakeDash())
+        route = _tiny_route()
+        started = threading.Event()
+
+        def worker():
+            assert mgr.start_navigation(
+                route.origin, route.destination, route.destination_name,
+                precomputed_route=route,
+            ) is not None
+            started.set()
+            mgr.stop_navigation()
+
+        threading.Thread(target=worker, daemon=True).start()
+        for _ in range(80):
+            await asyncio.sleep(0.02)
+            if any(m.get("active") is False for m in received) and started.is_set():
+                break
+        assert started.wait(1.0)
+        types_active = [(m.get("type"), m.get("active")) for m in received]
+        assert ("navigation_state", True) in types_active
+        assert ("navigation_state", False) in types_active
+
+    asyncio.run(scenario())
+
+
+def test_hotspots_do_not_call_get_event_loop():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    files = (
+        "core/navigation.py",
+        "dashboard/server.py",
+        "main.py",
+        "core/tool_dispatcher.py",
+        "core/audio_engine.py",
+    )
+    for relative in files:
+        text = (root / relative).read_text(encoding="utf-8")
+        assert "asyncio.get_event_loop()" not in text, relative
