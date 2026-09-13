@@ -150,6 +150,7 @@ PACKS: Mapping[str, ToolPack] = {
             r"\b(hyprland|workspace|fenetre|moniteur|ecran secondaire)\b",
             r"\b(luminosite|volume systeme|wifi|bluetooth|veille|verrouille)\b",
             r"\b(repare|repare[- ]?toi|auto[- ]?diagnostic|scan securite|vulnerabilit)\b",
+            r"\b(corrige|corriger|corrige[- ]?toi|redemarre|redemarre[- ]?toi|plante|a plante|c'etait quoi l'erreur)\b",
         ),
     ),
     "reseaux": ToolPack(

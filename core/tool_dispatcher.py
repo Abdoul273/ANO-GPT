@@ -1604,18 +1604,22 @@ TOOL_DECLARATIONS = [
     {
         "name": "self_repair",
         "description": (
-            "Diagnostic de tes propres outils, à partir des échecs réellement "
-            "journalisés. action='diagnose' pour le bilan de santé (« est-ce que "
-            "tout va bien ? », « pourquoi la météo ne marche plus ? »), "
-            "action='repair' pour lancer une réparation sur un outil nommé. "
-            "N'invente jamais un diagnostic : appelle cet outil et rapporte ce "
-            "qu'il répond."
+            "Tes propres erreurs et leur réparation automatique. "
+            "action='repair' OBLIGATOIRE dès que l'utilisateur dit « corrige », « répare », "
+            "« corrige ça », « corrige l'erreur », « répare-toi » : l'erreur la plus récente "
+            "(pile d'appel enregistrée) est confiée à un agent de code qui modifie le fichier "
+            "fautif, lance les tests et commite ; ça tourne EN FOND, tu rends la phrase renvoyée "
+            "et l'annonce du résultat arrive toute seule (ne relance pas l'outil). "
+            "action='last_error' pour « c'était quoi l'erreur ? », « qu'est-ce qui a planté ? ». "
+            "action='restart' pour « redémarre », « redémarre-toi », « applique le correctif ». "
+            "action='diagnose' pour le bilan de santé des outils (« est-ce que tout va bien ? »). "
+            "N'invente jamais un diagnostic : appelle cet outil et rapporte ce qu'il répond."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "diagnose | repair"},
-                "tool": {"type": "STRING", "description": "Outil à réparer (ex. weather, email, reminder)"},
+                "action": {"type": "STRING", "description": "repair | last_error | restart | diagnose"},
+                "tool": {"type": "STRING", "description": "Outil ou erreur visé si l'utilisateur en nomme un (ex. météo, tiktok)"},
             },
             "required": [],
         }
@@ -4069,7 +4073,10 @@ class ToolDispatcher:
                 "tool": self._arg(args, "tool"),
             },
             player=self.ui,
-            speak=None,   # la voix rapporte elle-même : pas de doublon parlé
+            # La réparation tourne en fond : c'est par `speak` que son résultat
+            # est annoncé plus tard. Le diagnostic, lui, ne parle pas deux fois.
+            speak=self.speak if (self._arg(args, "action", "") or "").lower() in
+                  {"repair", "reparer", "fix", "corriger", "corrige", "restart"} else None,
             session_memory=self._tool_session_memory,
         )
     def _agent_weather(self, args: dict) -> str:

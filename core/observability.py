@@ -208,6 +208,12 @@ def tool_failure(tool: str, exc: BaseException, *, message: str = "",
     pile d'appel, elle, doit rester quelque part — sinon « l'outil a rencontré
     une erreur » est tout ce qu'il reste pour diagnostiquer.
     """
+    try:
+        from core import incident_log
+        incident_log.record(tool, exc, message=message,
+                            extra={"arg_keys": sorted(args) if isinstance(args, dict) else None})
+    except Exception:
+        pass
     logging.getLogger("anogpt.tools").error(
         f"échec de l'outil {tool}",
         exc_info=exc,

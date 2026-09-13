@@ -128,6 +128,11 @@ def _supervise_native_process() -> None:
         except KeyboardInterrupt:
             raise SystemExit(130)
 
+        if completed.returncode == 75:
+            # Redémarrage demandé (auto-réparation, « redémarre ») : relance
+            # immédiate, sans compter comme un crash.
+            print("[ANO-GPT] Redémarrage demandé — relance…", file=_sys_early.stderr)
+            continue
         if completed.returncode not in native_crashes:
             raise SystemExit(completed.returncode)
 
@@ -827,6 +832,10 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveService()
+        # Les erreurs vécues sont annoncées à la voix quelques secondes après,
+        # et « corrige » les confie à un agent de code (core/auto_fix.py).
+        from core import incident_log
+        incident_log.bind(self._proactive.publish, lambda m: self.ui.write_log(m))
         self._screen_mind      = get_screen_consciousness()
         self._habits           = HabitModel()
         self._timers           = TimerService()
@@ -1803,6 +1812,11 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     )
                     continue
                 print(f"[JARVIS] Error ({type(e).__name__}): {e}")
+                try:
+                    from core import incident_log
+                    incident_log.record("session vocale", e, message=err_str[:200])
+                except Exception:
+                    pass
                 self._event_bus.publish_sync(SystemAlertEvent(
                     severity="ERROR", source="gemini-live",
                     message=f"{type(e).__name__}: {e}",
