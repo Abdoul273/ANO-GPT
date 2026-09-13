@@ -12,6 +12,7 @@ Concurrence
 from __future__ import annotations
 
 import asyncio
+from core.text_clean import strip_emoji_deep
 from pathlib import Path
 import re
 import time
@@ -2636,9 +2637,21 @@ class ToolDispatcher:
                 for fc in calls
             ]
 
+        async def run_clean(fc) -> types.FunctionResponse:
+            # Ce que lit le modèle vocal ne doit pas contenir d'émojis : sur
+            # un titre TikTok en pictogrammes, Gemini Live cale en « euh… ».
+            resp = await self._execute_tool(fc)
+            try:
+                payload = getattr(resp, "response", None)
+                if isinstance(payload, dict):
+                    resp.response = strip_emoji_deep(payload)
+            except Exception:
+                pass
+            return resp
+
         def start(fc) -> asyncio.Task:
             task = asyncio.create_task(
-                self._execute_tool(fc),
+                run_clean(fc),
                 name=f"live-tool-{str(getattr(fc, 'name', 'unknown'))}",
             )
             started.add(task)

@@ -12,6 +12,7 @@ Concurrence
 from __future__ import annotations
 
 import asyncio
+from core.text_clean import strip_emoji
 import json
 import re
 import time
@@ -689,7 +690,7 @@ class SessionManager:
         Le verrou reste pris jusqu'au ``turn_complete`` reçu par la boucle de
         lecture, pas seulement jusqu'à l'écriture du WebSocket.
         """
-        text = str(text or "").strip()
+        text = strip_emoji(str(text or "")).strip()
         if not text:
             return False
         if not self.session:
