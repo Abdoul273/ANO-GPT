@@ -1071,14 +1071,14 @@ TOOL_DECLARATIONS = [
             "type": "OBJECT",
             "properties": {
                 "action": {"type": "STRING", "description": "status | setup | connect | unread (default) | recent | search | advanced_search | read | summary | send | reply | mark_read | mark_unread | archive | star | unstar | trash. send/reply/trash always show a preview the user must confirm with a click."},
-                "to": {"type": "STRING", "description": "send: recipient address or a saved contact name"},
+                "to": {"type": "STRING", "description": "send: recipient address or a saved contact name (required for send)"},
                 "body": {"type": "STRING", "description": "send/reply: the message text to send, written out in full"},
                 "cc": {"type": "STRING", "description": "send: optional carbon-copy addresses"},
                 "query": {"type": "STRING", "description": "Natural-language request, native Gmail query (e.g. 'from:alice newer_than:30d'), or displayed number for read"},
                 "id": {"type": "STRING", "description": "Gmail message ID or displayed result number for read"},
                 "max_results": {"type": "INTEGER", "description": "Number of messages, from 1 to 100 (default 10)"},
                 "from": {"type": "STRING", "description": "Exact sender name, address, or domain filter"},
-                "to": {"type": "STRING", "description": "Exact recipient name or address filter"},
+                "to_filter": {"type": "STRING", "description": "search: exact recipient name or address filter (never the send recipient — that is `to`)"},
                 "subject": {"type": "STRING", "description": "search: words that must occur in the subject; send/reply: the subject line (reply defaults to 'Re: …')"},
                 "after": {"type": "STRING", "description": "Minimum date: YYYY-MM-DD or DD/MM/YYYY"},
                 "before": {"type": "STRING", "description": "Maximum date: YYYY-MM-DD or DD/MM/YYYY"},
@@ -1250,8 +1250,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "live_auto_debug",
         "description": (
-            "Performs forensic live debugging with GPT-5.6 Terra: exact error parsing, source correlation, "
-            "evidence, confidence, safe verification commands and an optional validated unified patch. "
+            "Performs forensic live debugging with the configured brain (Azure if available, else the "
+            "selected provider): exact error parsing, source correlation, evidence, confidence, "
+            "safe verification commands and an optional validated unified patch. "
             "MUST be called when the user asks: 'C'est quoi ce bug dans mon terminal ?', 'Debug cette erreur', "
             "'Pourquoi mon code/build plante ?', 'Analyse ce traceback/panic', 'Aide-moi à corriger cette erreur', "
             "or points to any broken command, test failure or compiler output on screen. "

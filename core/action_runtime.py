@@ -70,7 +70,9 @@ _POLICIES: dict[str, ActionPolicy] = {
     "find_nearby": ActionPolicy(timeout_s=20.0),
     "email_control": ActionPolicy(timeout_s=45.0),
     "youtube_video": ActionPolicy(timeout_s=70.0),
-    "music_control": ActionPolicy(timeout_s=70.0),
+    # Les contrôles de lecture restent synchrones : au-delà de vingt secondes,
+    # il vaut mieux rendre l'écoute que laisser une commande MPRIS bloquée.
+    "music_control": ActionPolicy(timeout_s=20.0),
     "download_music": ActionPolicy(timeout_s=90.0),
     # Une lecture TikTok ouvre un Chrome headless : dix à quinze secondes.
     "tiktok_tracker": ActionPolicy(timeout_s=60.0),
@@ -88,6 +90,7 @@ _POLICIES: dict[str, ActionPolicy] = {
     "shell_exec": ActionPolicy(timeout_s=120.0),
     "open_app": ActionPolicy(timeout_s=20.0),
     "close_app": ActionPolicy(timeout_s=20.0),
+    "whatsapp_control": ActionPolicy(timeout_s=25.0, max_concurrency=1),
     "devsecops": ActionPolicy(timeout_s=90.0),
     "hypr_orchestrator": ActionPolicy(timeout_s=25.0),
     "second_brain": ActionPolicy(timeout_s=40.0),
@@ -104,6 +107,15 @@ _ARG_ALIASES: dict[str, dict[str, str]] = {
         "recipient": "receiver", "destinataire": "receiver",
         "message": "message_text", "text": "message_text",
         "service": "platform",
+    },
+    "whatsapp_control": {
+        "contact": "receiver", "recipient": "receiver", "destinataire": "receiver",
+        "text": "message", "message_text": "message", "command": "action",
+    },
+    "email_control": {
+        "recipient": "to", "destinataire": "to", "recipients": "to",
+        "message": "body", "text": "body", "message_text": "body",
+        "command": "action", "recipient_filter": "to_filter",
     },
     "web_search": {"text": "query", "search": "query", "q": "query"},
     "image_search": {"text": "query", "search": "query", "q": "query"},

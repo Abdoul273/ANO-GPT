@@ -164,8 +164,13 @@ def email_control(parameters: dict = None, session_memory=None, ui=None) -> str:
             )
 
         if action in {"search", "advanced_search", "recherche_avancee"}:
+            # Le filtre destinataire s'appelle `to_filter` : `to` est réservé
+            # au destinataire d'un envoi (les deux clés étaient confondues dans
+            # la déclaration de l'outil). `to` reste accepté ici en repli.
+            if params.get("to_filter") in (None, "") and params.get("to") not in (None, ""):
+                params = {**params, "to_filter": params["to"]}
             filter_names = (
-                "from", "to", "subject", "after", "before", "filename", "label",
+                "from", "to_filter", "subject", "after", "before", "filename", "label",
                 "scope", "has_attachment", "unread", "starred", "important",
                 "larger_than", "smaller_than",
             )
@@ -175,7 +180,7 @@ def email_control(parameters: dict = None, session_memory=None, ui=None) -> str:
                     continue
                 if name in {"has_attachment", "starred", "important"} and params[name] is False:
                     continue
-                filters[name] = params[name]
+                filters["to" if name == "to_filter" else name] = params[name]
             # « les mails de Maman » peut utiliser l'adresse enregistrée sans
             # obliger l'utilisateur à la dicter.
             try:
