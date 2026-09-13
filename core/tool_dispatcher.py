@@ -1882,7 +1882,7 @@ TOOL_DECLARATIONS = [
             "action='identify' (défaut) : ouvre la caméra si besoin (ne pas appeler camera avant), PREND LA "
             "PHOTO, l'enregistre et l'affiche à l'écran, puis reconnaît les visages avec la "
             "mémoire locale (connu ⇒ nom + lien ; inconnu ⇒ dossier en attente, DEMANDE qui c'est) et, "
-            "sans visage, identifie l'objet (Gemini, relais Azure) puis lance une recherche web en temps réel. "
+            "sans visage, identifie l'objet (Gemini et Azure en parallèle, réponse en quelques secondes) ; recherche web seulement si search=true ou si la question parle de prix/avis/infos. "
             "Quand l'utilisateur répond au « c'est qui ? » ⇒ action='remember_person' avec name, relation "
             "(frère, collègue, amie…), pending_id du dossier et notes éventuelles ; name='moi' pour "
             "l'utilisateur lui-même. action='remember_object' (name, notes) retient le dernier objet identifié. "
@@ -1904,6 +1904,7 @@ TOOL_DECLARATIONS = [
                 "new_name": {"type": "STRING", "description": "Pour update_person : nouveau nom"},
                 "alias": {"type": "STRING", "description": "Pour update_person : surnom supplémentaire"},
                 "is_owner": {"type": "BOOLEAN", "description": "Vrai si le visage est celui de l'utilisateur"},
+                "search": {"type": "BOOLEAN", "description": "identify : vrai si l'utilisateur veut aussi des infos en ligne (prix, avis, où acheter) — sinon la réponse est immédiate"},
             },
             "required": [],
         },

@@ -117,7 +117,11 @@ def text(role: str, prompt: str, *, system: str = "", timeout: int = 90) -> str:
 # Déploiements capables de lire une image, du plus fort au plus économe. Seuls
 # ceux réellement déployés sur la ressource sont appelés ; « anogpt-brain » est
 # le déploiement principal (gpt-5.6-terra).
-_VISION_CASCADE = ("gpt-6-astra", "anogpt-brain", "gpt-5.6-terra", "gpt-5.1", "gpt-5-mini")
+# Vitesse d'abord : les modèles « raisonnement profond » (gpt-6-astra) mettent
+# 30 s sur une image, l'utilisateur attend devant la caméra. Ils ne servent
+# qu'en dernier recours.
+_VISION_CASCADE = ("gpt-5.1", "anogpt-brain", "gpt-5.6-terra", "gpt-5-mini", "gpt-6-astra")
+_SLOW_FIRST = ("gpt-6",)
 _VISION_SKIP = ("codex", "image", "sora", "flux", "embedding", "whisper", "tts", "realtime")
 
 
@@ -127,9 +131,9 @@ def vision_models() -> list[str]:
     ordered: list[str] = []
     for name in (
         str(cfg.get("azure_vision_model") or "").strip(),
-        str(cfg.get("azure_deep_model") or "").strip(),
-        str(cfg.get("azure_openai_model") or "").strip(),
         *_VISION_CASCADE,
+        str(cfg.get("azure_openai_model") or "").strip(),
+        str(cfg.get("azure_deep_model") or "").strip(),
     ):
         if name and name not in ordered and not any(k in name.lower() for k in _VISION_SKIP):
             ordered.append(name)
@@ -173,6 +177,10 @@ def vision(image_bytes: bytes, mime: str, prompt: str, *, system: str = "",
         payload = {"model": model, "messages": messages, field: 1500, "stream": False}
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        if model.lower().startswith(("gpt-5", "gpt-6", "anogpt", "o")):
+            # Décrire une image ne demande pas de longue réflexion : sans ce
+            # réglage, un modèle « reasoning » y passe 20 à 30 s.
+            payload["reasoning_effort"] = "low"
         try:
             response = _post_with_retry(
                 _azure_openai_endpoint(endpoint, model), payload, timeout,
@@ -184,9 +192,11 @@ def vision(image_bytes: bytes, mime: str, prompt: str, *, system: str = "",
         if response.status_code >= 400:
             body = response.text[:200]
             last = f"{model} : HTTP {response.status_code} {body}"
-            if response.status_code == 400 and json_mode and "response_format" in body.lower():
-                # Ce déploiement ignore le mode JSON : on redemande en texte libre.
+            if response.status_code == 400 and ("response_format" in body.lower() or "reasoning" in body.lower()):
+                # Ce déploiement ignore le mode JSON ou l'effort de raisonnement :
+                # on redemande sans ces réglages.
                 payload.pop("response_format", None)
+                payload.pop("reasoning_effort", None)
                 try:
                     response = _post_with_retry(
                         _azure_openai_endpoint(endpoint, model), payload, timeout,

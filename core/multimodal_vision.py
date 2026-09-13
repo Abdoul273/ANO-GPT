@@ -396,7 +396,8 @@ def _is_transient(exc: BaseException) -> bool:
     return any(marker in message for marker in _TRANSIENT_MARKERS)
 
 
-def _call_gemini_vision(client: Any, gtypes: Any, contents: list, models: Sequence[str]) -> Tuple[Any, str]:
+def _call_gemini_vision(client: Any, gtypes: Any, contents: list, models: Sequence[str],
+                        *, azure_relay: bool = True) -> Tuple[Any, str]:
     """Essaie Pro puis Flash. Mémorise le premier modèle qui répond."""
     global _working_vision_model
     last_exc: Optional[BaseException] = None
@@ -442,7 +443,7 @@ def _call_gemini_vision(client: Any, gtypes: Any, contents: list, models: Sequen
     # Toute la cascade Gemini a échoué (quota, panne) : Azure prend le relais
     # avec la même image et la même consigne, pour que la vision ne s'arrête
     # jamais sur un compteur.
-    azure = _azure_vision_relay(contents, last_exc)
+    azure = _azure_vision_relay(contents, last_exc) if azure_relay else None
     if azure is not None:
         return azure
     if last_exc is not None:

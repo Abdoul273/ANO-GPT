@@ -35,7 +35,12 @@ LAST_FACES_KEY = "last_identified_faces"
 _watcher: fm.FaceWatcher | None = None
 
 _OBJECT_TIMEOUT_S = 25.0
-_SEARCH_BUDGET_S = 10.0
+_SEARCH_BUDGET_S = 6.0
+# La recherche en ligne ne se fait que si la question le demande : sinon elle
+# ajoutait 10 à 40 s à une réponse que l'utilisateur attend devant la caméra.
+_SEARCH_WORDS = ("prix", "combien", "coûte", "coute", "acheter", "où trouver", "ou trouver", "avis",
+                 "info", "renseigne", "détail", "detail", "caractéristique", "caracteristique",
+                 "cherche", "recherche", "internet", "en ligne", "c'est quoi exactement", "marque", "modèle", "modele")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -133,7 +138,8 @@ def _identify_gemini(image_bytes: bytes, mime: str, prompt: str) -> dict:
     from google.genai import types as gtypes
     client = genai.Client(api_key=mv._get_api_key())
     contents = [gtypes.Part.from_bytes(data=image_bytes, mime_type=mime), prompt]
-    resp, model = mv._call_gemini_vision(client, gtypes, contents, mv.vision_model_cascade())
+    # Azure est déjà interrogé en parallèle par identify_object : pas de relais ici.
+    resp, model = mv._call_gemini_vision(client, gtypes, contents, mv.vision_model_cascade(), azure_relay=False)
     data = mv._parse_vision_json(resp.text)
     data["model_used"] = model
     return data
@@ -179,42 +185,79 @@ def _run_bounded(fn: Callable[[], Any], budget_s: float, label: str) -> Any:
         raise TimeoutError(f"{label} : pas de réponse en {budget_s:.0f} s") from None
 
 
+# Côté long maximal envoyé aux modèles : au-delà, l'encodage base64 et le
+# transfert coûtent des secondes sans rien apporter à la reconnaissance.
+_MAX_SIDE_PX = 1280
+_IDENTIFY_BUDGET_S = 30.0
+
+
+def _shrink(image_bytes: bytes, mime: str) -> tuple[bytes, str]:
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(image_bytes))
+        if max(im.size) <= _MAX_SIDE_PX:
+            return image_bytes, mime
+        im = im.convert("RGB")
+        im.thumbnail((_MAX_SIDE_PX, _MAX_SIDE_PX))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=90)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return image_bytes, mime
+
+
 def identify_object(image_bytes: bytes, mime: str, question: str = "") -> dict:
-    """Ce que montre l'image : Gemini d'abord, Azure dès que le quota Gemini est
-    atteint (ou que Gemini ne répond pas). Dict avec ``error`` si tout échoue."""
+    """Ce que montre l'image. Gemini et Azure sont interrogés EN MÊME TEMPS et
+    la première réponse valable gagne : l'utilisateur attend devant la caméra,
+    chaque seconde compte. Dict avec ``error`` si tout échoue."""
     global _gemini_quota_until
+    import concurrent.futures
     from core import multimodal_vision as mv
 
+    image_bytes, mime = _shrink(image_bytes, mime)
     prompt = _object_prompt(question)
-    errors: list[str] = []
     gemini_key = mv._get_api_key()
     azure_ok = _azure_ready()
-    gemini_first = bool(gemini_key) and time.monotonic() >= _gemini_quota_until
+    gemini_ok = bool(gemini_key) and time.monotonic() >= _gemini_quota_until
 
-    order = ["gemini", "azure"] if gemini_first else ["azure", "gemini"]
-    for engine in order:
-        if engine == "gemini" and not gemini_key:
-            continue
-        if engine == "azure" and not azure_ok:
-            continue
-        try:
-            if engine == "gemini":
-                data = _run_bounded(lambda: _identify_gemini(image_bytes, mime, prompt),
-                                    _GEMINI_BUDGET_S if azure_ok else 60.0, "gemini")
-                if str(data.get("model_used", "")).startswith("azure:"):
-                    # La cascade Gemini a déjà passé la main à Azure : on
-                    # évite de refrapper Gemini pour les prochains objets.
+    engines: dict[str, Callable[[], dict]] = {}
+    if gemini_ok:
+        engines["gemini"] = lambda: _identify_gemini(image_bytes, mime, prompt)
+    if azure_ok:
+        engines["azure"] = lambda: _identify_azure(image_bytes, mime, prompt)
+    if not engines:
+        if gemini_key or azure_ok:
+            engines["gemini"] = lambda: _identify_gemini(image_bytes, mime, prompt)
+        else:
+            return {"error": "aucune clé de vision (Gemini ou Azure) n'est configurée"}
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(engines), thread_name_prefix="vr-identify")
+    futures = {pool.submit(fn): name for name, fn in engines.items()}
+    pool.shutdown(wait=False)
+    errors: list[str] = []
+    started = time.monotonic()
+    try:
+        for fut in concurrent.futures.as_completed(futures, timeout=_IDENTIFY_BUDGET_S):
+            name = futures[fut]
+            try:
+                data = fut.result()
+            except Exception as exc:
+                if name == "gemini" and _is_quota(exc):
                     _gemini_quota_until = time.monotonic() + _GEMINI_QUOTA_HOLD_S
-                return data
-            return _identify_azure(image_bytes, mime, prompt)
-        except Exception as exc:
-            if engine == "gemini" and (_is_quota(exc) or isinstance(exc, TimeoutError)):
+                    print("[VisualRecognition] quota Gemini atteint — Azure seul pendant 10 min.")
+                errors.append(f"{name} : {str(exc)[:160]}")
+                continue
+            if not isinstance(data, dict) or not data.get("name"):
+                errors.append(f"{name} : réponse vide")
+                continue
+            if name == "gemini" and str(data.get("model_used", "")).startswith("azure:"):
                 _gemini_quota_until = time.monotonic() + _GEMINI_QUOTA_HOLD_S
-                print("[VisualRecognition] quota Gemini atteint — relais Azure pendant 10 min.")
-            errors.append(f"{engine} : {str(exc)[:160]}")
-    if not errors:
-        return {"error": "aucune clé de vision (Gemini ou Azure) n'est configurée"}
-    return {"error": " ; ".join(errors)[:300]}
+            print(f"[VisualRecognition] {data.get('model_used', name)} en {time.monotonic() - started:.1f} s")
+            return data
+    except concurrent.futures.TimeoutError:
+        errors.append(f"aucune réponse en {_IDENTIFY_BUDGET_S:.0f} s")
+    return {"error": " ; ".join(errors)[:300] or "vision indisponible"}
 
 
 def _search_object(query: str, budget_s: float = _SEARCH_BUDGET_S) -> str:
@@ -475,8 +518,11 @@ def _identify_once(p: dict, source: str, question: str, want: str, player, sessi
                 + photo_note)
     name = str(data.get("name") or "")
     query = str(data.get("search_query") or " ".join(x for x in (data.get("brand"), data.get("model")) if x) or name)
-    progress(f"recherche en ligne : {query}")
-    search = _search_object(query) if not p.get("no_search") else ""
+    wants_search = bool(p.get("search")) or any(w in question.casefold() for w in _SEARCH_WORDS)
+    search = ""
+    if wants_search and not p.get("no_search"):
+        progress(f"recherche en ligne : {query}")
+        search = _search_object(query)
     notes = _personal_notes(name, " ".join(x for x in (data.get("brand"), data.get("model")) if x))
     if session_memory is not None:
         session_memory[LAST_OBJECT_KEY] = {
