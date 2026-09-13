@@ -368,7 +368,7 @@ from core.session_manager import (
     LIVE_MODEL,
     LIVE_FALLBACK_MODEL,
     _resume_would_replay_turn,
-    _get_api_key,
+    _get_api_key, _get_live_api_key,
     _voice_engine_settings,
     _setting_bool,
 )
@@ -1739,7 +1739,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
 
                 # Fresh client on every reconnect — avoids stale HTTP session state
                 client = genai.Client(
-                    api_key=_get_api_key(),
+                    api_key=_get_live_api_key(),
                     http_options={"api_version": "v1beta"}
                 )
 
@@ -1931,6 +1931,11 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 # Ne jamais assimiler le code WebSocket 1007 à une clé invalide :
                 # Gemini l'emploie aussi pour un JSON de setup incompatible.
                 if is_invalid_api_key_error(e):
+                    if _get_live_api_key() != _get_api_key():
+                        self.ui.write_log(
+                            "ERR : la clé de la voix (gemini_live_api_key dans config/api_keys.json) "
+                            "est refusée par Gemini Live — corrige-la ou retire-la pour revenir à la clé principale."
+                        )
                     self.ui.write_log("ERR: API key invalid — please re-enter your key.")
                     self.ui.set_state("SLEEPING")
                     self.ui.prompt_reconfig()

@@ -120,6 +120,14 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
+def _get_live_api_key() -> str:
+    """Clé de la voix : `gemini_live_api_key` si elle existe, sinon la clé
+    principale. Deux projets Google = voix gratuite + vision payante."""
+    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return str(data.get("gemini_live_api_key") or "").strip() or data["gemini_api_key"]
+
+
 def _voice_engine_settings() -> dict:
     try:
         value = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))

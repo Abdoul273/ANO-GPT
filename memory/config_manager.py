@@ -59,6 +59,10 @@ class AssistantConfig:
     """Full MARK XL configuration with sensible defaults."""
     # ── Core keys ────────────────────────────────────────────────────────
     gemini_api_key: str = ""
+    # Clé Gemini réservée à la voix (Gemini Live). Un second projet Google
+    # gratuit y suffit : la voix reste gratuite pendant que `gemini_api_key`,
+    # sur un projet payant, sert à la vision, au coach TikTok et aux résumés.
+    gemini_live_api_key: str = ""
     elevenlabs_api_key: str = ""
     deepseek_api_key: str = ""
     xai_api_key: str = ""
@@ -277,7 +281,7 @@ class ConfigManager:
         # 3. Apply keyring secrets (if enabled)
         if self._use_keyring:
             for secret_name in (
-                "gemini_api_key", "elevenlabs_api_key", "deepseek_api_key",
+                "gemini_api_key", "gemini_live_api_key", "elevenlabs_api_key", "deepseek_api_key",
                 "xai_api_key", "openai_api_key", "anthropic_api_key", "openrouter_api_key",
                 "picovoice_access_key",
             ):
@@ -295,6 +299,7 @@ class ConfigManager:
         """Read MARK_XL_* env vars and override corresponding fields."""
         env_map = {
             "GEMINI_API_KEY": "gemini_api_key",
+            "GEMINI_LIVE_API_KEY": "gemini_live_api_key",
             "ELEVENLABS_API_KEY": "elevenlabs_api_key",
             "DEEPSEEK_API_KEY": "deepseek_api_key",
             "XAI_API_KEY": "xai_api_key",
@@ -340,7 +345,7 @@ class ConfigManager:
         # Remove sensitive keys if using keyring (they are stored encrypted)
         if self._use_keyring:
             for secret_name in (
-                "gemini_api_key", "elevenlabs_api_key", "deepseek_api_key",
+                "gemini_api_key", "gemini_live_api_key", "elevenlabs_api_key", "deepseek_api_key",
                 "xai_api_key", "openai_api_key", "anthropic_api_key", "openrouter_api_key",
                 "picovoice_access_key",
             ):
