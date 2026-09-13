@@ -2311,6 +2311,35 @@ def _task_card_summary(name: str, args: Any) -> str:
     return ""
 
 
+# Outils qui font attendre : leur description commence par la consigne
+# d'annoncer avant d'appeler. Une seule source pour tous, alignée sur la règle
+# « annonce avant d'agir » du prompt.
+_ANNOUNCE_BEFORE_TOOLS = frozenset({
+    "deep_think", "consult_brain", "web_search", "smart_search", "image_search",
+    "tiktok_coach", "visual_recognition", "music_recognition", "screen_process",
+    "generate_image", "generate_video", "generate_document", "download_music",
+    "youtube_video", "file_search", "file_processor", "background_tasks", "dev_agent",
+    "simulate_decision", "flight_finder", "find_nearby", "navigate",
+})
+_ANNOUNCE_PREFIX = (
+    "AVANT d'appeler cet outil, dis à voix haute une phrase courte qui nomme ce que tu lances "
+    "et demande de patienter (ex. « je lance ça, patiente, je te reviens ») ; ne l'appelle "
+    "jamais en silence. "
+)
+
+
+def announce_before_call(declarations: list[dict]) -> list[dict]:
+    """Préfixe la description des outils longs par la consigne d'annonce."""
+    out: list[dict] = []
+    for decl in declarations:
+        name = str(decl.get("name") or "")
+        desc = str(decl.get("description") or "")
+        if name in _ANNOUNCE_BEFORE_TOOLS and not desc.startswith(_ANNOUNCE_PREFIX):
+            decl = {**decl, "description": _ANNOUNCE_PREFIX + desc}
+        out.append(decl)
+    return out
+
+
 _TOOL_LABELS = {
     "consult_brain": "Réflexion",
     "web_search": "Recherche web",

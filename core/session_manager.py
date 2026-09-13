@@ -866,10 +866,11 @@ class SessionManager:
         """
         if getattr(self, "_relay_enabled", False):
             return [CONSULT_BRAIN_DECLARATION]
-        return tool_packs.select_declarations(
+        from core.tool_dispatcher import announce_before_call
+        return announce_before_call(tool_packs.select_declarations(
             self._relay_declarations(),
             getattr(self, "_active_tool_packs", frozenset()),
-        )
+        ))
 
     def _relay_base_prompt(self) -> str:
         """Socle de prompt hérité par le cerveau externe."""
