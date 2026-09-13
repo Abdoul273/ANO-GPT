@@ -1402,6 +1402,11 @@ def _call_gemini(messages: list, tools: list | None, timeout: int,
             gen_tools = [types.Tool(function_declarations=decls)]
         config = types.GenerateContentConfig(
             system_instruction=system_instruction, tools=gen_tools, max_output_tokens=800,
+            # Les outils sont de simples déclarations : c'est le répartiteur
+            # d'ANO-GPT qui les exécute. Sans ce réglage, le SDK active son
+            # appel automatique de fonctions, ne trouve aucun callable et
+            # avertit « Direct use of AFC » à chaque requête.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         resp = client.models.generate_content(model=model, contents=contents, config=config)
         text_out, tool_calls = "", []
