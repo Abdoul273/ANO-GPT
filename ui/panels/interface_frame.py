@@ -53,22 +53,40 @@ class InterfaceFrame(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._phase = 0.0
+        # Ce calque translucide recouvre l'orbe : Qt le repeint à chaque image
+        # de celui-ci (25-30 fois/s), pas seulement à son propre tick. Le
+        # dessin complet (centaines d'ellipses) est donc rendu une fois dans
+        # un pixmap, et paintEvent se contente de le recopier.
+        self._cache: QPixmap | None = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(500)
 
     def _tick(self):
         self._phase = (self._phase + 0.018) % 1.0
+        self._cache = None
         if self.isVisible():
             self.update()
 
+    def resizeEvent(self, event):
+        self._cache = None
+        super().resizeEvent(event)
+
     def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height()
         if W < 700 or H < 500:
-            p.end()
             return
+        if self._cache is None or self._cache.size() != self.size():
+            self._cache = self._render(W, H)
+        p = QPainter(self)
+        p.drawPixmap(0, 0, self._cache)
+        p.end()
+
+    def _render(self, W: int, H: int) -> QPixmap:
+        pix = QPixmap(W, H)
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Vignettes latérales très légères : elles structurent l'espace sans
         # poser une plaque opaque par-dessus l'orbe.
@@ -122,3 +140,4 @@ class InterfaceFrame(QWidget):
         p.drawText(QRectF(W - 250, H - 91, 220, 14),
                    Qt.AlignmentFlag.AlignRight, "NEURAL INTERFACE // ONLINE")
         p.end()
+        return pix
