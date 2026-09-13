@@ -1861,9 +1861,11 @@ TOOL_DECLARATIONS = [
             "permanente des visages. OBLIGATOIRE pour : « c'est qui ? », « tu le/la connais ? », "
             "« qui est cette personne », « c'est quoi ça / cet objet ? », « regarde ce que je te montre », "
             "« retiens son visage », « c'est Karim, mon frère », « c'est moi », « oublie X », "
-            "« qui connais-tu ? ». action='identify' (défaut) : capture, reconnaît les visages avec la "
+            "« qui connais-tu ? », « prends une photo et dis-moi qui c'est / ce que c'est ». "
+            "action='identify' (défaut) : ouvre la caméra si besoin (ne pas appeler camera avant), PREND LA "
+            "PHOTO, l'enregistre et l'affiche à l'écran, puis reconnaît les visages avec la "
             "mémoire locale (connu ⇒ nom + lien ; inconnu ⇒ dossier en attente, DEMANDE qui c'est) et, "
-            "sans visage, identifie l'objet (Gemini) puis lance une recherche web en temps réel. "
+            "sans visage, identifie l'objet (Gemini, relais Azure) puis lance une recherche web en temps réel. "
             "Quand l'utilisateur répond au « c'est qui ? » ⇒ action='remember_person' avec name, relation "
             "(frère, collègue, amie…), pending_id du dossier et notes éventuelles ; name='moi' pour "
             "l'utilisateur lui-même. action='remember_object' (name, notes) retient le dernier objet identifié. "
@@ -3734,7 +3736,8 @@ class ToolDispatcher:
                     lambda: visual_recognition(parameters=args, player=self.ui,
                                                session_memory=self._tool_session_memory,
                                                speak=self.speak,
-                                               grab_frame=self._grab_camera_still),
+                                               grab_frame=self._grab_camera_still,
+                                               save_photo=self._save_capture),
                 )
                 result = r or "Je n'ai rien reconnu."
 

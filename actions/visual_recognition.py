@@ -22,6 +22,7 @@ jamais l'image lui-même.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
@@ -272,6 +273,44 @@ def _object_report(data: dict, search: str, notes: str) -> str:
 # 3. Cartes HUD
 # ════════════════════════════════════════════════════════════════════════════
 
+LAST_PHOTO_KEY = "visual_recognition.last_photo"
+
+
+def _keep_photo(player: Any, session_memory, image_bytes: bytes, mime: str,
+                title: str, save_photo: Callable[..., Any] | None) -> str:
+    """La photo prise à la caméra est enregistrée et affichée en grand.
+
+    L'utilisateur voit ce que l'assistant a vu : c'est ce qui rend la réponse
+    vérifiable (« c'est bien ça que tu regardais »). Renvoie le nom du fichier
+    ou '' si rien n'a pu être gardé.
+    """
+    path = None
+    suffix = ".png" if "png" in (mime or "") else ".jpg"
+    if callable(save_photo):
+        try:
+            path = save_photo(image_bytes, suffix, "photo")
+        except Exception as exc:
+            print(f"[VisualRecognition] photo non enregistrée : {exc}")
+    if path is None:
+        try:
+            directory = Path.home() / "Images" / "ANO-GPT"
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / f"ano-photo-{time.strftime('%Y%m%d-%H%M%S')}{suffix}"
+            path.write_bytes(image_bytes)
+        except Exception as exc:
+            print(f"[VisualRecognition] photo non enregistrée : {exc}")
+            path = None
+    show = getattr(player, "show_generated_image_preview", None)
+    if callable(show):
+        try:
+            show(title, image_bytes, str(path or ""))
+        except Exception:
+            pass
+    if session_memory is not None and path is not None:
+        session_memory[LAST_PHOTO_KEY] = str(path)
+    return Path(path).name if path is not None else ""
+
+
 def _show_faces_card(player: Any, matches: list[fm.Match]) -> None:
     show = getattr(player, "show_card", None)
     if not callable(show):
@@ -340,7 +379,8 @@ def _pick_pending(mem: fm.FaceMemory, pending_id: str, which: str) -> fm.Pending
     return pending[0]
 
 
-def _identify(p: dict, player, session_memory, grab_frame, progress) -> str:
+def _identify(p: dict, player, session_memory, grab_frame, progress,
+              save_photo: Callable[..., Any] | None = None) -> str:
     source = "screen" if str(p.get("source") or "camera").lower().startswith(("screen", "ecran", "écran")) else "camera"
     question = str(p.get("question") or p.get("text") or "").strip()
     want = str(p.get("expect") or "auto").lower()
@@ -350,10 +390,19 @@ def _identify(p: dict, player, session_memory, grab_frame, progress) -> str:
         progress("installation des modèles de visage (37 Mo, une seule fois)")
         fm.ensure_models(progress)
 
+    progress("photo en cours" if source == "camera" else "capture de l'écran")
     try:
         img, mime, faces = _grab_best(source, grab_frame, detect_faces=want != "object")
     except Exception as exc:
         return f"Je n'ai pas pu capturer {'l’écran' if source == 'screen' else 'la caméra'} : {exc}"
+
+    photo_name = ""
+    if source == "camera":
+        photo_name = _keep_photo(player, session_memory, img, mime,
+                                 question or "Photo — reconnaissance", save_photo)
+        if photo_name:
+            progress(f"photo enregistrée : {photo_name}")
+    photo_note = f"\n\n(Photo prise et affichée à l'écran : {photo_name}.)" if photo_name else ""
 
     if want != "object" and faces:
         matches = mem.identify(img, source=source, faces=faces)
@@ -370,16 +419,17 @@ def _identify(p: dict, player, session_memory, grab_frame, progress) -> str:
                 data = identify_object(img, mime, question)
                 if data and not data.get("error"):
                     block += "\n\n" + _object_report(data, "", "")
-            return block
+            return block + photo_note
     if want == "person":
         return ("Aucun visage net dans l'image : demande à l'utilisateur de se rapprocher ou de mieux "
-                "éclairer la personne, puis rappelle visual_recognition.")
+                "éclairer la personne, puis rappelle visual_recognition." + photo_note)
 
     # Objet / scène
     progress("identification de l'objet")
     data = identify_object(img, mime, question)
     if not data or data.get("error"):
-        return f"Je n'ai pas pu identifier ce que tu me montres : {data.get('error', 'vision indisponible')}."
+        return (f"Je n'ai pas pu identifier ce que tu me montres : {data.get('error', 'vision indisponible')}."
+                + photo_note)
     name = str(data.get("name") or "")
     query = str(data.get("search_query") or " ".join(x for x in (data.get("brand"), data.get("model")) if x) or name)
     progress(f"recherche en ligne : {query}")
@@ -392,7 +442,7 @@ def _identify(p: dict, player, session_memory, grab_frame, progress) -> str:
             "category": data.get("category", ""), "at": time.strftime("%Y-%m-%d %H:%M"),
         }
     _show_object_card(player, data, img)
-    return _object_report(data, search, notes)
+    return _object_report(data, search, notes) + photo_note
 
 
 def _remember_person(p: dict, player, session_memory, grab_frame, progress) -> str:
@@ -583,7 +633,8 @@ def stop_watcher() -> None:
 @kit.action("visual_recognition")
 def visual_recognition(parameters: dict | None = None, player: Any = None,
                        session_memory: Any = None, speak: Callable[[str], None] | None = None,
-                       grab_frame: Callable[[], Any] | None = None, **_kw) -> str:
+                       grab_frame: Callable[[], Any] | None = None,
+                       save_photo: Callable[..., Any] | None = None, **_kw) -> str:
     p = parameters or {}
     action = str(p.get("action") or "identify").strip().lower()
 
@@ -596,7 +647,7 @@ def visual_recognition(parameters: dict | None = None, player: Any = None,
             pass
 
     if action in ("identify", "who", "what", "look", "regarde"):
-        return _identify(p, player, session_memory, grab_frame, _progress)
+        return _identify(p, player, session_memory, grab_frame, _progress, save_photo)
     if action in ("remember_person", "remember", "enroll", "learn_face"):
         return _remember_person(p, player, session_memory, grab_frame, _progress)
     if action in ("remember_object", "note_object"):
