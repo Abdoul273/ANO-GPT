@@ -361,6 +361,7 @@ class ThoughtNoiseFilter:
         "weather": ("Consultation des prévisions météo...", "Je vérifie les prévisions météo..."),
         "download_music": ("Téléchargement du morceau...", "Un instant, je récupère le morceau..."),
         "tiktok_tracker": ("Lecture du profil TikTok...", "Je regarde ton TikTok..."),
+        "tiktok_coach": ("Analyse TikTok en cours...", "Je regarde ça de près..."),
         "agent_brain": ("Réflexion approfondie en cours...", "Un instant, je réfléchis à votre demande..."),
         "second_brain": ("Consultation de la mémoire persistante...", "Je consulte mes souvenirs enregistrés..."),
         "memory_search": ("Recherche dans la mémoire...", "Je cherche dans vos notes..."),

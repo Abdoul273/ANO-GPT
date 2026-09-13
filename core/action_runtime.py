@@ -70,6 +70,8 @@ _POLICIES: dict[str, ActionPolicy] = {
     "download_music": ActionPolicy(timeout_s=90.0),
     # Une lecture TikTok ouvre un Chrome headless : dix à quinze secondes.
     "tiktok_tracker": ActionPolicy(timeout_s=60.0),
+    # Le bilan interroge Gemini en texte ; le visionnage, lui, part en fond.
+    "tiktok_coach": ActionPolicy(timeout_s=75.0),
     "file_controller": ActionPolicy(timeout_s=75.0),
     "browser_control": ActionPolicy(timeout_s=60.0),
     "screen_process": ActionPolicy(timeout_s=35.0),

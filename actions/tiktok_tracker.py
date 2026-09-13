@@ -163,14 +163,25 @@ def parse_item_list(payload: Any) -> list[dict[str, Any]]:
         if not isinstance(it, dict):
             continue
         st = it.get("stats") or {}
+        video = it.get("video") or {}
+        music = it.get("music") or {}
+        hashtags = [
+            str(t.get("hashtagName") or "").lower()
+            for t in (it.get("textExtra") or []) if isinstance(t, dict) and t.get("hashtagName")
+        ]
         items.append({
             "id": str(it.get("id") or ""),
-            "desc": " ".join(str(it.get("desc") or "").split())[:80],
+            "desc": " ".join(str(it.get("desc") or "").split())[:160],
             "created": _to_int(it.get("createTime")),
             "plays": _to_int(st.get("playCount")),
             "likes": _to_int(st.get("diggCount")),
             "comments": _to_int(st.get("commentCount")),
             "shares": _to_int(st.get("shareCount")),
+            "saves": _to_int(st.get("collectCount")),
+            "duration": _to_int(video.get("duration")),
+            "hashtags": hashtags,
+            "music": str(music.get("title") or "")[:60],
+            "original_sound": bool(music.get("original")),
         })
     items.sort(key=lambda v: v["created"], reverse=True)
     return items

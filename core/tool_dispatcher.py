@@ -73,6 +73,7 @@ from actions.calendar import calendar_control
 from actions.cloud_integrations import cloud_integrations_control
 from actions.prayer import prayer_control
 from actions.tiktok_tracker import tiktok_tracker
+from actions.tiktok_coach import tiktok_coach
 from actions.github import github_control
 from actions.contacts import contacts_control
 from actions.sparring_partner import sparring_partner, observe_sparring_utterance
@@ -792,6 +793,34 @@ TOOL_DECLARATIONS = [
                 "interval_s": {"type": "NUMBER", "description": "Pour set_interval : secondes entre deux lectures"},
             },
             "required": [],
+        },
+    },
+    {
+        "name": "tiktok_coach",
+        "description": (
+            "Coach TikTok personnel (comme Blow Up) pour aider l'utilisateur à percer. "
+            "Actions : 'diagnose' — « pourquoi ma vidéo n'a pas marché », « pourquoi elle est bloquée à "
+            "300 vues », « pourquoi si peu de likes sur ma dernière vidéo » : lit les chiffres, télécharge "
+            "la vidéo, la visionne et explique les causes + quoi changer (query = quelle vidéo : "
+            "« la dernière », « l'avant-dernière », « la plus vue », des mots du titre, ou une URL). "
+            "'review' — bilan du compte : ce qui marche, ce qui bloque, plan et idées de vidéos. "
+            "'draft' — « analyse cette vidéo avant que je la poste », « regarde ma vidéo dans Vidéos » : "
+            "visionne un fichier local (path ou mots du nom ; par défaut la vidéo la plus récente), "
+            "juge l'accroche et la rétention, propose montage, description, hashtags, texte de "
+            "couverture et meilleure heure (note = précisions de l'utilisateur sur son intention). "
+            "'best_time' — meilleure heure pour poster. diagnose et draft lancent le visionnage EN FOND "
+            "et rendent tout de suite un premier constat à dire ; l'avis complet est annoncé tout seul "
+            "environ une minute plus tard : ne relance pas l'outil, ne dis pas que c'est fini."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "diagnose | review | draft | best_time"},
+                "query": {"type": "STRING", "description": "Vidéo visée (diagnose) ou fichier (draft), tel que dit"},
+                "path": {"type": "STRING", "description": "Pour draft : chemin du fichier si connu"},
+                "note": {"type": "STRING", "description": "Pour draft : ce que l'utilisateur veut obtenir avec cette vidéo"},
+            },
+            "required": ["action"],
         },
     },
     {
@@ -2119,6 +2148,7 @@ _TOOL_LABELS = {
     "cloud_integrations_control": "Intégration cloud",
     "prayer_control": "Prière",
     "tiktok_tracker": "TikTok",
+    "tiktok_coach": "Coach TikTok",
     "github_control": "GitHub",
     "simulate_decision": "Simulation stratégique",
     "auto_extension_control": "Extensions autonomes",
@@ -3309,6 +3339,12 @@ class ToolDispatcher:
                 result = await loop.run_in_executor(
                     None,
                     lambda: tiktok_tracker(parameters=args, player=self.ui, speak=self.speak),
+                )
+
+            elif name == "tiktok_coach":
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: tiktok_coach(parameters=args, player=self.ui, speak=self.speak),
                 )
 
             elif name in ("prayer", "prayer_control"):

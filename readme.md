@@ -77,6 +77,7 @@ MARK XLIX deepens the personal assistant foundation. Rather than adding more too
 | 🧑‍💻 Silent Language Memory | Detects spoken language on first use and saves it — all future sessions adapt automatically |
 | 📱 Remote Dashboard | Control the assistant from your phone via QR code pairing |
 | 📈 TikTok Tracker | « Suis mon TikTok » : abonnés, j'aime, vues par vidéo relus toutes les deux minutes (page publique via Chrome headless, comme Blow) ; carte à l'écran et annonces vocales des nouveaux abonnés, paliers et vidéos qui décollent |
+| 🎯 TikTok Coach | « Pourquoi ma vidéo n'a pas marché ? » : chiffres passés au crible + la vidéo visionnée par Gemini (accroche, rythme, texte, son) avec causes et corrections ; bilan du compte et plan ; « analyse cette vidéo avant que je la poste » : avis, montage, description, hashtags, couverture, meilleure heure |
 
 ---
 

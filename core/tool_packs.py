@@ -154,11 +154,12 @@ PACKS: Mapping[str, ToolPack] = {
     ),
     "reseaux": ToolPack(
         label="réseaux sociaux",
-        tools=frozenset({"tiktok_tracker"}),
+        tools=frozenset({"tiktok_tracker", "tiktok_coach"}),
         triggers=_triggers(
             r"\b(tiktok|tik tok|abonnes|abonne|followers|follower|vues|likes)\b",
             r"\b(mon compte|ma video|mes videos|ma derniere video)\b",
-            r"\b(blow|ca monte|ca decolle|viral|virale)\b",
+            r"\b(blow|ca monte|ca decolle|viral|virale|percer|coach)\b",
+            r"\b(pourquoi|analyse|regarde|avant de (?:la )?poster|publier)\b.{0,30}\b(video|vues|likes|tiktok)\b",
         ),
     ),
     "assistanat": ToolPack(
