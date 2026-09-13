@@ -270,6 +270,19 @@ class AudioCallbacks(Protocol):
 
 # Silence maximal toléré pendant qu'une réponse est censée sortir.
 STALLED_SPEECH_S = 6.0
+# ~3 s de niveau vocal (blocs de 64 ms) sans qu'un tour s'ouvre = surdité.
+_DEAF_CHUNKS = 45
+
+
+def _log_watchdog(host: Any, text: str) -> None:
+    """Le chien de garde parle dans le journal de l'interface, pas seulement
+    dans le terminal : c'est là que les blocages se lisent."""
+    ui = getattr(host, "ui", None)
+    if ui is not None and hasattr(ui, "write_log"):
+        try:
+            ui.write_log(f"SYS : chien de garde audio — {text}.")
+        except Exception:
+            pass
 
 
 class AudioEngine:
@@ -693,6 +706,7 @@ class AudioEngine:
                 f"[JARVIS] ⚠️ Watchdog audio : blocage détecté "
                 f"({now_mono - last_io:.1f}s sans I/O) — déblocage du micro."
             )
+            _log_watchdog(self, f"tour bloqué {now_mono - last_io:.0f} s sans réponse — micro rendu")
             self.reset_audio_and_turn_state(source="watchdog_inactivity")
             return True
 
@@ -721,6 +735,7 @@ class AudioEngine:
                 f"[JARVIS] ⚠️ Watchdog audio : voix restée « active » "
                 f"{now_mono - last_io:.1f}s sans aucun son — tour clos, micro rendu."
             )
+            _log_watchdog(self, f"voix restée active {now_mono - last_io:.0f} s sans son — tour clos")
             self.reset_audio_and_turn_state(source="watchdog_stalled_speech")
             return True
 
@@ -937,7 +952,10 @@ class AudioEngine:
                      # Le callback PortAudio et la boucle asyncio ne sont pas
                      # atomiques. Ce drapeau interdit d'expédier du PCM entre
                      # la demande d'ouverture et l'ouverture réelle du tour.
-                     "activity_opening": False}
+                     "activity_opening": False,
+                     # Surdité : niveau vocal soutenu sans qu'aucun tour ne
+                     # s'ouvre. Compteur à décroissance (+1 fort, −1 sinon).
+                     "loud_run": 0, "deaf_at": 0.0}
 
         # Tampon de pré-amorce : garde les ~400 dernières ms d'audio pour les
         # réinjecter dès que la parole est confirmée. Sans lui, le portier
@@ -1101,6 +1119,19 @@ class AudioEngine:
                     if is_held:
                         mic_level = _cb_state.get("level", 0.0)
                         print(f"[AUDIO-GATE] 🔒 HELD ({reason_str}) | level={mic_level:.3f} | speaking_detected={is_speaking_detected}")
+                        # Au-delà de 8 s retenu pendant que l'utilisateur
+                        # parle, l'état doit être visible dans le journal de
+                        # l'interface : c'est là qu'on lit les blocages.
+                        held_since = _cb_state.setdefault("held_since", now_cb)
+                        if is_speaking_detected and now_cb - held_since >= 8.0:
+                            _cb_state["held_since"] = now_cb
+                            self.ui.write_log(
+                                f"SYS : micro retenu ({reason_str}) depuis {now_cb - held_since:.0f} s "
+                                "alors que vous parlez — déblocage."
+                            )
+                            self.reset_audio_and_turn_state(source="held_while_speaking")
+                if not is_held:
+                    _cb_state.pop("held_since", None)
 
                 if is_held:
                     if self._activity_open:
@@ -1114,6 +1145,36 @@ class AudioEngine:
                 # de la parole et le modèle répondait à du vide. Ici le bruit ne
                 # quitte jamais la machine.
                 if not is_speaking_detected:
+                    # Surdité : le micro reçoit un niveau de voix soutenu mais
+                    # le portier ne s'ouvre jamais. Les planchers adaptatifs du
+                    # VAD (bruit ambiant appris, pic glissant) peuvent s'être
+                    # calés sur la propre voix de l'assistant ou sur un bruit
+                    # passager ; l'utilisateur parle alors dans le vide, sans
+                    # aucune trace. Trois secondes de niveau vocal sans tour
+                    # ouvert : on l'écrit dans le journal et on repart d'un
+                    # état de VAD neuf, comme après un changement de micro.
+                    rms_now = float(np.sqrt(np.mean(float_audio ** 2))) if float_audio.size else 0.0
+                    loud_gate = max(0.02, float(getattr(preprocessor, "noise_threshold", 0.01)) * 2.0)
+                    if rms_now >= loud_gate and not self._activity_open:
+                        _cb_state["loud_run"] += 1
+                    else:
+                        _cb_state["loud_run"] = max(0, _cb_state["loud_run"] - 1)
+                    if (_cb_state["loud_run"] >= _DEAF_CHUNKS
+                            and now_cb - _cb_state["deaf_at"] >= 20.0):
+                        _cb_state["deaf_at"] = now_cb
+                        _cb_state["loud_run"] = 0
+                        floor = float(getattr(preprocessor, "_noise_floor", 0.0))
+                        ambient = float(getattr(preprocessor, "_ambient_floor", 0.0))
+                        prob = float(getattr(preprocessor, "_last_neural_probability", 0.0))
+                        self.ui.write_log(
+                            f"SYS : le micro entend un niveau vocal ({rms_now:.3f}) mais rien ne "
+                            f"s'ouvre (plancher bruit {floor:.3f}, ambiant {ambient:.3f}, "
+                            f"VAD {prob:.2f}) — réinitialisation de la détection."
+                        )
+                        try:
+                            preprocessor.reset_stream_state()
+                        except Exception:
+                            pass
                     # Fin de phrase : on ferme le tour. Ce marqueur est ce qui
                     # dit au modèle « c'est à toi » — c'est exactement ce qui
                     # manquait, et pourquoi la parole n'était jamais traitée.

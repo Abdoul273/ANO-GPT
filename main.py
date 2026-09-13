@@ -859,6 +859,9 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
             on_log=lambda msg: (
                 self.ui.write_log(msg) if hasattr(self.ui, "write_log") else None
             ),
+            sleep_allowed=lambda: bool(
+                getattr(getattr(self, "_wake", None), "available", False)
+            ),
         )
 
         # Cinq moteurs extraits. Les méthodes restent liées à cet hôte

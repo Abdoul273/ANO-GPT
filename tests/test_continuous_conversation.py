@@ -254,3 +254,69 @@ def test_inactivite_ne_coupe_pas_un_micro_impossible_a_reveiller():
     assert result == "listening"
     assert jarvis.ui.muted is False
     assert "micro maintenu actif" in jarvis.ui.logs[-1]
+
+
+def test_tache_longue_video_garde_la_conversation_eveillee():
+    """Images, vidéos et travaux différés empêchent tous la veille automatique."""
+    from main import JarvisLive
+
+    class Task:
+        def __init__(self, done):
+            self._done = done
+
+        def done(self):
+            return self._done
+
+    jarvis = JarvisLive.__new__(JarvisLive)
+    jarvis._image_generation_tasks = set()
+    jarvis._video_generation_tasks = {Task(False)}
+    jarvis._deep_research_tasks = set()
+    jarvis._decision_simulation_tasks = set()
+
+    assert jarvis._has_active_long_task() is True
+    jarvis._video_generation_tasks = {Task(True)}
+    assert jarvis._has_active_long_task() is False
+
+
+def test_une_commande_ecrite_reveille_l_assistant_en_veille():
+    """Un message chat ne doit jamais être accepté alors que la sortie reste muette."""
+    from main import JarvisLive
+
+    class UI:
+        muted = True
+
+    jarvis = JarvisLive.__new__(JarvisLive)
+    jarvis.ui = UI()
+    jarvis._loop = None
+    jarvis.session = None
+    calls = []
+    jarvis._wake_up = lambda reason: calls.append(reason) or setattr(jarvis.ui, "muted", False)
+    jarvis._try_switch_conversation_language = lambda text: False
+    jarvis._try_switch_personality_mode = lambda text: False
+    jarvis._observe_habit_reply = lambda text: None
+    jarvis._maybe_routine = lambda text, source: False
+    jarvis.detect_contextual_persona = lambda text: None
+    jarvis.check_persona_voice_trigger = lambda text: None
+
+    jarvis._on_text_command("où en est la génération ?")
+
+    assert calls == ["commande texte"]
+    assert jarvis.ui.muted is False
+
+
+def test_no_idle_timer_when_sleep_is_not_allowed():
+    """Sans réveil vocal, aucun minuteur : ni « passage en veille » ni
+    « veille différée » à chaque fin de réponse."""
+    from core.continuous_conversation import ContinuousConversationManager
+
+    logs, slept = [], []
+    mgr = ContinuousConversationManager(
+        timeout_s=0.05, on_sleep=slept.append, on_log=logs.append,
+        sleep_allowed=lambda: False,
+    )
+    mgr.on_assistant_speech_end(loop=None)
+    mgr.on_assistant_speech_end(loop=None)
+    assert mgr._timer_task is None
+    assert slept == []
+    assert len([m for m in logs if "permanente" in m]) == 1
+    assert not any("25s" in m or "veille" in m.lower() and "permanente" not in m for m in logs)

@@ -159,10 +159,16 @@ class ContinuousConversationManager:
         timeout_s: float = DEFAULT_FOLLOW_UP_TIMEOUT_S,
         on_sleep: Optional[Callable[[str], None]] = None,
         on_log: Optional[Callable[[str], None]] = None,
+        sleep_allowed: Optional[Callable[[], bool]] = None,
     ):
         self.timeout_s = max(0.05, float(timeout_s))
         self._on_sleep = on_sleep
         self._on_log = on_log
+        # Sans réveil vocal, une mise en veille automatique est un cul-de-sac :
+        # le minuteur n'est alors même pas armé, au lieu d'annoncer une veille
+        # puis de la « différer » à chaque fin de réponse.
+        self._sleep_allowed = sleep_allowed
+        self._no_sleep_logged = False
         self._is_active = False
         self._is_closing_turn = False
         self._timer_task: Optional[asyncio.Task] = None
@@ -241,6 +247,20 @@ class ContinuousConversationManager:
 
         self._is_active = True
         self._last_speech_time = time.monotonic()
+        if self._sleep_allowed is not None:
+            try:
+                allowed = bool(self._sleep_allowed())
+            except Exception:
+                allowed = True
+            if not allowed:
+                if self._on_log and not self._no_sleep_logged:
+                    self._no_sleep_logged = True
+                    self._on_log(
+                        "SYS : écoute continue permanente — réveil « ANO » indisponible, "
+                        "le micro reste ouvert."
+                    )
+                return
+        self._no_sleep_logged = False
         if self._on_log:
             self._on_log(f"SYS : écoute continue active ({self.timeout_s:.0f}s sans « ANO »).")
 
