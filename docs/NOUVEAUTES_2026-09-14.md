@@ -121,21 +121,6 @@ dans les deux sens : si une voix basse passe enfin, mais aussi si du bruit de
 fond se met à déclencher le micro à tort (signe qu'il faudrait remonter d'un
 cran, `core/audio_vad.py` → `VADConfig.webrtc_mode`).
 
----
-
-## Résumé des fichiers touchés
-
-| Domaine | Fichiers |
-| --- | --- |
-| Carte / globe | `core/map_render.py`, `ui/window/media_host.py`, `ui/window/scene.py` |
-| Fiche pays | `core/country_info.py`, `config/countries.json` |
-| Navigation / GPS | `core/navigation.py`, `core/geolocation.py` |
-| Chien de garde audio | `core/tool_dispatcher.py` (`_execute_tool`) |
-| Détection de voix | `core/audio_vad.py` |
-
-Tous les tests automatisés passent (`pytest`, Qt hors écran) ; les points
-marqués « non vérifié » ci-dessus demandent un vrai test sur cette machine.
-
 ## 6. Couper le barge-in (interruption automatique à la voix)
 
 « stop », « écoute », « arrête-toi » coupaient ANO en pleine phrase dès que
@@ -155,3 +140,19 @@ la voix :
 prenne effet ; le journal affiche alors « coupure automatique à la voix
 désactivée » au démarrage. Pour la réactiver, remettre `true` ou supprimer la
 ligne (le défaut est activé).
+
+---
+
+## Résumé des fichiers touchés
+
+| Domaine | Fichiers |
+| --- | --- |
+| Carte / globe | `core/map_render.py`, `ui/window/media_host.py`, `ui/window/scene.py` |
+| Fiche pays | `core/country_info.py`, `config/countries.json` |
+| Navigation / GPS | `core/navigation.py`, `core/geolocation.py` |
+| Chien de garde audio | `core/tool_dispatcher.py` (`_execute_tool`) |
+| Détection de voix | `core/audio_vad.py` |
+| Barge-in désactivable | `core/audio_engine.py` (`barge_in_enabled`) |
+
+Tous les tests automatisés passent (`pytest`, Qt hors écran) ; les points
+marqués « non vérifié » ci-dessus demandent un vrai test sur cette machine.
