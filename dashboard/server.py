@@ -9,6 +9,7 @@ Install deps:  pip install fastapi "uvicorn[standard]" cryptography
 """
 
 import asyncio
+import logging
 import base64
 import hashlib
 import ipaddress
@@ -701,6 +702,7 @@ class DashboardServer:
         self._tokens: set[str]            = set()
         self._token_keys: dict[str, str]  = {}   # auth_token → session_key
         self._aes_cache:  dict[str, bytes]= {}   # session_key → AES bytes
+        self._authenticated_clients: set[WebSocket] = set()
         self._clients: set[WebSocket]     = set()
         self._phone_clients: set[WebSocket] = set()
         self._phone_call_waiters: dict[str, asyncio.Future] = {}
@@ -1189,7 +1191,12 @@ class DashboardServer:
 
         @app.post("/login")
         async def login(req: Request):
-            body    = await req.json()
+            try:
+                body = await req.json()
+            except ValueError:
+                return JSONResponse({"ok": False, "error": "JSON invalide"}, status_code=400)
+            if not isinstance(body, dict) or not isinstance(body.get("pin", ""), str):
+                return JSONResponse({"ok": False}, status_code=400)
             entered = str(body.get("pin", "")).strip().upper()
             pairing = self._pair_device(entered)
             if pairing:
@@ -1209,7 +1216,12 @@ class DashboardServer:
                 body = await req.json()
             except Exception:
                 return JSONResponse({"ok": False, "error": "JSON invalide"}, status_code=400)
-            pairing = self._pair_device(str(body.get("key") or body.get("pin") or ""))
+            if not isinstance(body, dict):
+                return JSONResponse({"ok": False}, status_code=400)
+            key = body.get("key") or body.get("pin") or ""
+            if not isinstance(key, str):
+                return JSONResponse({"ok": False}, status_code=400)
+            pairing = self._pair_device(key)
             if not pairing:
                 return JSONResponse(
                     {"ok": False, "error": "Clé invalide ou expirée"}, status_code=401
@@ -1273,7 +1285,9 @@ class DashboardServer:
                 body = await req.json()
             except Exception:
                 return JSONResponse({"ok": False}, status_code=400)
-            dev_tok = (body.get("device_token") or "").strip()
+            if not isinstance(body, dict) or not isinstance(body.get("device_token", ""), str):
+                return JSONResponse({"ok": False}, status_code=400)
+            dev_tok = body.get("device_token", "").strip()
             if not dev_tok or dev_tok not in self._device_sessions:
                 return JSONResponse({"ok": False}, status_code=401)
             session_key = self._device_sessions[dev_tok]["session_key"]
@@ -1295,7 +1309,14 @@ class DashboardServer:
                 return JSONResponse({"error": "Non autorisé"}, status_code=401)
             count = len(self._device_sessions)
             self._device_sessions.clear()
+            self._tokens.clear()
+            self._token_keys.clear()
+            self._aes_cache.clear()
             _save_devices(self._device_sessions)
+            sockets = tuple(self._authenticated_clients)
+            if sockets:
+                await asyncio.gather(*(ws.close(code=4001) for ws in sockets),
+                                     return_exceptions=True)
             return JSONResponse({"ok": True, "revoked": count})
 
         @app.post("/api/command")
@@ -1362,6 +1383,8 @@ class DashboardServer:
         @app.get("/api/live_position")
         async def live_position_ep(req: Request):
             """Dernière position GPS connue pour la carte et la navigation."""
+            if not _auth(req):
+                return JSONResponse({"error": "Non autorisé"}, status_code=401)
             from core.geolocation import get_live_position
             pos = get_live_position(resolve_place=False)
             if not pos:
@@ -1371,6 +1394,8 @@ class DashboardServer:
         @app.get("/api/navigation/state")
         async def navigation_state_ep(req: Request):
             """État courant de la session de navigation guidée."""
+            if not _auth(req):
+                return JSONResponse({"error": "Non autorisé"}, status_code=401)
             from core.navigation import get_navigation_manager
             mgr = get_navigation_manager()
             session = mgr.current_session
@@ -1406,12 +1431,19 @@ class DashboardServer:
                 await websocket.close(code=4001)
                 return
             await websocket.accept()
+            if tok not in self._tokens:
+                await websocket.close(code=4001)
+                return
+            self._authenticated_clients.add(websocket)
             asyncio.create_task(self.broadcast(
                 {"type": "sys", "text": "Micro du téléphone en direct."}
             ))
             try:
                 while True:
                     data = await websocket.receive_bytes()
+                    if tok not in self._tokens:
+                        await websocket.close(code=4001)
+                        return
                     try:
                         self._phone_audio_queue.put_nowait(
                             {"data": data, "mime_type": "audio/pcm;rate=16000"}
@@ -1421,6 +1453,7 @@ class DashboardServer:
             except WebSocketDisconnect:
                 pass
             finally:
+                self._authenticated_clients.discard(websocket)
                 # Un marqueur explicite termine la phrase immédiatement quand
                 # l'utilisateur relâche le bouton. Attendre le timeout du
                 # relais ajoutait une seconde entière de latence à chaque tour.
@@ -1451,12 +1484,19 @@ class DashboardServer:
                 await websocket.close(code=4001)
                 return
             await websocket.accept()
+            if tok not in self._tokens:
+                await websocket.close(code=4001)
+                return
+            self._authenticated_clients.add(websocket)
             asyncio.create_task(self.broadcast(
                 {"type": "sys", "text": "Caméra du téléphone en direct."}
             ))
             try:
                 while True:
                     frame = await websocket.receive_bytes()
+                    if tok not in self._tokens:
+                        await websocket.close(code=4001)
+                        return
                     if not frame:
                         continue
                     self._phone_frame = frame
@@ -1466,12 +1506,13 @@ class DashboardServer:
                         try:
                             self._frame_callback(frame)
                         except Exception:
-                            pass  # l'affichage ne doit jamais tuer le flux
+                            logging.getLogger(__name__).warning("Affichage de la caméra distante impossible")
             except WebSocketDisconnect:
                 pass
             except Exception:
-                pass
+                logging.getLogger(__name__).warning("Flux de caméra distante interrompu")
             finally:
+                self._authenticated_clients.discard(websocket)
                 self._phone_frame = None
                 self._phone_camera_ready.clear()
                 asyncio.create_task(self.broadcast(
@@ -1573,6 +1614,10 @@ class DashboardServer:
                 await websocket.close(code=4001)
                 return
             await websocket.accept()
+            if tok not in self._tokens:
+                await websocket.close(code=4001)
+                return
+            self._authenticated_clients.add(websocket)
             self._clients.add(websocket)
             for entry in self._history[-50:]:
                 try:
@@ -1582,6 +1627,9 @@ class DashboardServer:
             try:
                 while True:
                     data = await websocket.receive_json()
+                    if tok not in self._tokens:
+                        await websocket.close(code=4001)
+                        return
                     if not isinstance(data, dict):
                         await websocket.send_json({"type": "error", "error": "Objet JSON attendu"})
                         continue
@@ -1651,6 +1699,7 @@ class DashboardServer:
             except WebSocketDisconnect:
                 pass
             finally:
+                self._authenticated_clients.discard(websocket)
                 self._clients.discard(websocket)
                 was_phone = websocket in self._phone_clients
                 self._phone_clients.discard(websocket)
