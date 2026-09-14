@@ -1,5 +1,6 @@
 """tests/test_navigation.py — Tests de la navigation guidée pas-à-pas d'ANO-GPT."""
 
+from pathlib import Path
 
 from core.navigation import (
     OFF_ROUTE_DISTANCE_M,
@@ -596,3 +597,25 @@ def test_le_guidage_najamais_de_repli_ip_meme_implicite():
     source = inspect.getsource(nav_module.NavigationManager.start_navigation_to_query)
     assert "get_user_coords" not in source
     assert "get_precise_user_coords" in source
+
+
+# ── Le téléphone doit savoir qu'un guidage est actif ────────────────────────
+# Le serveur diffusait déjà {"type": "navigation_state", "active": ...}
+# (voir test_le_dashboard_est_informe_du_debut_et_de_la_fin_du_guidage
+# ci-dessus), mais dashboard/static/app.html ne l'écoutait jamais :
+# _navActive restait figé à false, le relevé GPS du téléphone restait au
+# rythme de repos (30 s) même en plein guidage — le point bleu de la carte
+# n'avançait presque jamais pendant un vrai trajet.
+
+APP_HTML = (Path(__file__).resolve().parent.parent / "dashboard" / "static" / "app.html").read_text(encoding="utf-8")
+
+
+def test_le_telephone_ecoute_bien_navigation_state():
+    assert "data.type === 'navigation_state'" in APP_HTML
+    assert "_navActive = !!data.active" in APP_HTML
+
+
+def test_le_rythme_gps_accelere_en_navigation_active():
+    start = APP_HTML.index("function _getGeoInterval")
+    block = APP_HTML[start:start + 200]
+    assert "_navActive ? 1200 : 30000" in block

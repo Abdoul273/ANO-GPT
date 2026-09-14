@@ -1571,6 +1571,20 @@ function connectWebSocket() {
               { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
             );
           }
+        } else if (data.type === 'navigation_state') {
+          // Un guidage actif pousse la position toutes les 1,2 s au lieu de
+          // 30 s (_getGeoInterval) : ce message n'était jamais écouté ici,
+          // donc le point bleu de la grande carte n'avançait presque
+          // jamais pendant un trajet réel — _navActive restait figé à
+          // false. watchPosition tourne déjà en continu (_startGeoTracking) ;
+          // le relevé suivant profite aussitôt du rythme rapide.
+          _navActive = !!data.active;
+          if (_navActive && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              pos => _sendPosition(pos, true), () => {},
+              { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
+            );
+          }
         }
       } catch(e) {}
     };
