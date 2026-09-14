@@ -68,6 +68,7 @@ class MainActivity : FlutterActivity() {
                             this,
                             call.argument<String>("base_url") ?: "",
                             call.argument<String>("device_token") ?: "",
+                            call.argument<String>("cert_fingerprint") ?: "",
                         )
                         result.success(true)
                     }

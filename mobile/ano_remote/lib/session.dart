@@ -66,16 +66,27 @@ class AnoSession extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final base = prefs.getString('base_url') ?? '';
     final deviceToken = prefs.getString('device_token') ?? '';
+    final fingerprint = prefs.getString('server_fingerprint') ?? '';
     if (base.isEmpty || deviceToken.isEmpty) return base;
 
     _set(status: LinkStatus.connecting, hint: 'Reconnexion…');
     try {
       // L'adresse du PC peut avoir changé de port ou de schéma depuis la
-      // dernière session : on re-teste toutes les variantes.
+      // dernière session : on re-teste toutes les variantes. Le certificat,
+      // lui, ne doit pas changer : une empreinte déjà mémorisée est exigée
+      // à l'identique, sinon un autre PC sur le même réseau pourrait se
+      // faire passer pour le nôtre.
       final outcome = await probeServer(candidateUrls(base));
-      final candidate = RemoteApi(outcome.baseUrl, deviceToken: deviceToken);
+      final candidate = RemoteApi(outcome.baseUrl,
+          deviceToken: deviceToken, pinFingerprint: fingerprint);
       await candidate.reconnect();
       await _finish(candidate, outcome.info);
+    } on HandshakeException {
+      _set(
+        status: LinkStatus.offline,
+        hint: 'Le certificat du PC a changé — réappairez pour confirmer '
+            'que c’est bien lui.',
+      );
     } catch (_) {
       _set(
         status: LinkStatus.offline,
@@ -134,6 +145,9 @@ class AnoSession extends ChangeNotifier {
     await prefs.setString('base_url', candidate.baseUrl);
     if (candidate.deviceToken.isNotEmpty) {
       await prefs.setString('device_token', candidate.deviceToken);
+    }
+    if (candidate.pinFingerprint.isNotEmpty) {
+      await prefs.setString('server_fingerprint', candidate.pinFingerprint);
     }
     api = candidate;
     serverName = info['name']?.toString() ?? 'ANO-GPT';
@@ -207,7 +221,11 @@ class AnoSession extends ChangeNotifier {
     try {
       await const MethodChannel('ano.remote/system').invokeMethod<void>(
         'startPhoneRelay',
-        {'base_url': current.baseUrl, 'device_token': current.deviceToken},
+        {
+          'base_url': current.baseUrl,
+          'device_token': current.deviceToken,
+          'cert_fingerprint': current.pinFingerprint,
+        },
       );
     } catch (_) {
       // L'interface reste utilisable sur une ancienne version Android ; le

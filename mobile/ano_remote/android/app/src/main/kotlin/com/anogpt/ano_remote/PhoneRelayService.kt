@@ -51,12 +51,14 @@ class PhoneRelayService : Service() {
         private const val ACTION_WAKE = "com.anogpt.ano_remote.WAKE_PHONE_RELAY"
         private const val EXTRA_BASE = "base_url"
         private const val EXTRA_DEVICE = "device_token"
+        private const val EXTRA_FINGERPRINT = "cert_fingerprint"
         private const val CHANNEL_ID = "ano_phone_relay"
 
-        fun start(context: Context, baseUrl: String = "", deviceToken: String = "") {
+        fun start(context: Context, baseUrl: String = "", deviceToken: String = "", certFingerprint: String = "") {
             val intent = Intent(context, PhoneRelayService::class.java).setAction(ACTION_START)
             if (baseUrl.isNotBlank()) intent.putExtra(EXTRA_BASE, baseUrl)
             if (deviceToken.isNotBlank()) intent.putExtra(EXTRA_DEVICE, deviceToken)
+            if (certFingerprint.isNotBlank()) intent.putExtra(EXTRA_FINGERPRINT, certFingerprint)
             ContextCompat.startForegroundService(context, intent)
         }
 
@@ -86,6 +88,12 @@ class PhoneRelayService : Service() {
         }
         intent?.getStringExtra(EXTRA_DEVICE)?.takeIf { it.isNotBlank() }?.let {
             prefs().edit().putString(EXTRA_DEVICE, it).apply()
+        }
+        // L'empreinte vient de Flutter, mémorisée au moment où l'utilisateur
+        // vient de saisir le PIN / scanner le QR : c'est le seul instant où
+        // la confiance dans ce certificat est un choix humain explicite.
+        intent?.getStringExtra(EXTRA_FINGERPRINT)?.takeIf { it.isNotBlank() }?.let {
+            prefs().edit().putString(EXTRA_FINGERPRINT, it).apply()
         }
         startForeground(73, notification())
         connectSoon(0)
@@ -280,10 +288,40 @@ class PhoneRelayService : Service() {
         getSharedPreferences("ano_sms", MODE_PRIVATE).edit().putString("queue", kept.toString()).apply()
     }
 
+    /** Empreinte SHA-256 du certificat, épinglée au premier appairage. */
+    private fun certificateFingerprint(cert: X509Certificate): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(cert.encoded)
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
     private fun localClient(): OkHttpClient {
-        // Le certificat du PC est auto-signé. La clé d'appairage reste exigée
-        // par le serveur et l'application ne garde que des adresses LAN.
-        val trust = object : X509TrustManager { override fun checkClientTrusted(c: Array<X509Certificate>, a: String) {} ; override fun checkServerTrusted(c: Array<X509Certificate>, a: String) {} ; override fun getAcceptedIssuers() = emptyArray<X509Certificate>() }
+        // Le certificat du PC est auto-signé : pas d'autorité à vérifier.
+        // L'empreinte épinglée vient de Flutter (mémorisée au moment où
+        // l'utilisateur a saisi le PIN / scanné le QR affiché par le PC,
+        // le seul instant où la confiance est un choix humain explicite) :
+        // toute connexion doit présenter exactement ce certificat, sinon un
+        // autre appareil du réseau local pourrait se faire passer pour le PC.
+        val pinned = prefs().getString(EXTRA_FINGERPRINT, null)
+        val trust = object : X509TrustManager {
+            override fun checkClientTrusted(c: Array<X509Certificate>, a: String) {}
+            override fun checkServerTrusted(c: Array<X509Certificate>, a: String) {
+                val leaf = c.firstOrNull()
+                    ?: throw java.security.cert.CertificateException("Aucun certificat présenté.")
+                if (pinned == null) {
+                    // Pas encore d'empreinte reçue de Flutter (première
+                    // installation ou état incohérent) : ne rien tenter à
+                    // l'aveugle, le relais réessaiera après le prochain
+                    // startPhoneRelay avec l'empreinte.
+                    throw java.security.cert.CertificateException(
+                        "Aucune empreinte de certificat épinglée : relancez l'application.")
+                }
+                if (pinned != certificateFingerprint(leaf)) {
+                    throw java.security.cert.CertificateException(
+                        "Le certificat du PC a changé : réappairez depuis l'application.")
+                }
+            }
+            override fun getAcceptedIssuers() = emptyArray<X509Certificate>()
+        }
         val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(trust), SecureRandom()) }
         return OkHttpClient.Builder().sslSocketFactory(context.socketFactory, trust)
             .hostnameVerifier(HostnameVerifier { _, _ -> true }).pingInterval(25, TimeUnit.SECONDS).build()

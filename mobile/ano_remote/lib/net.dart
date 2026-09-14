@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+
 /// Ports exposés par ANO-GPT : 8000 (principal) et 8001 (alias HTTPS).
 const List<int> kServerPorts = [8000, 8001];
 
@@ -40,11 +42,29 @@ bool isLocalHost(String host) {
       (a == 100 && b >= 64 && b <= 127); // CGNAT : hotspots opérateur, Tailscale
 }
 
-HttpClient lanClient() {
+/// Empreinte SHA-256 du certificat, sous la forme utilisée pour l'épinglage.
+String certificateFingerprint(X509Certificate cert) =>
+    sha256.convert(cert.der).toString();
+
+/// Client HTTP pour le PC ANO-GPT.
+///
+/// Le certificat est auto-signé : `isLocalHost` limite déjà le risque au
+/// réseau local, mais un appareil déjà sur ce réseau pourrait sinon se faire
+/// passer pour n'importe quel PC. Une fois [pinFingerprint] connue (mémorisée
+/// au premier appairage réussi, confiance-au-premier-usage), seul CE
+/// certificat précis est accepté pour toute connexion ultérieure.
+HttpClient lanClient({String? pinFingerprint, void Function(String)? onFingerprint}) {
   final client = HttpClient();
   client.connectionTimeout = const Duration(seconds: 4);
-  client.badCertificateCallback = (_, host, port) =>
-      isLocalHost(host) && kServerPorts.contains(port);
+  client.badCertificateCallback = (cert, host, port) {
+    if (!isLocalHost(host) || !kServerPorts.contains(port)) return false;
+    final fingerprint = certificateFingerprint(cert);
+    if (pinFingerprint != null && pinFingerprint.isNotEmpty) {
+      return fingerprint == pinFingerprint;
+    }
+    onFingerprint?.call(fingerprint);
+    return true;
+  };
   return client;
 }
 
@@ -251,11 +271,16 @@ List<String> candidateUrls(String raw) {
 }
 
 class RemoteApi {
-  RemoteApi(this.baseUrl, {this.token = '', this.deviceToken = ''});
+  RemoteApi(this.baseUrl,
+      {this.token = '', this.deviceToken = '', this.pinFingerprint = ''});
 
   final String baseUrl;
   String token;
   String deviceToken;
+
+  /// Empreinte du certificat mémorisée au premier appairage. Vide tant
+  /// qu'aucune confiance n'a encore été établie (avant/pendant [pair]).
+  String pinFingerprint;
 
   Uri uri(String path) => Uri.parse('$baseUrl$path');
 
@@ -276,7 +301,10 @@ class RemoteApi {
     bool authenticated = false,
     Duration timeout = const Duration(seconds: 8),
   }) async {
-    final client = lanClient();
+    final client = lanClient(
+      pinFingerprint: pinFingerprint,
+      onFingerprint: (fp) => pinFingerprint = fp,
+    );
     try {
       final request = await client.openUrl(method, uri(path)).timeout(timeout);
       request.headers.contentType = ContentType.json;
@@ -353,7 +381,7 @@ class RemoteApi {
   );
 
   Future<List<int>> download(String name) async {
-    final client = lanClient();
+    final client = lanClient(pinFingerprint: pinFingerprint);
     try {
       final request = await client.getUrl(downloadUri(name));
       final response = await request.close().timeout(
@@ -375,7 +403,7 @@ class RemoteApi {
   Future<WebSocket> openSocket([String path = '/ws']) {
     return WebSocket.connect(
       socketUri(path).toString(),
-      customClient: lanClient(),
+      customClient: lanClient(pinFingerprint: pinFingerprint),
     ).timeout(const Duration(seconds: 8));
   }
 }
