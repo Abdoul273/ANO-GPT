@@ -39,6 +39,7 @@ class DialogsHostMixin:
         for attribute in (
             "_remote_overlay", "_customize_overlay", "_ai_config_overlay",
             "_audio_settings_overlay", "_memory_overlay", "_plugin_overlay",
+            "_welcome_overlay",
         ):
             overlay = getattr(self, attribute, None)
             if overlay is None:
@@ -397,3 +398,35 @@ class DialogsHostMixin:
         self._apply_state("LISTENING")
         self._assistant_name = _read_full_config().get("assistant_name", "ANO-GPT") or "ANO-GPT"
         self._log.append_log(f"SYS : initialisé. OS={os_name.upper()}. {self._assistant_name} en ligne.")
+        self._show_welcome_hud()
+
+    def _show_welcome_hud(self) -> None:
+        """Affiche l'écran de bienvenue HUD Hacker avec animations et sound design."""
+        from ui.dialogs.welcome_hud import WelcomeHudOverlay
+        if getattr(self, "_welcome_overlay", None) is not None:
+            self._welcome_overlay.show()
+            self._welcome_overlay.raise_()
+            self._relayout()
+            return
+        cw = self.centralWidget()
+        ov = WelcomeHudOverlay(cw, assistant_name=self._assistant_name)
+        self._welcome_overlay = ov
+        ov.engaged.connect(self._on_welcome_engaged)
+        ov.dismissed.connect(self._on_welcome_dismissed)
+        cw.layout().add_role(ov, "welcome")
+        ov.show()
+        ov.raise_()
+        self._relayout()
+
+    def _on_welcome_engaged(self) -> None:
+        self._apply_state("LISTENING")
+        if hasattr(self, "_log") and self._log:
+            self._log.append_log(f"SYS : {self._assistant_name} — noyau initialisé avec succès.")
+
+    def _on_welcome_dismissed(self) -> None:
+        ov = getattr(self, "_welcome_overlay", None)
+        if ov is not None:
+            ov.hide()
+            ov.deleteLater()
+            self._welcome_overlay = None
+        self._relayout()

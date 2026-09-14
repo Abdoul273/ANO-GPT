@@ -237,3 +237,8 @@ class HudOverlayLayout(QLayout):
                 scrim.raise_()
             overlay.setGeometry((W - ow) // 2, (H - oh) // 2, ow, oh)
             overlay.raise_()
+
+        welcome = self._widget("welcome")
+        if welcome is not None and welcome.isVisible():
+            welcome.setGeometry(full)
+            welcome.raise_()
