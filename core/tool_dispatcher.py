@@ -677,7 +677,11 @@ TOOL_DECLARATIONS = [
             "coordinates never do. "
             "For 'ma position/où suis-je', omit query and lat/lon so the tool requests "
             "a fresh phone GPS reading. Never pass a guessed city such as Conakry for "
-            "the user's own position. "
+            "the user's own position — the result already names the precise "
+            "neighbourhood/quartier, not just the city. A follow-up like 'dans quel "
+            "quartier ?' right after showing the user's own position is answered from "
+            "THAT result, already in context — never call web_search for it, a search "
+            "engine cannot know where the user is standing right now. "
             "Speak about what's shown on the map in your reply (distance, address, etc.) "
             "— don't just open it silently. "
             "Two render styles exist, switchable anytime by voice: 'carte' (street-level "
@@ -3661,9 +3665,28 @@ class ToolDispatcher:
                                 )
                             return f"Impossible de localiser « {query} » sur la carte."
                         lat, lon = coords
+                    quartier = ""
+                    if not query:
+                        # « Voici ta position » sans le quartier n'a jamais de
+                        # sens : le modèle n'avait alors que des coordonnées
+                        # brutes et devinait « Conakry » depuis sa culture
+                        # générale plutôt que de le dire précisément — et une
+                        # question de suivi (« dans quel quartier ? ») partait
+                        # en recherche web, qui ne peut évidemment pas savoir
+                        # où l'utilisateur se trouve en ce moment.
+                        from core.geolocation import reverse_geocode
+                        place = reverse_geocode(lat, lon) or {}
+                        quartier = str(place.get("city") or "")
+                        if quartier:
+                            label = f"{quartier}, {place.get('country_name') or 'votre position'}"
                     self.ui.show_map(label, lat, lon, radius_km, view=view)
                     style = {"globe": " (vue globe)", "leaflet": " (vue carte)"}.get(view, "")
-                    return f"Carte affichée, centrée sur {label} ({lat:.4f}, {lon:.4f}){style}."
+                    where = f"quartier {quartier}, " if quartier else ""
+                    return (
+                        f"Carte affichée, centrée sur {label} ({where}coordonnées "
+                        f"{lat:.4f}, {lon:.4f}){style}. Dis le quartier précis à "
+                        f"l'utilisateur s'il est connu, pas seulement la ville."
+                    )
 
                 result = await loop.run_in_executor(None, _do_show_map)
 

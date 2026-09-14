@@ -169,7 +169,7 @@ def test_loutil_show_map_expose_un_parametre_vue():
 
 def test_le_handler_traduit_globe_ou_carte_en_mode_rendu():
     start = DISPATCHER.index('elif name == "show_map":')
-    block = DISPATCHER[start:start + 2200]
+    block = DISPATCHER[start:start + 3600]
     assert '"globe" if "globe" in _view_arg' in block
     assert "view=view" in block
 
@@ -250,3 +250,22 @@ def test_le_chien_de_garde_audio_nignore_pas_un_outil_en_cours():
     block = DISPATCHER[start:start + 4500]
     assert "_last_model_turn_data_at" in block
     assert "heartbeat" in block
+
+
+# ── « Montre ma position » doit nommer le quartier, pas juste la ville ─────
+# « Conakry » venait de la culture générale du modèle (coordonnées brutes
+# sans nom de lieu précis dans le résultat de l'outil) ; une question de
+# suivi (« dans quel quartier ? ») partait alors en recherche web, qui ne
+# peut évidemment pas savoir où l'utilisateur se trouve en ce moment.
+
+def test_ma_position_resout_le_quartier_pas_seulement_la_ville():
+    start = DISPATCHER.index('elif name == "show_map":')
+    block = DISPATCHER[start:start + 3500]
+    assert "reverse_geocode" in block
+    assert "quartier" in block
+
+
+def test_show_map_interdit_le_repli_web_search_pour_le_quartier():
+    start = DISPATCHER.index('"name": "show_map"')
+    block = DISPATCHER[start:start + 2000]
+    assert "never call web_search" in block.casefold()
