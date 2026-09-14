@@ -1083,7 +1083,7 @@ class NavigationManager:
         origin_coords: Optional[tuple[float, float]] = None,
     ) -> tuple[str, Optional[NavigationRoute]]:
         """Lance automatiquement la navigation vers un lieu ou une adresse."""
-        from core.geolocation import geocode, get_precise_user_coords, get_user_coords
+        from core.geolocation import geocode, get_precise_user_coords
 
         dest_coords = geocode(query)
         if not dest_coords:
@@ -1092,9 +1092,18 @@ class NavigationManager:
         if origin_coords:
             origin = origin_coords
         else:
-            orig = get_precise_user_coords() or get_user_coords()
+            # Jamais de repli sur la position IP ou une ville configurée : un
+            # itinéraire calculé depuis un point à des milliers de km de la
+            # vraie position n'est pas une navigation dégradée, c'est une
+            # navigation fausse. Voir show_map/find_nearby, même règle.
+            orig = get_precise_user_coords(max_age_s=300.0)
             if not orig:
-                return "Impossible de déterminer votre position de départ GPS.", None
+                return (
+                    "Je n'ai aucune position GPS précise de moins de cinq minutes pour "
+                    "démarrer le guidage. Ouvrez ANO Remote sur votre téléphone, "
+                    "autorisez la localisation, puis redemandez ; je n'utiliserai pas "
+                    "une position IP ou une ancienne position comme point de départ."
+                ), None
             origin = orig
 
         route = self.start_navigation(

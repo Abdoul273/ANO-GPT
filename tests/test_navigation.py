@@ -562,3 +562,37 @@ def test_hotspots_do_not_call_get_event_loop():
     for relative in files:
         text = (root / relative).read_text(encoding="utf-8")
         assert "asyncio.get_event_loop()" not in text, relative
+
+
+# ── L'origine du guidage ne doit jamais venir d'une position IP ────────────
+# « guide-moi vers Kaloum » a déjà démarré depuis une position IP tombée à
+# 2900 km du vrai départ (la géolocalisation IP est notoirement imprécise,
+# parfois au pays près) — silencieuse, sans avertissement, un itinéraire
+# absurde en résultait.
+
+import core.navigation as nav_module
+
+
+def test_le_guidage_refuse_une_origine_sans_gps_precis(monkeypatch):
+    import core.geolocation as geo_module
+    monkeypatch.setattr(geo_module, "get_precise_user_coords", lambda *a, **k: None)
+    monkeypatch.setattr(geo_module, "geocode", lambda q: (9.5, -13.7))
+    mgr = nav_module.NavigationManager()
+    monkeypatch.setattr(mgr, "start_navigation", lambda **k: (_ for _ in ()).throw(
+        AssertionError("start_navigation ne doit pas être appelée sans origine fiable")
+    ))
+
+    msg, route = mgr.start_navigation_to_query("Kaloum")
+
+    assert route is None
+    assert "position IP" in msg
+    assert "GPS" in msg
+
+
+def test_le_guidage_najamais_de_repli_ip_meme_implicite():
+    """get_user_coords (IP/ville configurée) ne doit plus apparaître dans le
+    chemin de démarrage — seul un relevé GPS précis et frais est accepté."""
+    import inspect
+    source = inspect.getsource(nav_module.NavigationManager.start_navigation_to_query)
+    assert "get_user_coords" not in source
+    assert "get_precise_user_coords" in source

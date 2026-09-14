@@ -207,3 +207,18 @@ def test_le_panneau_pays_se_propage_jusquau_rendu():
     assert "country" in body_on_show_map
     body_render = _method("_render_map")
     assert "country=country" in body_render
+
+
+# ── Le guidage demande un relevé GPS frais, comme « montre ma position » ────
+
+def test_navigate_redemande_le_gps_avant_de_demarrer():
+    start = DISPATCHER.index('elif name == "navigate":')
+    block = DISPATCHER[start:start + 900]
+    assert "request_fresh_location" in block
+
+
+def test_navigate_ne_redemande_pas_le_gps_pour_un_statut_ou_un_arret():
+    """Inutile de réveiller le téléphone pour « où en est l'itinéraire ? »."""
+    start = DISPATCHER.index('elif name == "navigate":')
+    block = DISPATCHER[start:start + 900]
+    assert '"stop"' in block and '"status"' in block

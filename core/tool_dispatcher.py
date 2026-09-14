@@ -3686,6 +3686,17 @@ class ToolDispatcher:
                 result = await loop.run_in_executor(None, _do_show_country)
 
             elif name == "navigate":
+                # Démarrer un guidage depuis une position IP ou périmée a déjà
+                # renvoyé des distances à des milliers de km de la réalité :
+                # même demande de relevé frais qu'au premier « montre ma
+                # position ». Un statut/arrêt n'a pas besoin de position.
+                _nav_action = str(args.get("action") or "start").strip().lower()
+                if _nav_action not in (
+                    "stop", "cancel", "end", "close", "quitter", "arreter",
+                    "status", "info", "state", "where", "prochaine",
+                ) and self._dashboard:
+                    await self._dashboard.request_fresh_location(timeout=10.0)
+
                 r = await loop.run_in_executor(
                     None,
                     lambda: navigation_action(
