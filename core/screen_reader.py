@@ -23,10 +23,14 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import re
 import shutil
+from pathlib import Path
 import time
 from dataclasses import dataclass
+
+from core import action_kit as kit
 
 # Sous ce volume, ce que Tesseract a trouvé ne fait pas une réponse : c'est un
 # écran graphique où traînent trois libellés de boutons. L'image vaut mieux.
@@ -40,9 +44,15 @@ MAX_CHARS = 4000
 CACHE_TTL_S = 600.0
 CACHE_SIZE = 8
 
-# Tesseract language config: eng + fra if installed, otherwise eng
-LANGUAGES = "eng+fra"
+# Une seule langue : « fra » lit aussi l'anglais des interfaces, et combiner
+# eng+fra triple le temps de lecture (4,9 s contre 1,8 s sur cette machine).
+LANGUAGES = "fra"
+FALLBACK_LANGUAGE = "eng"
+OCR_TIMEOUT_S = 8
 OCR_MIN_SIDE = 900
+# Au-delà, Tesseract passe de ~1,5 s à ~5 s sur cette machine sans lire plus
+# de mots : un écran 1800 px reste lisible réduit à 1400.
+OCR_MAX_SIDE = 1400
 DARK_MEAN = 90.0
 
 # Questions qui portent sur l'aspect, pas sur le texte : là, l'OCR ne répondra
@@ -59,19 +69,42 @@ _cache: dict[str, tuple[float, str]] = {}
 
 _available: bool | None = None
 
+# Données de langue : le paquet Arch système d'abord, sinon les modèles
+# téléchargés dans le dossier utilisateur (installables sans droits root).
+_USER_TESSDATA = Path.home() / ".local" / "share" / "tessdata"
+_SYSTEM_TESSDATA = Path("/usr/share/tessdata")
+
+
+def _tessdata_dir() -> Path | None:
+    """Premier dossier qui contient toutes les langues demandées."""
+    wanted = [f"{lang}.traineddata" for lang in LANGUAGES.split("+")]
+    for base in (_SYSTEM_TESSDATA, _USER_TESSDATA):
+        if all((base / name).exists() for name in wanted):
+            return base
+    for base in (_SYSTEM_TESSDATA, _USER_TESSDATA):
+        if (base / f"{FALLBACK_LANGUAGE}.traineddata").exists():
+            return base
+    return None
+
+
+def _ocr_env() -> dict[str, str]:
+    base = _tessdata_dir()
+    return {"TESSDATA_PREFIX": str(base)} if base else {}
+
 
 def available() -> bool:
     """Vrai si l'OCR local est utilisable ici."""
     global _available
     if _available is None:
-        try:
-            import pytesseract  # noqa: F401
-            _available = shutil.which("tesseract") is not None
-        except Exception:
-            _available = False
+        # Le binaire Arch suffit : le petit wrapper Python est facultatif.
+        # Cela garde l'OCR utilisable dans l'environnement Python système
+        # protégé par PEP 668.
+        _available = (
+            shutil.which("tesseract") is not None and _tessdata_dir() is not None
+        )
         if not _available:
-            print("[Vision] OCR local indisponible — les captures partiront "
-                  "en image.")
+            print("[Vision] OCR local indisponible (binaire ou données eng/fra "
+                  "absents) — les captures partiront en image.")
     return _available
 
 
@@ -126,8 +159,12 @@ def prepare_for_ocr(image):
     gray = image.convert("L")
     width, height = gray.size
     side = max(width, height)
+    scale = 1.0
     if side and side < OCR_MIN_SIDE:
         scale = OCR_MIN_SIDE / side
+    elif side > OCR_MAX_SIDE:
+        scale = OCR_MAX_SIDE / side
+    if scale != 1.0:
         try:
             resample = Image.Resampling.LANCZOS
         except AttributeError:
@@ -163,6 +200,30 @@ def _is_readable(text: str) -> bool:
     return len(text) >= MIN_CHARS and len(text.split()) >= MIN_WORDS
 
 
+def _ocr_with_tesseract(image, *, lang: str, psm: int) -> str:
+    """OCR borné, avec pytesseract si présent ou le binaire Arch directement."""
+    config = f"--psm {psm} --oem 1"
+    env = _ocr_env()
+    try:
+        import pytesseract
+        for key, value in env.items():
+            os.environ.setdefault(key, value)
+        return str(pytesseract.image_to_string(image, lang=lang, config=config) or "")
+    except ImportError:
+        buf = io.BytesIO()
+        image.save(buf, format="PNG", optimize=False)
+        result = kit.run(
+            ["tesseract", "stdin", "stdout", "-l", lang, "--psm", str(psm), "--oem", "1"],
+            stdin=buf.getvalue(), binary=True, timeout=OCR_TIMEOUT_S,
+            env={**os.environ, **env},
+        )
+        if result.timed_out:
+            raise TimeoutError(result.reason())
+        if not result.ok:
+            raise RuntimeError(result.reason())
+        return bytes(result.out).decode("utf-8", errors="replace")
+
+
 def read(image_bytes: bytes, question: str = "") -> ScreenRead | None:
     """Lit l'écran. Rend None si l'OCR n'a pas lieu d'être ou n'aboutit pas.
 
@@ -189,21 +250,21 @@ def read(image_bytes: bytes, question: str = "") -> ScreenRead | None:
                           time.monotonic() - started)
 
     try:
-        import pytesseract
         from PIL import Image
 
         with Image.open(io.BytesIO(image_bytes)) as im:
             enhanced = prepare_for_ocr(im)
-            config = "--psm 6 --oem 1"
             try:
-                text = pytesseract.image_to_string(enhanced, lang=LANGUAGES, config=config)
+                text = _ocr_with_tesseract(enhanced, lang=LANGUAGES, psm=6)
+            except TimeoutError:
+                # La machine est saturée : une seconde langue mettrait aussi
+                # longtemps. Le modèle distant prend le relais sans attendre.
+                raise
             except Exception:
-                text = pytesseract.image_to_string(enhanced, lang="eng", config=config)
-            if not _is_readable(text):
+                text = _ocr_with_tesseract(enhanced, lang=FALLBACK_LANGUAGE, psm=6)
+            if not _is_readable(text) and (time.monotonic() - started) < OCR_TIMEOUT_S:
                 try:
-                    retry = pytesseract.image_to_string(
-                        enhanced, lang=LANGUAGES, config="--psm 4 --oem 1",
-                    )
+                    retry = _ocr_with_tesseract(enhanced, lang=LANGUAGES, psm=4)
                     if len(retry.strip()) > len(text.strip()):
                         text = retry
                 except Exception:

@@ -103,6 +103,12 @@ _MODEL_FAILURE_MARKERS = (
 )
 
 _working_vision_model: str = ""
+_gemini_vision_quota_until = 0.0
+_GEMINI_QUOTA_HOLD_S = 10 * 60.0
+_GEMINI_REQUEST_TIMEOUT_MS = 8_000
+# Budget total vu du répartiteur : 35 s pour screen_process. Capture ≈ 1 s,
+# OCR local ≤ 8 s, Azure ≤ 16 s, repli Gemini ≤ 8 s — jamais au-delà.
+_AZURE_VISION_TIMEOUT_S = 16
 
 _EXPERT_HINTS = (
     "analyse", "explique", "schema", "schéma", "graphique", "courbe",
@@ -384,6 +390,13 @@ def _model_unavailable(exc: BaseException) -> bool:
     return any(marker in message for marker in _MODEL_FAILURE_MARKERS)
 
 
+def _quota_exhausted(exc: BaseException) -> bool:
+    message = " ".join(str(exc).casefold().split())
+    return any(marker in message for marker in (
+        "resource_exhausted", "quota exceeded", "rate_limit_exceeded", "429",
+    ))
+
+
 # Une pointe de charge chez Google dure quelques secondes. Traverser toute la
 # cascade sans jamais réessayer laissait l'utilisateur sans réponse visuelle
 # alors qu'une seconde tentative aurait suffi.
@@ -399,10 +412,14 @@ def _is_transient(exc: BaseException) -> bool:
 def _call_gemini_vision(client: Any, gtypes: Any, contents: list, models: Sequence[str],
                         *, azure_relay: bool = True) -> Tuple[Any, str]:
     """Essaie Pro puis Flash. Mémorise le premier modèle qui répond."""
-    global _working_vision_model
+    global _working_vision_model, _gemini_vision_quota_until
     last_exc: Optional[BaseException] = None
     retried: set = set()
     models = list(models)
+    if azure_relay and time.monotonic() < _gemini_vision_quota_until:
+        azure = _azure_vision_relay(contents, RuntimeError("quota Gemini temporairement suspendu"))
+        if azure is not None:
+            return azure
     for model in models:
         try:
             config = gtypes.GenerateContentConfig(
@@ -417,11 +434,25 @@ def _call_gemini_vision(client: Any, gtypes: Any, contents: list, models: Sequen
                 resp = client.models.generate_content(model=model, contents=contents)
             except Exception as exc:
                 last_exc = exc
+                if azure_relay and _quota_exhausted(exc):
+                    _gemini_vision_quota_until = time.monotonic() + _GEMINI_QUOTA_HOLD_S
+                    azure = _azure_vision_relay(contents, exc)
+                    if azure is not None:
+                        return azure
+                if _quota_exhausted(exc):
+                    break
                 if _model_unavailable(exc):
                     continue
                 raise
         except Exception as exc:
             last_exc = exc
+            if azure_relay and _quota_exhausted(exc):
+                _gemini_vision_quota_until = time.monotonic() + _GEMINI_QUOTA_HOLD_S
+                azure = _azure_vision_relay(contents, exc)
+                if azure is not None:
+                    return azure
+            if _quota_exhausted(exc):
+                break
             if _is_transient(exc) and model not in retried:
                 # Surcharge passagère : on redonne sa chance au modèle courant
                 # avant de descendre d'un cran en qualité.
@@ -550,12 +581,17 @@ def analyze_visual_content(
     api_key = _get_api_key()
     resolved_domain = domain or detect_visual_domain(user_query, window_info)
 
-    if not api_key:
+    cfg = _load_cfg()
+    azure_configured = bool(
+        str(cfg.get("azure_openai_endpoint") or "").strip()
+        and str(cfg.get("azure_openai_api_key") or "").strip()
+    )
+    if not api_key and not azure_configured:
         return VisionAnalysisResult(
             domain=resolved_domain,
-            spoken_summary="La clé API Gemini est nécessaire pour l'analyse visuelle multimodale.",
-            detailed_markdown="⚠️ Clé API Gemini introuvable dans `config/api_keys.json`.",
-            hud_card={"title": "👁️ Vision Indisponible", "body": "Clé API absente.", "type": "error"},
+            spoken_summary="Une clé Gemini ou Azure est nécessaire pour l'analyse visuelle.",
+            detailed_markdown="⚠️ Aucun fournisseur de vision n'est configuré.",
+            hud_card={"title": "👁️ Vision Indisponible", "body": "Fournisseur absent.", "type": "error"},
         )
 
     local_text = extracted_text if extracted_text is not None else ""
@@ -569,10 +605,6 @@ def analyze_visual_content(
         except Exception:
             pass
 
-    from google import genai
-    from google.genai import types as gtypes
-
-    client = genai.Client(api_key=api_key)
     system_instruction = _build_domain_system_prompt(resolved_domain)
 
     win_desc = ""
@@ -603,23 +635,51 @@ Fournis ta réponse sous forme d'un objet JSON strict avec :
 ui_targets : boîtes normalisées 0-1000. Vide si rien n'est localisable.
 Rends UNIQUEMENT le JSON."""
 
-    contents = [
-        gtypes.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-        user_prompt,
-    ]
-
     model_used = ""
     try:
-        resp, model_used = _call_gemini_vision(
-            client, gtypes, contents, vision_model_cascade(),
+        # Sur cette installation Azure Vision est disponible et Gemini a un
+        # quota nul. Le fournisseur opérationnel passe donc en premier.
+        from core import azure_specialists
+        raw, azure_model = azure_specialists.vision(
+            image_bytes, mime_type, user_prompt, timeout=_AZURE_VISION_TIMEOUT_S, json_mode=False,
         )
-        data = _parse_vision_json(resp.text)
-    except Exception as exc:
-        data = {
-            "spoken_summary": f"L'analyse visuelle a rencontré une difficulté : {exc}",
-            "key_points": [],
-            "detailed_markdown": f"Erreur lors de l'appel vision : {exc}",
-        }
+        model_used = f"azure:{azure_model}"
+        data = _parse_vision_json(raw)
+    except Exception as azure_exc:
+        print(f"[Vision] Azure direct indisponible, essai Gemini : {azure_exc}")
+        if not api_key:
+            return VisionAnalysisResult(
+                domain=resolved_domain,
+                spoken_summary="Le fournisseur Azure n'a pas répondu et aucun repli Gemini n'est configuré.",
+                detailed_markdown=f"Erreur Azure Vision : {azure_exc}",
+                hud_card={"title": "👁️ Vision Indisponible", "body": "Azure indisponible.", "type": "error"},
+            )
+        try:
+            from google import genai
+            from google.genai import types as gtypes
+
+            # Le SDK réessaie par défaut cinq fois, notamment les 429. Une
+            # tentative bornée suffit avant de rendre une erreur exploitable.
+            client = genai.Client(api_key=api_key, http_options={
+                "timeout": _GEMINI_REQUEST_TIMEOUT_MS,
+                "retry_options": {"attempts": 1},
+            })
+            contents = [
+                gtypes.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                user_prompt,
+            ]
+            resp, model_used = _call_gemini_vision(
+                client, gtypes, contents, vision_model_cascade(), azure_relay=False,
+            )
+            data = _parse_vision_json(resp.text)
+        except Exception as exc:
+            short = " ".join(str(exc).split())[:160]
+            data = {
+                "spoken_summary": "L'analyse visuelle a rencontré une difficulté : "
+                                  "aucun moteur distant n'a répondu à temps.",
+                "key_points": [],
+                "detailed_markdown": f"Erreur Azure : {azure_exc}\n\nErreur Gemini : {short}",
+            }
 
     spoken = str(data.get("spoken_summary") or "").strip() or "Analyse visuelle terminée."
     detailed = str(data.get("detailed_markdown") or "").strip() or spoken

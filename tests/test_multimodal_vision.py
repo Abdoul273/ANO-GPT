@@ -2,6 +2,7 @@
 
 from unittest.mock import patch, MagicMock
 from core.screen_capture import WindowInfo
+from core import multimodal_vision as mv
 from core.multimodal_vision import (
     detect_visual_domain,
     _build_domain_system_prompt,
@@ -66,6 +67,7 @@ def test_analyze_visual_content_mock():
     mock_client.models.generate_content.return_value = mock_resp
 
     with patch("core.multimodal_vision._get_api_key", return_value="fake_key"), \
+         patch("core.azure_specialists.vision", side_effect=RuntimeError("Azure indisponible")), \
          patch("google.genai.Client", return_value=mock_client), \
          patch("core.screen_reader.read", return_value=None):
         res = analyze_visual_content(
@@ -80,6 +82,30 @@ def test_analyze_visual_content_mock():
         assert "architecture microservices" in res.spoken_summary
         assert len(res.key_points) == 3
         assert res.hud_card["title"] == "🏗️ Architecture & Réseau"
+
+
+def test_analyze_visual_content_prefers_configured_azure(monkeypatch):
+    monkeypatch.setattr(mv, "_get_api_key", lambda: "gemini-present")
+    monkeypatch.setattr(mv, "_load_cfg", lambda: {
+        "azure_openai_endpoint": "https://example.invalid",
+        "azure_openai_api_key": "configured",
+    })
+    monkeypatch.setattr(
+        "core.azure_specialists.vision",
+        lambda *args, **kwargs: (
+            '{"spoken_summary":"Azure voit le terminal.","key_points":[]}',
+            "fast-vision",
+        ),
+    )
+
+    result = analyze_visual_content(
+        image_bytes=b"fake_jpeg",
+        user_query="Que vois-tu ?",
+        extracted_text="",
+    )
+
+    assert result.spoken_summary == "Azure voit le terminal."
+    assert result.model_used == "azure:fast-vision"
 
 
 def test_inspect_screen_live():
@@ -120,6 +146,47 @@ def test_vision_model_cascade_puts_pro_first():
         "vision_model_fallback": "gemini-flash-latest",
     })
     assert custom[0] == "gemini-3-pro-preview"
+
+
+def test_quota_gemini_switches_immediately_to_azure(monkeypatch):
+    calls = []
+
+    class Models:
+        def generate_content(self, **kwargs):
+            calls.append(kwargs["model"])
+            raise RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded")
+
+    client = MagicMock(models=Models())
+    gtypes = MagicMock()
+    monkeypatch.setattr(mv, "_gemini_vision_quota_until", 0.0)
+    monkeypatch.setattr(
+        mv, "_azure_vision_relay",
+        lambda contents, cause: (MagicMock(text='{"spoken_summary":"Azure répond"}'), "azure:test"),
+    )
+
+    _response, model = mv._call_gemini_vision(
+        client, gtypes, ["image", "prompt"], ["gemini-a", "gemini-b"],
+    )
+
+    assert model == "azure:test"
+    assert calls == ["gemini-a"]
+    assert mv._gemini_vision_quota_until > 0
+
+
+def test_quota_hold_skips_gemini_on_next_screen_request(monkeypatch):
+    client = MagicMock()
+    monkeypatch.setattr(mv, "_gemini_vision_quota_until", mv.time.monotonic() + 60)
+    monkeypatch.setattr(
+        mv, "_azure_vision_relay",
+        lambda contents, cause: (MagicMock(text='{"spoken_summary":"Azure répond"}'), "azure:test"),
+    )
+
+    _response, model = mv._call_gemini_vision(
+        client, MagicMock(), ["image", "prompt"], ["gemini-a"],
+    )
+
+    assert model == "azure:test"
+    client.models.generate_content.assert_not_called()
 
 
 def test_capture_policy_keeps_text_sharp():

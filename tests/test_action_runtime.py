@@ -228,6 +228,49 @@ def test_repartiteur_central_borne_une_action_bloquee(monkeypatch):
     assert "délai" in response.response["result"]
 
 
+def test_timeout_vision_libere_le_verrou_et_interdit_la_relance_automatique(monkeypatch):
+    import core.action_runtime as runtime_module
+    import main
+
+    class UI:
+        muted = False
+        def write_log(self, _text): pass
+        def set_state(self, _state): pass
+
+    class FunctionResponse:
+        def __init__(self, **kwargs): self.__dict__.update(kwargs)
+
+    declarations = [{
+        "name": "screen_process",
+        "parameters": {"type": "OBJECT", "properties": {}, "required": []},
+    }]
+    jarvis = main.JarvisLive.__new__(main.JarvisLive)
+    jarvis.ui = UI()
+    jarvis._tool_session_memory = {}
+    jarvis._action_runtime = ActionRuntime(declarations)
+    jarvis._vision_busy = True
+    jarvis._pending_vision = (b"old", "image/jpeg", "old", "screen")
+    jarvis._interrupted = False
+    jarvis._noise_turn = False
+    jarvis._event_bus = None
+
+    async def verified(_name): return ""
+    async def blocked(*_args): await asyncio.sleep(1)
+    jarvis._verify_sensitive_voice_command = verified
+    jarvis._execute_tool_impl = blocked
+    monkeypatch.setitem(runtime_module._POLICIES, "screen_process", ActionPolicy(timeout_s=0.01))
+    monkeypatch.setattr(main, "types", builtin_types.SimpleNamespace(FunctionResponse=FunctionResponse))
+    monkeypatch.setattr(main.tool_stats, "record", lambda *a, **k: None)
+
+    response = asyncio.run(jarvis._execute_tool(
+        builtin_types.SimpleNamespace(id="vision", name="screen_process", args={})
+    ))
+
+    assert jarvis._vision_busy is False
+    assert jarvis._pending_vision is None
+    assert "ne relance pas automatiquement" in response.response["result"]
+
+
 def test_lot_de_lectures_independantes_est_execute_en_parallele():
     import main
 
@@ -282,3 +325,14 @@ def test_lot_avec_action_mutante_conserve_lordre():
 
     assert responses == ["a", "b"]
     assert peak == 1
+
+
+@pytest.mark.parametrize("value", ["invalide", "x" * 100])
+def test_recovered_text_still_obeys_schema(value):
+    runtime = ActionRuntime([{"name": "choose", "parameters": {
+        "properties": {"choice": {"type": "STRING", "enum": ["yes", "no"], "maxLength": 3}},
+        "required": ["choice"],
+    }}])
+    with pytest.raises(ActionValidationError):
+        runtime.prepare("choose", {"invented": value})
+    assert runtime.prepare("choose", {"invented": "yes"}) == {"choice": "yes"}

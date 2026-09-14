@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from pathlib import Path
 
 import requests
@@ -120,8 +121,9 @@ def text(role: str, prompt: str, *, system: str = "", timeout: int = 90) -> str:
 # Vitesse d'abord : les modèles « raisonnement profond » (gpt-6-astra) mettent
 # 30 s sur une image, l'utilisateur attend devant la caméra. Ils ne servent
 # qu'en dernier recours.
-_VISION_CASCADE = ("gpt-5.1", "anogpt-brain", "gpt-5.6-terra", "gpt-5-mini", "gpt-6-astra")
+_VISION_CASCADE = ("anogpt-brain", "gpt-5-mini", "gpt-5.1", "gpt-5.6-terra", "gpt-6-astra")
 _SLOW_FIRST = ("gpt-6",)
+_VISION_PARALLEL = 2
 _VISION_SKIP = ("codex", "image", "sora", "flux", "embedding", "whisper", "tts", "realtime")
 
 
@@ -171,8 +173,11 @@ def vision(image_bytes: bytes, mime: str, prompt: str, *, system: str = "",
         {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
     ]})
-    last = ""
-    for model in models:
+    deadline = time.monotonic() + max(1, int(timeout))
+
+    def _ask(model: str) -> str:
+        """Un déploiement, tout le budget restant. Rend « » s'il n'a rien lu."""
+        remaining = max(1, int(deadline - time.monotonic()))
         field = "max_tokens" if model.lower().startswith("claude-") else "max_completion_tokens"
         payload = {"model": model, "messages": messages, field: 1500, "stream": False}
         if json_mode:
@@ -181,42 +186,54 @@ def vision(image_bytes: bytes, mime: str, prompt: str, *, system: str = "",
             # Décrire une image ne demande pas de longue réflexion : sans ce
             # réglage, un modèle « reasoning » y passe 20 à 30 s.
             payload["reasoning_effort"] = "low"
-        try:
-            response = _post_with_retry(
-                _azure_openai_endpoint(endpoint, model), payload, timeout,
-                headers={"api-key": key}, retries=1,
-            )
-        except Exception as exc:
-            last = f"{model} : {exc}"
-            continue
+        response = _post_with_retry(
+            _azure_openai_endpoint(endpoint, model), payload, remaining,
+            headers={"api-key": key}, retries=0,
+        )
         if response.status_code >= 400:
             body = response.text[:200]
-            last = f"{model} : HTTP {response.status_code} {body}"
             if response.status_code == 400 and ("response_format" in body.lower() or "reasoning" in body.lower()):
                 # Ce déploiement ignore le mode JSON ou l'effort de raisonnement :
                 # on redemande sans ces réglages.
                 payload.pop("response_format", None)
                 payload.pop("reasoning_effort", None)
-                try:
-                    response = _post_with_retry(
-                        _azure_openai_endpoint(endpoint, model), payload, timeout,
-                        headers={"api-key": key}, retries=0,
-                    )
-                except Exception as exc:
-                    last = f"{model} : {exc}"
-                    continue
+                response = _post_with_retry(
+                    _azure_openai_endpoint(endpoint, model), payload,
+                    max(1, int(deadline - time.monotonic())),
+                    headers={"api-key": key}, retries=0,
+                )
                 if response.status_code >= 400:
-                    continue
+                    raise RuntimeError(f"HTTP {response.status_code} {response.text[:200]}")
             else:
-                continue
+                raise RuntimeError(f"HTTP {response.status_code} {body}")
         try:
-            answer = str(response.json().get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+            return str(response.json().get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
         except Exception:
-            answer = ""
-        if answer:
-            return answer, model
-        last = f"{model} : réponse vide"
-    raise RuntimeError(f"Aucun modèle Azure n'a lu l'image ({last}).")
+            return ""
+
+    # La latence Azure varie du simple au triple d'un appel à l'autre : les
+    # deux premiers déploiements partent ensemble et le premier qui répond
+    # gagne. Un fil qui attend le réseau ne coûte rien au GIL.
+    racers = models[:_VISION_PARALLEL]
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=len(racers)) as pool:
+        futures = {pool.submit(_ask, model): model for model in racers}
+        try:
+            for future in as_completed(futures, timeout=max(1, deadline - time.monotonic())):
+                model = futures[future]
+                try:
+                    answer = future.result()
+                except Exception as exc:
+                    errors.append(f"{model} : {exc}")
+                    continue
+                if answer:
+                    for other in futures:
+                        other.cancel()
+                    return answer, model
+                errors.append(f"{model} : réponse vide")
+        except FuturesTimeout:
+            errors.append(f"délai {timeout} s dépassé")
+    raise RuntimeError(f"Aucun modèle Azure n'a lu l'image ({' ; '.join(errors)}).")
 
 
 def image(prompt: str, output_path: Path, *, size: str = "1024x1024", timeout: int = 180) -> bytes:

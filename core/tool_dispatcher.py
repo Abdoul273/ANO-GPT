@@ -11,6 +11,8 @@ Concurrence
 """
 from __future__ import annotations
 
+import logging
+
 import asyncio
 from core.text_clean import strip_emoji_deep
 from pathlib import Path
@@ -1005,14 +1007,7 @@ TOOL_DECLARATIONS = [
                 "selection": {"type": "INTEGER",
                               "description": "Numéro du choix Android, après une liste (1 à 8).",
                               "minimum": 1, "maximum": 8},
-                "auto_reply_authorized": {
-                    "type": "BOOLEAN",
-                    "description": (
-                        "true UNIQUEMENT si, juste après avoir reçu ce SMS, l'utilisateur "
-                        "a explicitement dit qu'il laisse ANO-GPT rédiger ET envoyer la réponse. "
-                        "Sinon omettre ou false : la confirmation humaine reste obligatoire."
-                    ),
-                },
+
             },
             "required": ["target", "body"],
         },
@@ -2316,7 +2311,7 @@ def _task_card_summary(name: str, args: Any) -> str:
 # « annonce avant d'agir » du prompt.
 _ANNOUNCE_BEFORE_TOOLS = frozenset({
     "deep_think", "consult_brain", "web_search", "smart_search", "image_search",
-    "tiktok_coach", "visual_recognition", "music_recognition", "screen_process",
+    "tiktok_coach", "visual_recognition", "music_recognition",
     "generate_image", "generate_video", "generate_document", "download_music",
     "youtube_video", "file_search", "file_processor", "background_tasks", "dev_agent",
     "simulate_decision", "flight_finder", "find_nearby", "navigate",
@@ -2458,7 +2453,6 @@ class ToolDispatcher:
         target = str(args.get("target") or "").strip()
         body = str(args.get("body") or "").strip()
         selection = int(args.get("selection") or 0)
-        auto_reply_authorized = args.get("auto_reply_authorized") is True
         if not target:
             return "Indiquez le destinataire du SMS."
         if not body:
@@ -2474,16 +2468,12 @@ class ToolDispatcher:
             future = asyncio.run_coroutine_threadsafe(
                 self._dashboard.request_phone_sms(target, body, selection), loop
             )
-            return _render_phone_outcome(future.result(timeout=40.0),
-                                         "Commande SMS traitée.")
-
-        # Le troisième mode de réponse est volontairement étroit : ce drapeau
-        # ne peut être posé par le modèle qu'après l'autorisation verbale
-        # explicite de l'utilisateur pour le SMS qui vient d'être annoncé.
-        # Il ne mémorise aucune préférence et ne transforme donc jamais les
-        # futurs messages en réponses automatiques.
-        if auto_reply_authorized:
-            return _send()
+            try:
+                outcome = future.result(timeout=40.0)
+            except TimeoutError:
+                future.cancel()
+                return "Délai SMS dépassé : statut inconnu. Vérifiez le téléphone avant de réessayer."
+            return _render_phone_outcome(outcome, "Commande SMS traitée.")
 
         return human_confirmation.request(
             "phone:sms",
@@ -2548,11 +2538,23 @@ class ToolDispatcher:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if name == "screen_process":
+                # Un appel HTTP synchrone lancé dans l'exécuteur peut survivre
+                # au timeout asyncio. Son verrou logique ne doit jamais rendre
+                # les demandes suivantes dépendantes de cet ancien appel.
+                self._vision_busy = False
+                self._pending_vision = None
             # Une erreur de paramètres ou un circuit déjà ouvert n'est pas une
             # panne de l'outil et ne doit pas prolonger sa suspension.
             if not isinstance(exc, ActionRuntimeError):
                 self._action_runtime.note_failure(name)
             message = friendly_runtime_error(name or "inconnue", exc)
+            if name == "screen_process" and isinstance(exc, TimeoutError):
+                message = (
+                    "La capture d'écran a dépassé son délai d'analyse. "
+                    "La vision a été libérée pour la prochaine demande ; "
+                    "ne relance pas automatiquement cette action."
+                )
             # Le modèle a cherché une capacité absente : conserver la demande
             # utilisateur, pas l'hallucination de nom d'outil, pour l'analyse
             # de lacunes. Les pannes d'outils existants restent exclues.
@@ -2686,7 +2688,7 @@ class ToolDispatcher:
                 "L'action a été bloquée ; répète-la clairement.",
             )
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans _verify_sensitive_voice_command")
         return (
             "ACTION NON EXÉCUTÉE : la transcription haute précision ne confirme "
             "pas la phrase entendue par l'agent vocal. Demande simplement à "
@@ -2724,7 +2726,7 @@ class ToolDispatcher:
                 if isinstance(payload, dict):
                     resp.response = strip_emoji_deep(payload)
             except Exception:
-                pass
+                logging.getLogger(__name__).warning("Échec auxiliaire dans run_clean")
             return resp
 
         def start(fc) -> asyncio.Task:
@@ -3462,7 +3464,13 @@ class ToolDispatcher:
                                         mime_type=mime_t,
                                         window_info=_win_info,
                                         metadata=_meta if isinstance(_meta, dict) else {},
-                                        extracted_text=_read.text if _read is not None else None,
+                                        # Le répartiteur vient de tenter l'OCR :
+                                        # « » (et non None) évite de relancer
+                                        # Tesseract 8 s de plus quand il a échoué.
+                                        extracted_text=(
+                                            _read.text if _read is not None
+                                            else ("" if angle != "camera" else None)
+                                        ),
                                     )
 
                                 try:
@@ -3505,13 +3513,25 @@ class ToolDispatcher:
                                     result = _diag.as_tool_result(user_text)
                                     if _faces:
                                         result += "\n\n" + _faces
+                                elif _read is not None and _read.usable:
+                                    # Le distant a lâché mais Tesseract a lu
+                                    # l'écran : c'est une vraie réponse, pas
+                                    # une panne à annoncer.
+                                    self._pending_vision = None
+                                    self._vision_busy = False
+                                    result = _read.as_tool_result(user_text)
                                 else:
-                                    self._pending_vision = (img_b, mime_t, user_text, angle)
+                                    self._pending_vision = None
+                                    self._vision_busy = False
+                                    local_hint = ""
+                                    if _read is not None and _read.text:
+                                        local_hint = f"\n\nTexte local lisible :\n{_read.text[:2500]}"
                                     result = (
-                                        f"[VISION_ACTIVE] {_stall.capitalize()} captured. "
-                                        f"Immediately say ONE short natural sentence in the user's own language, "
-                                        f"telling them you are looking at their {_stall} right now. "
-                                        f"Do NOT describe or guess content — the actual image arrives in the NEXT message."
+                                        f"[VISION_INDISPONIBLE] {_stall.capitalize()} capturé, "
+                                        "mais aucun moteur distant n'a terminé l'analyse. "
+                                        "Informe l'utilisateur en une phrase factuelle, sans inventer "
+                                        "le contenu et sans rappeler automatiquement screen_process."
+                                        + local_hint
                                     )
 
             elif name == "camera_control":
