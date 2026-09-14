@@ -1,10 +1,11 @@
 # Localisation et recherche de lieux
 
-## Une seule carte
+## Une seule carte, deux rendus
 
 ANO-GPT n'affiche qu'**une** carte : le conteneur plein cadre. Elle sert à la
 fois pour un point unique (« montre-moi Kaloum ») et pour une liste de
-résultats, épinglés et numérotés.
+résultats, épinglés et numérotés — et depuis 2026-09-14, elle a deux moteurs
+de rendu choisis par contexte, jamais deux cartes séparées.
 
 Auparavant deux cartes coexistaient : le conteneur plein cadre affichait une
 iframe OpenStreetMap claire avec un seul marqueur, tandis que les résultats de
@@ -13,9 +14,56 @@ recouvrait le grand, et les deux rendus n'avaient rien en commun.
 
 | Outil vocal | Effet |
 | --- | --- |
-| `show_map` | centre la grande carte sur un point |
+| `show_map` | centre la grande carte sur un point, nomme le quartier réel |
+| `show_country_info` | fiche flottante pour n'importe quel pays du monde |
 | `find_nearby` | épingle des résultats dans la même carte |
+| `navigate` | guidage GPS pas-à-pas parlé |
 | `close_map` | referme le conteneur |
+
+## Carte (Leaflet) ou globe (globe.gl) — au choix
+
+Par défaut, `show_map` affiche la carte de rues (Leaflet) — comme avant.
+Un second rendu existe : un globe 3D « world monitor » (textures nuit/relief/
+étoiles réelles, tir radar à l'arrivée), pour l'aperçu et les recherches.
+Il **ne remplace jamais** la carte de rues pour le guidage pas-à-pas : un
+globe n'a pas de tuiles de rue, donc dès qu'un guidage démarre, la page
+recharge automatiquement en Leaflet, quelle que soit la vue affichée avant.
+
+Trois façons de basculer entre les deux, toutes équivalentes :
+
+- **bouton d'en-tête** — 🌐 GLOBE / 🗺️ CARTE, en haut à droite de la carte ;
+  rejoue la même position/les mêmes lieux dans l'autre rendu, sans nouvelle
+  requête GPS ;
+- **à la voix, en le demandant** — « montre ça en globe », « passe en
+  carte », « vue satellite » (paramètre `view` de `show_map` /
+  `show_country_info` : `"carte"` ou `"globe"`) ;
+- **à la voix, implicitement** — sans rien préciser, la vue déjà affichée à
+  l'écran est conservée d'un appel à l'autre.
+
+Le globe ne tourne jamais tout seul en continu : une animation en boucle
+coûte le CPU au thread audio sur une machine à deux cœurs (même règle que la
+grille CSS de la carte Leaflet, coupée pour la même raison). Il reste
+manipulable à la souris/au doigt à tout moment (glisser pour orbiter,
+molette pour zoomer) — seul le mouvement *automatique* est absent.
+
+## Fiche pays — n'importe lequel, pas seulement la Guinée
+
+« montre-moi les infos sur le Japon », « météo au Sénégal en ce moment »,
+« capitale du Brésil » → `show_country_info(country=...)`. Sans pays précisé,
+la fiche porte sur la Guinée par défaut.
+
+Affichée en panneau flottant en haut à droite (carte ou globe, même style) :
+drapeau, capitale, population, monnaie, langues (en français), fuseau
+horaire, superficie, pays frontaliers, indicatif téléphonique, météo actuelle
+à la capitale.
+
+Sources, sans clé API : identité du pays (capitale, monnaie, langues,
+frontières…) depuis un jeu de données local vendorisé
+(`config/countries.json`, 250 pays, licence ODbL — voir
+`config/countries.json.LICENSE`), parce que restcountries.com a fermé son
+accès libre en 2026. Population (Banque mondiale) et météo (Open-Meteo) sont
+les seules données récupérées en direct — la fiche reste utile même si l'une
+des deux échoue.
 
 ## Sources de recherche
 
@@ -69,16 +117,46 @@ L'ancienne version n'acceptait que huit catégories anglaises (`electronics`,
 
 ## D'où vient la position
 
-`core/geolocation.py`, de la plus précise à la plus vague :
+`core/geolocation.py` connaît deux niveaux de précision, et ne les confond
+jamais :
 
-1. GPS du téléphone via ANO Remote (~10 m) ;
-2. position IP (quartier, souvent fausse en mobile) ;
-3. ville configurée dans `api_keys.json` ;
-4. pays.
+- **`get_precise_user_coords()`** — GPS réel du téléphone via ANO Remote
+  uniquement (~10 m), jamais plus vieux que l'âge demandé. C'est la seule
+  source acceptée pour `show_map` (« ma position »), `find_nearby` (« autour
+  de moi ») et `navigate` (point de départ du guidage). Sans relevé frais,
+  ces trois outils **refusent** et le disent explicitement — ils ne
+  retombent plus jamais sur une position IP ou une ville configurée. Une
+  navigation « guide-moi vers Kaloum » démarrée depuis une position IP a
+  déjà annoncé 2900 km d'écart : ce n'est pas une dégradation acceptable.
+- **`get_user_coords()`** — position IP ou ville configurée en repli, pour
+  des usages où l'approximation est admissible (météo par défaut). Jamais
+  utilisée pour dire à l'utilisateur où il est.
 
-Aucun repli codé en dur : sans position exploitable, l'assistant le dit. Une
-position inventée renverrait des commerces à des milliers de kilomètres sans
-que rien ne le signale.
+`navigate` redemande activement un relevé GPS au téléphone avant de démarrer
+(sauf pour un statut ou un arrêt), avec le même refus explicite si rien
+d'assez frais n'arrive.
+
+## Le nom du lieu, pas juste les coordonnées
+
+`reverse_geocode(lat, lon)` (Nominatim/OSM, sans clé) traduit des
+coordonnées en quartier + pays — utilisé par `show_map` pour que « montre ma
+position » nomme le quartier réel plutôt qu'une ville devinée par le modèle
+depuis sa culture générale. Deux garde-fous, après qu'un mauvais résultat mis
+en cache soit resté faux indéfiniment :
+
+- **TTL de 30 jours** sur le cache (`config/geocode_cache.json`) — un
+  résultat erroné peut désormais se corriger tout seul ;
+- **rejet des réponses trop éloignées** — si Nominatim recale sur une
+  feature à plus de 25 km du point demandé (index clairsemé en zone rurale),
+  la réponse est écartée plutôt que d'annoncer un lieu faux.
+
+Le géocodage direct (`geocode(place, country_code=...)`, un nom → des
+coordonnées) accepte un biais pays : sans lui, un nom générique comme
+« Kaloum » (qui existe aussi ailleurs dans le monde) a déjà répondu un
+village à des milliers de km plutôt que le quartier de Conakry. `navigate`
+déduit ce pays de la position de départ déjà connue. Repli sur Nominatim si
+Open-Meteo (le géocodeur principal, orienté villes) ne connaît pas le lieu à
+cette échelle — un quartier ou une commune, typiquement.
 
 ## Rendu
 
