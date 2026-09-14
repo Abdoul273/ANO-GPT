@@ -122,3 +122,36 @@ def test_une_interruption_confirmee_prend_moins_de_250_ms():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# ── Coupure automatique à la voix, désactivable par réglage ────────────────
+# « je veux enlever le système barge-in, je préfère attendre que ANO-GPT
+# finisse de parler » — un faux positif (bruit de fond, parole hors
+# contexte) coupait ANO en pleine phrase sans que l'utilisateur ne le
+# demande. Échap et le bouton Interrompre restent le seul recours voulu.
+
+def test_barge_in_active_par_defaut(monkeypatch):
+    from core.audio_engine import barge_in_enabled
+
+    monkeypatch.setattr("config.get_config", lambda: {})
+    assert barge_in_enabled() is True
+
+
+def test_barge_in_desactivable_par_config(monkeypatch):
+    from core.audio_engine import barge_in_enabled
+
+    monkeypatch.setattr(
+        "config.get_config", lambda: {"voice_barge_in_enabled": False}
+    )
+    assert barge_in_enabled() is False
+
+
+def test_les_deux_points_de_demarrage_respectent_le_reglage():
+    """Les deux chemins (Live et capture Mark-LII) doivent vérifier le
+    réglage avant d'ouvrir le flux d'écoute — un seul oublié laisserait le
+    barge-in actif malgré le réglage désactivé."""
+    import inspect
+    import core.audio_engine as ae
+
+    src_main = inspect.getsource(ae)
+    assert src_main.count("barge_in_enabled()") >= 2

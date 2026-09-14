@@ -135,3 +135,23 @@ cran, `core/audio_vad.py` → `VADConfig.webrtc_mode`).
 
 Tous les tests automatisés passent (`pytest`, Qt hors écran) ; les points
 marqués « non vérifié » ci-dessus demandent un vrai test sur cette machine.
+
+## 6. Couper le barge-in (interruption automatique à la voix)
+
+« stop », « écoute », « arrête-toi » coupaient ANO en pleine phrase dès que
+ces mots étaient (ou semblaient) entendus — y compris parfois à tort. Un
+réglage permet de désactiver cette coupure automatique et de garder
+uniquement Échap / le bouton Interrompre comme moyens volontaires de couper
+la voix :
+
+```json
+// config/api_keys.json
+{
+  "voice_barge_in_enabled": false
+}
+```
+
+**Déjà mis à `false` dans ta config actuelle.** Redémarre l'appli pour que ça
+prenne effet ; le journal affiche alors « coupure automatique à la voix
+désactivée » au démarrage. Pour la réactiver, remettre `true` ou supprimer la
+ligne (le défaut est activé).

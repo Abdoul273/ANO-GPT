@@ -47,6 +47,21 @@ import numpy as np
 
 from core import audio_router
 from core.barge_in import InterruptPhraseDetector, LocalBargeInListener, hold_live_audio
+
+
+def barge_in_enabled() -> bool:
+    """Faux si l'utilisateur a demandé de ne plus couper ANO en pleine phrase.
+
+    Réglage : ``config/api_keys.json`` → ``"voice_barge_in_enabled": false``.
+    Défaut à vrai (comportement historique) ; le bouton Interrompre et
+    Échap restent actifs dans tous les cas, seule la coupure automatique
+    à la voix (« stop », « écoute »…) est concernée.
+    """
+    try:
+        from config import get_config
+        return bool(get_config().get("voice_barge_in_enabled", True))
+    except Exception:
+        return True
 from core.echo_canceller import get_full_duplex_filter
 from core.event_bus import AudioCaptureFrameEvent, BargeInDetectedEvent
 from core.speech_sync import (
@@ -1421,6 +1436,13 @@ class AudioEngine:
             """
             if not raw_name:
                 return
+            if not barge_in_enabled():
+                self.ui.write_log(
+                    "SYS : coupure automatique à la voix désactivée "
+                    "(voice_barge_in_enabled=false) — seuls Échap et le "
+                    "bouton Interrompre coupent ANO en pleine phrase."
+                )
+                return
 
             def _loader() -> None:
                 nonlocal _barge_listener
@@ -1607,6 +1629,13 @@ class AudioEngine:
         qu'ANO dit ne part au modèle. Tout se charge en arrière-plan.
         """
         if not raw_name or getattr(self, "_barge_listener", None) is not None:
+            return
+        if not barge_in_enabled():
+            self.ui.write_log(
+                "SYS : coupure automatique à la voix désactivée "
+                "(voice_barge_in_enabled=false) — seuls Échap et le "
+                "bouton Interrompre coupent ANO en pleine phrase."
+            )
             return
 
         def _speaking_now() -> bool:

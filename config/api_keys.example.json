@@ -66,5 +66,6 @@
   "user_country_name": "Guinée",
   "user_lang": "fr",
   "user_city": "Conakry",
-  "live_end_silence_ms": 700
+  "live_end_silence_ms": 700,
+  "voice_barge_in_enabled": true
 }
