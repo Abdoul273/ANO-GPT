@@ -257,3 +257,23 @@ def test_le_panneau_pays_affiche_les_champs_enrichis():
     assert "japonais" in html
     assert "377 930 km²" in html
     assert "+81" in html
+
+
+def test_le_globe_ne_tourne_jamais_tout_seul():
+    """Machine à deux cœurs : une rotation continue coûte le micro, comme
+    pour la grille CSS de la carte Leaflet — même règle, même raison."""
+    html = render_globe("Test", CONAKRY, places=[])
+    assert "autoRotate = false" in html
+
+
+def test_le_tir_radar_ne_se_repete_pas():
+    """ringRepeatPeriod <= 0 : un seul ping par point, jamais une boucle."""
+    html = render_globe("Test", CONAKRY, places=[])
+    assert "ringRepeatPeriod(0)" in html
+
+
+def test_le_globe_utilise_des_textures_realistes():
+    html = render_globe("Test", CONAKRY, places=[])
+    assert "earth-night.jpg" in html
+    assert "earth-topology.png" in html
+    assert "night-sky.png" in html

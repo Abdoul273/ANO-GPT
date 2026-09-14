@@ -1097,18 +1097,32 @@ def render_map(
 # tuiles de rue : hors de portée d'un globe. Cette vue ne sert donc que
 # l'aperçu (position, résultats de recherche) ; dès qu'un guidage démarre,
 # ui/window/media_host.py recharge la page en mode Leaflet ci-dessus.
+#
+# Pas de rotation continue : la grande carte Leaflet a explicitement coupé
+# toute animation en boucle (voir plus haut, « machine à deux cœurs ») parce
+# qu'un repaint permanent vole le CPU au thread audio et l'assistant cesse
+# d'entendre pendant que la carte est ouverte. Un globe WebGL qui tourne
+# seul coûte largement plus qu'une grille CSS qui dérive : même règle,
+# encore plus stricte ici. Le globe reste donc immobile une fois posé — vol
+# d'approche joué une fois, tir radar joué une fois, puis silence — mais
+# reste manipulable à la souris/au doigt à tout moment.
 _GLOBE_JS = "https://unpkg.com/globe.gl"
-_GLOBE_EARTH_TEXTURE = "https://unpkg.com/three-globe/example/img/earth-dark.jpg"
+_GLOBE_EARTH_TEXTURE = "https://unpkg.com/three-globe/example/img/earth-night.jpg"
+_GLOBE_BUMP_TEXTURE = "https://unpkg.com/three-globe/example/img/earth-topology.png"
+_GLOBE_SKY_TEXTURE = "https://unpkg.com/three-globe/example/img/night-sky.png"
 
 _GLOBE_STYLE = """
   html, body, #globe { margin:0; padding:0; width:100%; height:100%;
-                        background:#04070d; overflow:hidden; }
+                        background:#010204; overflow:hidden; }
   #globe { position:absolute; inset:0; }
-  .card { position:absolute; transform:translate(-50%,-120%); pointer-events:auto;
+  .card { position:absolute; transform:translate(-50%,-128%); pointer-events:auto;
           background:rgba(6,15,24,.94); border:1px solid rgba(0,229,255,.35);
           border-radius:8px; padding:6px 10px; color:#e8fbff; font:12px/1.3
-          'Consolas',monospace; box-shadow:0 0 18px rgba(0,229,255,.16);
-          white-space:nowrap; cursor:pointer; }
+          'Consolas',monospace; box-shadow:0 0 18px rgba(0,229,255,.22),
+          0 0 3px rgba(0,229,255,.6); white-space:nowrap; cursor:pointer;
+          transition:transform .15s ease, box-shadow .15s ease; }
+  .card:hover { transform:translate(-50%,-128%) scale(1.06);
+                box-shadow:0 0 26px rgba(0,229,255,.4), 0 0 4px rgba(0,229,255,.8); }
   .card .n { color:#00e5ff; font-weight:700; margin-right:4px; }
 """
 
@@ -1117,15 +1131,17 @@ _GLOBE_SCRIPT = """
   const centerLabel = '@@CENTER_LABEL@@';
   const globe = Globe()
     (document.getElementById('globe'))
-    .backgroundColor('#04070d')
+    .backgroundImageUrl('@@SKY@@')
     .globeImageUrl('@@TEXTURE@@')
-    .atmosphereColor('#00e5ff')
-    .atmosphereAltitude(0.22)
+    .bumpImageUrl('@@BUMP@@')
+    .showAtmosphere(true)
+    .atmosphereColor('#3ad6ff')
+    .atmosphereAltitude(0.28)
     .pointsData(places)
     .pointLat('lat').pointLng('lon')
     .pointColor(() => '#00e5ff')
-    .pointAltitude(0.01)
-    .pointRadius(0.35)
+    .pointAltitude(0.012)
+    .pointRadius(0.32)
     .pointLabel(p => p.n ? `${p.n}. ${p.name}` : centerLabel)
     .htmlElementsData(places)
     .htmlLat('lat').htmlLng('lon')
@@ -1139,15 +1155,25 @@ _GLOBE_SCRIPT = """
       };
       return el;
     })
-    .pointOfView({ lat: @@LAT@@, lng: @@LON@@, altitude: @@ALT@@ }, 0);
+    // Tir radar une seule fois par point à l'arrivée : ringRepeatPeriod <= 0
+    // n'en relance aucun autre, pas de boucle à surveiller.
+    .ringsData(places)
+    .ringLat('lat').ringLng('lon')
+    .ringColor(() => t => `rgba(0,229,255,${1 - t})`)
+    .ringMaxRadius(4)
+    .ringPropagationSpeed(2.4)
+    .ringRepeatPeriod(0)
+    // Approche depuis l'espace, jouée une fois : altitude de départ élevée,
+    // point de vue final animé sur @@DURATION_MS@@ ms — un vol, pas un plan figé.
+    .pointOfView({ lat: @@LAT@@, lng: @@LON@@, altitude: 3.4 }, 0);
+  globe.pointOfView({ lat: @@LAT@@, lng: @@LON@@, altitude: @@ALT@@ }, @@DURATION_MS@@);
 
-  // Rotation d'ambiance quand rien n'est ciblé : évite un plan figé qui
-  // ressemble à une capture d'écran cassée le temps de trouver la souris.
-  let idleSpin = places.length <= 1;
+  // Toujours manipulable (glisser pour orbiter, molette pour zoomer) : ce
+  // qui est coupé, c'est uniquement le mouvement automatique et continu.
   const controls = globe.controls();
-  controls.autoRotate = idleSpin;
-  controls.autoRotateSpeed = 0.4;
-  controls.addEventListener('start', () => { controls.autoRotate = false; });
+  controls.autoRotate = false;
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.12;
 """
 
 
@@ -1175,9 +1201,12 @@ def render_globe(
         "@@PLACES@@": _json_for_script(json.dumps(payload, ensure_ascii=False)),
         "@@CENTER_LABEL@@": _escape(center_label),
         "@@TEXTURE@@": _GLOBE_EARTH_TEXTURE,
+        "@@BUMP@@": _GLOBE_BUMP_TEXTURE,
+        "@@SKY@@": _GLOBE_SKY_TEXTURE,
         "@@LAT@@": str(center[0]),
         "@@LON@@": str(center[1]),
         "@@ALT@@": str(altitude),
+        "@@DURATION_MS@@": "1800",
     })
 
     return f"""<!DOCTYPE html>
