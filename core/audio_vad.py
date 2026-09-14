@@ -47,7 +47,14 @@ class VADConfig:
     preroll_ms: int = 250
     hangover_ms: int = 350
     min_speech_ms: int = 96
-    webrtc_mode: int = 3  # 0 = doux, 3 = très restrictif
+    # 0 = doux, 3 = très restrictif. Sous Python 3.14, Silero (ML, plus
+    # robuste) est désactivé (voir _init_silero) : c'est ce mode, seul, qui
+    # décide si une phrase part. Au mode 3, une voix fatiguée/basse — moins
+    # d'énergie, moins nette — passe sous le seuil et n'est simplement
+    # jamais transcrite, alors que le texte tapé marche toujours (aucun VAD
+    # sur ce chemin). Mode 1 : encore un vrai filtre de bruit, mais qui ne
+    # rejette plus une voix simplement calme.
+    webrtc_mode: int = 1
     model_path: Optional[Union[str, Path]] = None
 
 
