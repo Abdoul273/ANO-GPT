@@ -213,12 +213,40 @@ def test_le_panneau_pays_se_propage_jusquau_rendu():
 
 def test_navigate_redemande_le_gps_avant_de_demarrer():
     start = DISPATCHER.index('elif name == "navigate":')
-    block = DISPATCHER[start:start + 900]
+    block = DISPATCHER[start:start + 1800]
     assert "request_fresh_location" in block
 
 
 def test_navigate_ne_redemande_pas_le_gps_pour_un_statut_ou_un_arret():
     """Inutile de réveiller le téléphone pour « où en est l'itinéraire ? »."""
     start = DISPATCHER.index('elif name == "navigate":')
-    block = DISPATCHER[start:start + 900]
+    block = DISPATCHER[start:start + 1800]
     assert '"stop"' in block and '"status"' in block
+
+
+def test_navigate_echoue_vite_et_clairement_sans_gps():
+    """Avant : attente de 10 s ignorée, puis message improvisé par le modèle
+    (« la carte veut pas coopérer »). Maintenant : refus immédiat et net."""
+    start = DISPATCHER.index('elif name == "navigate":')
+    block = DISPATCHER[start:start + 1800]
+    assert "_gps_ok" in block
+    assert "position GPS précise pour démarrer le guidage" in block
+    # navigation_action ne doit être appelée que si le GPS est bon — sinon
+    # le module attend encore un relevé qui ne viendra jamais.
+    assert "if _needs_origin and not _gps_ok:" in block
+
+
+def test_navigate_najamais_web_search_en_repli():
+    start = DISPATCHER.index('"name": "navigate"')
+    block = DISPATCHER[start:start + 1200]
+    assert "JAMAIS web_search" in block
+
+
+def test_le_chien_de_garde_audio_nignore_pas_un_outil_en_cours():
+    """Un outil > 5 s (GPS, cascade réseau) ne doit plus se faire couper le
+    micro pendant qu'il tourne encore côté serveur — voir audio_engine.py,
+    check_audio_watchdog (blocage détecté après 5 s sans I/O)."""
+    start = DISPATCHER.index("async def _execute_tool(self, fc)")
+    block = DISPATCHER[start:start + 4500]
+    assert "_last_model_turn_data_at" in block
+    assert "heartbeat" in block

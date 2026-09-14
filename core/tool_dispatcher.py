@@ -739,7 +739,9 @@ TOOL_DECLARATIONS = [
             "OBLIGATOIRE dès que l'utilisateur demande : 'Navigue vers X', 'Guide-moi jusqu'à Y', 'Lance le GPS', "
             "'Itinéraire vers Z', 'Arrête la navigation', 'Où en est le trajet ?', 'Prochaine étape'. "
             "Affiche l'itinéraire complet sur la carte grand écran et énonce vocalement chaque manœuvre "
-            "avec anticipation (seuils 500m / 150m / immédiat) synchronisé avec le GPS du smartphone Android (ANO-Remote)."
+            "avec anticipation (seuils 500m / 150m / immédiat) synchronisé avec le GPS du smartphone Android (ANO-Remote). "
+            "N'appelle JAMAIS web_search pour une demande de guidage/itinéraire, même après un premier essai "
+            "infructueux ou si l'utilisateur répète sa demande à l'identique — rappelle navigate, pas une recherche."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -2570,8 +2572,32 @@ class ToolDispatcher:
                     }:
                         # Device Flow GitHub : le code peut être validé jusqu'à 15 min dans Chrome.
                         timeout_s = max(timeout_s, 920.0)
-                    async with asyncio.timeout(timeout_s):
-                        response = await self._execute_tool_impl(fc, prepared)
+                    # Le chien de garde audio coupe le micro dès 5 s sans
+                    # aucune donnée audio — pensé pour une session Live
+                    # bloquée, pas pour un outil qui attend légitimement un
+                    # relevé GPS ou un appel réseau en cascade (navigate,
+                    # web_search…). Sans ce battement, tout outil dépassant
+                    # 5 s se fait couper le micro pendant qu'il tourne encore
+                    # côté serveur, produisant des réponses incohérentes une
+                    # fois le résultat enfin prêt. Le battement ne dispense
+                    # jamais du délai réel de l'outil (asyncio.timeout reste
+                    # le seul garde-fou qui l'arrête) ; il dit seulement au
+                    # chien de garde « du travail attendu est en cours ».
+                    async def _tool_heartbeat() -> None:
+                        while True:
+                            await asyncio.sleep(2.0)
+                            self._last_model_turn_data_at = time.monotonic()
+
+                    heartbeat = asyncio.ensure_future(_tool_heartbeat())
+                    try:
+                        async with asyncio.timeout(timeout_s):
+                            response = await self._execute_tool_impl(fc, prepared)
+                    finally:
+                        heartbeat.cancel()
+                        try:
+                            await heartbeat
+                        except asyncio.CancelledError:
+                            pass
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -3688,24 +3714,45 @@ class ToolDispatcher:
             elif name == "navigate":
                 # Démarrer un guidage depuis une position IP ou périmée a déjà
                 # renvoyé des distances à des milliers de km de la réalité :
-                # même demande de relevé frais qu'au premier « montre ma
+                # même exigence de relevé frais qu'au premier « montre ma
                 # position ». Un statut/arrêt n'a pas besoin de position.
                 _nav_action = str(args.get("action") or "start").strip().lower()
-                if _nav_action not in (
+                _needs_origin = _nav_action not in (
                     "stop", "cancel", "end", "close", "quitter", "arreter",
                     "status", "info", "state", "where", "prochaine",
-                ) and self._dashboard:
-                    await self._dashboard.request_fresh_location(timeout=10.0)
-
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: navigation_action(
-                        parameters=args,
-                        player=self.ui,
-                        speak=self.speak,
-                    ),
                 )
-                result = r or "Navigation initialisée."
+                _gps_ok = True
+                if _needs_origin:
+                    from core.geolocation import get_precise_user_coords
+                    # Un relevé des 5 dernières minutes suffit — inutile de
+                    # réveiller le téléphone si la position vient d'être
+                    # utilisée (ex. juste après « montre ma position »).
+                    _gps_ok = get_precise_user_coords(max_age_s=300.0) is not None
+                    if not _gps_ok and self._dashboard:
+                        # request_fresh_location rend False sans attendre le
+                        # délai complet si aucun téléphone n'est connecté —
+                        # inutile alors de patienter 10 s pour rien.
+                        _gps_ok = await self._dashboard.request_fresh_location(timeout=10.0)
+                        if _gps_ok:
+                            _gps_ok = get_precise_user_coords(max_age_s=15.0) is not None
+
+                if _needs_origin and not _gps_ok:
+                    result = (
+                        "Je n'ai aucune position GPS précise pour démarrer le guidage. "
+                        "Ouvre ANO Remote sur ton téléphone, autorise la localisation, "
+                        "puis redemande ; je n'utiliserai pas une position IP ou "
+                        "ancienne comme point de départ."
+                    )
+                else:
+                    r = await loop.run_in_executor(
+                        None,
+                        lambda: navigation_action(
+                            parameters=args,
+                            player=self.ui,
+                            speak=self.speak,
+                        ),
+                    )
+                    result = r or "Navigation initialisée."
 
             elif name == "find_nearby":
                 # Chercher « autour de moi » exige de savoir où l'on est
