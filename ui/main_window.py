@@ -40,7 +40,7 @@ class MainWindow(
     _cam_frame_sig  = pyqtSignal(bytes)
     _clipboard_sig  = pyqtSignal(str)
     _setmute_sig    = pyqtSignal(bool)
-    _map_sig        = pyqtSignal(str, float, float, float)
+    _map_sig        = pyqtSignal(str, float, float, float, str)
     _map_close_sig  = pyqtSignal()
     _image_gallery_sig = pyqtSignal(str, list)
     _image_gallery_close_sig = pyqtSignal()
@@ -129,9 +129,12 @@ class MainWindow(
         self._start_scene_timers()
 
         self._overlay: SetupOverlay | None = None
+        self._welcome_overlay = None
         self._ready = self._check_config()
         if not self._ready:
             self._show_setup()
+        else:
+            self._show_welcome_hud()
 
         self.setAcceptDrops(True)
         self._install_shortcuts()

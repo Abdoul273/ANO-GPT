@@ -679,7 +679,12 @@ TOOL_DECLARATIONS = [
             "a fresh phone GPS reading. Never pass a guessed city such as Conakry for "
             "the user's own position. "
             "Speak about what's shown on the map in your reply (distance, address, etc.) "
-            "— don't just open it silently."
+            "— don't just open it silently. "
+            "Two render styles exist, switchable anytime by voice: 'carte' (street-level "
+            "Leaflet map — the default) and 'globe' (rotating 3D world view). Only set "
+            "'view' when the user explicitly names one ('montre ça en globe', 'passe en "
+            "carte', 'vue satellite/globe') — otherwise omit it and the map keeps "
+            "whichever style is already on screen."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -692,6 +697,11 @@ TOOL_DECLARATIONS = [
                 "lat": {"type": "NUMBER", "description": "Exact latitude, when known (preferred over query for a specific business/place)"},
                 "lon": {"type": "NUMBER", "description": "Exact longitude, when known (preferred over query for a specific business/place)"},
                 "radius_km": {"type": "NUMBER", "description": "Approximate zoom radius in km (default 3)"},
+                "view": {
+                    "type": "STRING",
+                    "description": "'carte' for the street-level map, 'globe' for the 3D world view. "
+                                    "Omit to keep the current style on screen.",
+                },
             },
             "required": []
         }
@@ -3566,6 +3576,10 @@ class ToolDispatcher:
                 radius_km = float(args.get("radius_km") or 3.0)
                 lat_arg = args.get("lat")
                 lon_arg = args.get("lon")
+                _view_arg = str(args.get("view") or "").strip().casefold()
+                view = "globe" if "globe" in _view_arg else (
+                    "leaflet" if _view_arg else None
+                )
 
                 # « Ma position » exige une mesure actuelle : demander le GPS
                 # au téléphone connecté avant de lire le fichier partagé.
@@ -3594,8 +3608,9 @@ class ToolDispatcher:
                                 )
                             return f"Impossible de localiser « {query} » sur la carte."
                         lat, lon = coords
-                    self.ui.show_map(label, lat, lon, radius_km)
-                    return f"Carte affichée, centrée sur {label} ({lat:.4f}, {lon:.4f})."
+                    self.ui.show_map(label, lat, lon, radius_km, view=view)
+                    style = {"globe": " (vue globe)", "leaflet": " (vue carte)"}.get(view, "")
+                    return f"Carte affichée, centrée sur {label} ({lat:.4f}, {lon:.4f}){style}."
 
                 result = await loop.run_in_executor(None, _do_show_map)
 

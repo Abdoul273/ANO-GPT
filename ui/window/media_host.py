@@ -112,9 +112,14 @@ class MediaHostMixin:
     # position » chargeait un iframe OpenStreetMap dans le grand conteneur
     # pendant qu'une recherche de lieux ouvrait la carte cyberpunk dans un
     # petit panneau flottant : deux styles, deux tailles, pour la même chose.
-    def _on_show_map(self, title: str, lat: float, lon: float, radius_km: float) -> None:
+    def _on_show_map(self, title: str, lat: float, lon: float, radius_km: float,
+                     view: str = "") -> None:
+        # Une vue explicitement demandée impose son mode ; sinon on garde
+        # celui déjà affiché s'il y en a un (bascule persistante entre deux
+        # appels), Leaflet par défaut sinon.
+        mode = view or getattr(self, "_map_mode", None) or "leaflet"
         self._render_map(title, lat, lon, radius_km, places=[],
-                         center_label=title or "Votre position")
+                         center_label=title or "Votre position", mode=mode)
 
     def _on_show_places(self, query: str, lat: float, lon: float,
                         places: list) -> None:
@@ -360,10 +365,15 @@ class MediaHostMixin:
                 widget.show()
         self._relayout()
 
-    def show_map(self, title: str, lat: float, lon: float, radius_km: float = 3.0) -> bool:
+    def show_map(self, title: str, lat: float, lon: float, radius_km: float = 3.0,
+                 view: str | None = None) -> bool:
         """Thread-safe : peut être appelé depuis n'importe quel thread
-        (les tools tournent dans un executor, jamais sur le thread Qt)."""
-        self._map_sig.emit(title[:60], float(lat), float(lon), float(radius_km))
+        (les tools tournent dans un executor, jamais sur le thread Qt).
+
+        ``view`` : "leaflet"/"globe" pour imposer un rendu, "" pour garder
+        celui déjà affiché (comportement historique)."""
+        self._map_sig.emit(title[:60], float(lat), float(lon), float(radius_km),
+                           str(view or ""))
         return True
 
     def update_live_position(self, lat: float, lon: float, accuracy_m: float | None = None,

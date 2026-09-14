@@ -153,3 +153,30 @@ def test_la_navigation_deja_en_leaflet_nattend_pas_un_rechargement():
     """Rien ne doit ralentir un guidage déjà en cours sur la bonne carte."""
     body = _method("_on_start_navigation")
     assert '!= "leaflet"' in body
+
+
+# ── Choisir la vue par la voix : « en carte » / « en globe » ────────────────
+
+DISPATCHER = (Path(__file__).resolve().parent.parent / "core" / "tool_dispatcher.py").read_text(encoding="utf-8")
+
+
+def test_loutil_show_map_expose_un_parametre_vue():
+    start = DISPATCHER.index('"name": "show_map"')
+    block = DISPATCHER[start:start + 3200]
+    assert '"view"' in block
+    assert "'carte'" in block and "'globe'" in block
+
+
+def test_le_handler_traduit_globe_ou_carte_en_mode_rendu():
+    start = DISPATCHER.index('elif name == "show_map":')
+    block = DISPATCHER[start:start + 2200]
+    assert '"globe" if "globe" in _view_arg' in block
+    assert "view=view" in block
+
+
+def test_on_show_map_garde_la_vue_deja_affichee_par_defaut():
+    """Sans demande explicite, on ne doit pas retomber sur Leaflet si le
+    globe était déjà affiché — sinon la bascule manuelle serait inutile."""
+    body = _method("_on_show_map")
+    assert "getattr(self, \"_map_mode\", None)" in body
+    assert 'mode=mode' in body
