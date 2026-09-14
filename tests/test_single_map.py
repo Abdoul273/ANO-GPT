@@ -121,3 +121,27 @@ def test_une_position_inconnue_est_avouee_et_non_inventee():
     start = MAIN.index('elif name == "show_map"')
     block = MAIN[start:start + 2000]
     assert "Conakry" in block, "le garde-fou contre la position inventée a disparu"
+
+
+# ── Deux rendus, une seule carte : globe (aperçu) et Leaflet (guidage) ──────
+
+def test_le_rendu_par_defaut_est_le_globe():
+    """L'aperçu (position, recherche) utilise « world monitor », pas Leaflet."""
+    body = _method("_render_map")
+    assert "from core.map_render import render_globe" in body
+    assert 'mode: str = "globe"' in body
+
+
+def test_le_guidage_recharge_en_leaflet_si_le_globe_est_affiche():
+    """Un globe ne sait pas guider rue par rue : il faut les tuiles Leaflet."""
+    body = _method("_on_start_navigation")
+    assert 'mode="leaflet"' in body
+    assert "loadFinished" in body, (
+        "le JS de démarrage doit attendre que la page Leaflet soit chargée"
+    )
+
+
+def test_la_navigation_deja_en_leaflet_nattend_pas_un_rechargement():
+    """Rien ne doit ralentir un guidage déjà en cours sur la bonne carte."""
+    body = _method("_on_start_navigation")
+    assert '!= "leaflet"' in body

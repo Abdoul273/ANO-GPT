@@ -126,8 +126,14 @@ class MediaHostMixin:
         self._render_map(query, lat, lon, radius, places=places,
                          center_label="Votre position", count=len(places))
 
+    # ── Deux rendus, une seule carte ─────────────────────────────────────────
+    # « world monitor » (globe.gl) est l'aperçu par défaut : position et
+    # résultats de recherche. Il ne sait pas guider rue par rue — dès qu'un
+    # guidage démarre (_on_start_navigation), la page est rechargée en
+    # Leaflet, seul rendu qui a les tuiles de rue et le moteur OSRM.
     def _render_map(self, title: str, lat: float, lon: float, radius_km: float,
-                    *, places: list, center_label: str, count: int = 0) -> None:
+                    *, places: list, center_label: str, count: int = 0,
+                    mode: str = "globe") -> None:
         self._dismiss_interactive_overlays()
         if hasattr(self, "_image_gallery"):
             self._image_gallery.dismiss_now()
@@ -135,15 +141,27 @@ class MediaHostMixin:
         if count:
             header += f"  ·  {count} lieux"
         self._map_title.setText(header[:60])
+        # Mémorisé pour pouvoir recharger la même vue en Leaflet si un
+        # guidage démarre pendant que le globe est affiché.
+        self._map_last_args = {
+            "title": title, "lat": lat, "lon": lon, "radius_km": radius_km,
+            "places": places, "center_label": center_label,
+        }
         if self._map_view is not None:
-            from core.map_render import render_map
-
-            html = render_map(
-                title, (lat, lon), places=places, radius_km=radius_km,
-                center_label=center_label, mark_center=True,
-            )
+            if mode == "leaflet":
+                from core.map_render import render_map
+                html = render_map(
+                    title, (lat, lon), places=places, radius_km=radius_km,
+                    center_label=center_label, mark_center=True,
+                )
+            else:
+                from core.map_render import render_globe
+                html = render_globe(
+                    title, (lat, lon), places=places, center_label=center_label,
+                )
+            self._map_mode = mode
             # Une base distante est indispensable : sans elle la page est jugée
-            # locale et le navigateur refuse Leaflet et les tuiles.
+            # locale et le navigateur refuse Leaflet/globe.gl et leurs tuiles.
             self._map_view.setHtml(html, QUrl("https://unpkg.com/"))
         else:
             # Repli fonctionnel : ne jamais annoncer une carte affichée alors
@@ -363,9 +381,33 @@ class MediaHostMixin:
         self._nav_sig.emit(float(dest_lat), float(dest_lon), dest_name)
 
     def _on_start_navigation(self, dest_lat: float, dest_lon: float, dest_name: str) -> None:
-        if self._map_view is not None and self._map_cont.isVisible():
-            escaped_name = dest_name.replace("'", "\\'")
-            js = f"if (window.ANO_START_NAVIGATION) window.ANO_START_NAVIGATION({dest_lat}, {dest_lon}, '{escaped_name}');"
+        if self._map_view is None or not self._map_cont.isVisible():
+            return
+        escaped_name = dest_name.replace("'", "\\'")
+        js = f"if (window.ANO_START_NAVIGATION) window.ANO_START_NAVIGATION({dest_lat}, {dest_lon}, '{escaped_name}');"
+        if getattr(self, "_map_mode", "globe") != "leaflet":
+            # Le globe affiché ne sait pas guider : on recharge la même vue
+            # en Leaflet, puis on lance le guidage une fois la page prête.
+            args = getattr(self, "_map_last_args", None) or {
+                "title": dest_name, "lat": dest_lat, "lon": dest_lon,
+                "radius_km": 3.0, "places": [], "center_label": dest_name,
+            }
+            self._render_map(
+                args["title"], args["lat"], args["lon"], args["radius_km"],
+                places=args["places"], center_label=args["center_label"],
+                mode="leaflet",
+            )
+
+            def _run_once(ok: bool) -> None:
+                try:
+                    self._map_view.loadFinished.disconnect(_run_once)
+                except Exception:
+                    pass
+                if ok:
+                    self._map_view.page().runJavaScript(js)
+
+            self._map_view.loadFinished.connect(_run_once)
+        else:
             self._map_view.page().runJavaScript(js)
 
     def close_map(self) -> None:

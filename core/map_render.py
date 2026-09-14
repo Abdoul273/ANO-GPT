@@ -1090,6 +1090,103 @@ def render_map(
 </script></body></html>"""
 
 
+# ── Vue « world monitor » : globe.gl, pour la position et les recherches ────
+# Un vrai pas-à-pas (rues, manœuvres, écart à l'itinéraire) a besoin de
+# tuiles de rue : hors de portée d'un globe. Cette vue ne sert donc que
+# l'aperçu (position, résultats de recherche) ; dès qu'un guidage démarre,
+# ui/window/media_host.py recharge la page en mode Leaflet ci-dessus.
+_GLOBE_JS = "https://unpkg.com/globe.gl"
+_GLOBE_EARTH_TEXTURE = "https://unpkg.com/three-globe/example/img/earth-dark.jpg"
+
+_GLOBE_STYLE = """
+  html, body, #globe { margin:0; padding:0; width:100%; height:100%;
+                        background:#04070d; overflow:hidden; }
+  #globe { position:absolute; inset:0; }
+  .card { position:absolute; transform:translate(-50%,-120%); pointer-events:auto;
+          background:rgba(6,15,24,.94); border:1px solid rgba(0,229,255,.35);
+          border-radius:8px; padding:6px 10px; color:#e8fbff; font:12px/1.3
+          'Consolas',monospace; box-shadow:0 0 18px rgba(0,229,255,.16);
+          white-space:nowrap; cursor:pointer; }
+  .card .n { color:#00e5ff; font-weight:700; margin-right:4px; }
+"""
+
+_GLOBE_SCRIPT = """
+  const places = @@PLACES@@;
+  const centerLabel = '@@CENTER_LABEL@@';
+  const globe = Globe()
+    (document.getElementById('globe'))
+    .backgroundColor('#04070d')
+    .globeImageUrl('@@TEXTURE@@')
+    .atmosphereColor('#00e5ff')
+    .atmosphereAltitude(0.22)
+    .pointsData(places)
+    .pointLat('lat').pointLng('lon')
+    .pointColor(() => '#00e5ff')
+    .pointAltitude(0.01)
+    .pointRadius(0.35)
+    .pointLabel(p => p.n ? `${p.n}. ${p.name}` : centerLabel)
+    .htmlElementsData(places)
+    .htmlLat('lat').htmlLng('lon')
+    .htmlElement(p => {
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML = (p.n ? `<span class="n">${p.n}</span>` : '') +
+                      (p.name || centerLabel);
+      el.onclick = () => {
+        globe.pointOfView({ lat: p.lat, lng: p.lon, altitude: 0.6 }, 900);
+      };
+      return el;
+    })
+    .pointOfView({ lat: @@LAT@@, lng: @@LON@@, altitude: @@ALT@@ }, 0);
+
+  // Rotation d'ambiance quand rien n'est ciblé : évite un plan figé qui
+  // ressemble à une capture d'écran cassée le temps de trouver la souris.
+  let idleSpin = places.length <= 1;
+  const controls = globe.controls();
+  controls.autoRotate = idleSpin;
+  controls.autoRotateSpeed = 0.4;
+  controls.addEventListener('start', () => { controls.autoRotate = false; });
+"""
+
+
+def render_globe(
+    title: str,
+    center: tuple[float, float],
+    *,
+    places: list[dict[str, Any]] | None = None,
+    center_label: str = "Votre position",
+) -> str:
+    """Construit la vue « world monitor » : globe.gl, aperçu seulement.
+
+    Pas de guidage pas-à-pas ici — voir le module docstring. Utilisée pour
+    la position et les résultats de recherche ; ``ui/window/media_host.py``
+    recharge en Leaflet dès qu'une navigation démarre.
+    """
+    payload = [_marker_payload(index, place)
+               for index, place in enumerate(places or [], 1)]
+    if not payload:
+        payload = [{"n": 0, "name": center_label, "lat": center[0], "lon": center[1]}]
+
+    altitude = 2.2 if len(payload) <= 1 else 1.4
+    script = _fill(_GLOBE_SCRIPT, {
+        "@@PLACES@@": _json_for_script(json.dumps(payload, ensure_ascii=False)),
+        "@@CENTER_LABEL@@": _escape(center_label),
+        "@@TEXTURE@@": _GLOBE_EARTH_TEXTURE,
+        "@@LAT@@": str(center[0]),
+        "@@LON@@": str(center[1]),
+        "@@ALT@@": str(altitude),
+    })
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<script src="{_GLOBE_JS}"></script>
+<style>{_GLOBE_STYLE}</style></head>
+<body>
+<div id="globe"></div>
+{_hud(title, center_label, len(places or []))}
+<script>
+{script}
+</script></body></html>"""
 def _hud(title: str, center_label: str, count: int) -> str:
     """Bandeau d'état, en haut à gauche de la carte."""
     if count:

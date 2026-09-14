@@ -3,7 +3,7 @@
 import json
 import re
 
-from core.map_render import render_map
+from core.map_render import render_globe, render_map
 
 CONAKRY = (9.6412, -13.5784)
 
@@ -219,3 +219,27 @@ def test_map_has_no_looping_animation_left_running():
     css_tail = html[html.rfind("Machine à deux cœurs"):]
     assert "animation:none !important" in css_tail
     assert "zoomAnimation: false" in html and "updateWhenIdle: true" in html
+
+
+# ── Vue globe (« world monitor ») ───────────────────────────────────────────
+
+
+
+def test_globe_seul_point_affiche_le_libelle_central():
+    html = render_globe("Ma position", CONAKRY, places=[], center_label="Ici")
+    assert "Globe()" in html
+    assert "Ici" in html
+
+
+def test_globe_places_deviennent_des_points_numerotes():
+    html = render_globe(
+        "pharmacie", CONAKRY,
+        places=[_place(), _place(name="Pharmacie du Port", lat=9.55, lon=-13.68)],
+    )
+    assert '"n": 1' in html.replace("'", '"')
+    assert "Pharmacie du Port" in html
+
+
+def test_globe_echappe_les_apostrophes_du_libelle():
+    html = render_globe("Test", CONAKRY, places=[], center_label="Chez l'ami")
+    assert "Chez l\\'ami" in html

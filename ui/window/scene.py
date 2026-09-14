@@ -337,6 +337,10 @@ class SceneMixin:
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
             lay.addWidget(fallback, stretch=1)
+        # Suivi du rendu actuellement chargé : « globe » (aperçu, défaut) ou
+        # « leaflet » (guidage pas-à-pas). Voir media_host._render_map.
+        self._map_mode = "globe"
+        self._map_last_args = None
         return cont
 
     def _connect_window_signals(self) -> None:
