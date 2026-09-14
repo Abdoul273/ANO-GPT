@@ -1196,7 +1196,8 @@ def render_globe(
 # (core/country_info.py fournit les données, quel que soit le pays demandé).
 _COUNTRY_PANEL_STYLE = """
   .country { position:absolute; top:14px; right:14px; z-index:660;
-    padding:10px 14px 11px; min-width:200px; max-width:min(50vw,300px);
+    padding:10px 14px 11px; min-width:210px; max-width:min(50vw,340px);
+    max-height:min(78vh,560px); overflow-y:auto;
     color:#cdf6ff; background:var(--panel);
     border:1px solid rgba(0,229,255,.34);
     box-shadow:0 0 26px var(--panel-glow), inset 0 0 26px rgba(0,229,255,.05);
@@ -1205,9 +1206,10 @@ _COUNTRY_PANEL_STYLE = """
   .country .flag { font-size:22px; }
   .country .name { font-size:14px; font-weight:800; color:#e8fdff;
     margin-top:3px; text-shadow:0 0 12px rgba(0,229,255,.5); }
-  .country .row { font-size:11px; color:rgba(205,246,255,.86); margin-top:4px;
-    display:flex; justify-content:space-between; gap:10px; }
-  .country .row b { color:var(--amber); font-weight:700; }
+  .country .row { font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    color:rgba(205,246,255,.55); margin-top:7px; }
+  .country .row b { display:block; font-size:12px; letter-spacing:normal;
+    text-transform:none; color:var(--amber); font-weight:700; margin-top:1px; }
 """
 
 
@@ -1222,8 +1224,16 @@ def _country_panel(info: dict[str, Any] | None) -> str:
         rows.append(("Population", info["population"]))
     if info.get("currencies"):
         rows.append(("Monnaie", info["currencies"]))
+    if info.get("languages"):
+        rows.append(("Langues", info["languages"]))
     if info.get("timezone"):
         rows.append(("Fuseau", info["timezone"]))
+    if info.get("area"):
+        rows.append(("Superficie", info["area"]))
+    if info.get("neighbors"):
+        rows.append(("Frontières", info["neighbors"]))
+    if info.get("calling_code"):
+        rows.append(("Indicatif", info["calling_code"]))
     if info.get("weather"):
         rows.append(("Météo", info["weather"]))
     rows_html = "".join(

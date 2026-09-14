@@ -33,6 +33,48 @@ _HTTP_TIMEOUT = 6.0
 
 # Même échelle WMO que actions/weather_report.py, réduite aux catégories
 # utiles à une ligne de fiche pays (pas de détail bruine/neige/verglas ici).
+# Codes ISO 639 → nom français. Pas de dépendance supplémentaire (babel
+# n'est pas installé, et ne vaut pas l'ajout pour ce seul usage) : une table
+# couvrant les langues qui reviennent réellement dans le jeu de données,
+# repli sur le nom anglais du dataset pour les codes plus rares.
+_LANGUAGE_FR: dict[str, str] = {
+    "eng": "anglais", "fra": "français", "spa": "espagnol", "por": "portugais",
+    "deu": "allemand", "ita": "italien", "nld": "néerlandais", "swe": "suédois",
+    "nor": "norvégien", "nob": "norvégien", "nno": "norvégien nynorsk",
+    "dan": "danois", "fin": "finnois", "isl": "islandais", "fao": "féroïen",
+    "pol": "polonais", "ces": "tchèque", "slk": "slovaque", "hun": "hongrois",
+    "ron": "roumain", "bul": "bulgare", "ell": "grec", "hrv": "croate",
+    "srp": "serbe", "bos": "bosnien", "cnr": "monténégrin", "slv": "slovène",
+    "mkd": "macédonien", "sqi": "albanais", "lit": "lituanien", "lav": "letton",
+    "est": "estonien", "rus": "russe", "ukr": "ukrainien", "bel": "biélorusse",
+    "kat": "géorgien", "hye": "arménien", "aze": "azéri", "kaz": "kazakh",
+    "kir": "kirghiz", "tgk": "tadjik", "tuk": "turkmène", "uzb": "ouzbek",
+    "mon": "mongol", "tur": "turc", "heb": "hébreu", "ara": "arabe",
+    "arc": "araméen", "fas": "persan", "prs": "dari", "pus": "pachto",
+    "ckb": "kurde sorani", "urd": "ourdou", "hin": "hindi", "ben": "bengali",
+    "nep": "népalais", "sin": "cingalais", "div": "maldivien", "tam": "tamoul",
+    "mya": "birman", "tha": "thaï", "lao": "lao", "khm": "khmer",
+    "vie": "vietnamien", "zho": "chinois", "jpn": "japonais", "kor": "coréen",
+    "ind": "indonésien", "msa": "malais", "fil": "filipino", "mri": "maori",
+    "smo": "samoan", "ton": "tongien", "fij": "fidjien", "gil": "gilbertin",
+    "tvl": "tuvaluan", "nau": "nauruan", "pau": "palaosien", "mah": "marshallais",
+    "hmo": "hiri motu", "bis": "bichelamar", "amh": "amharique", "tir": "tigrigna",
+    "som": "somali", "swa": "swahili", "kin": "kinyarwanda", "run": "kirundi",
+    "lin": "lingala", "kon": "kikongo", "lua": "tshiluba", "nya": "chewa",
+    "sna": "shona", "nde": "ndébélé", "nbl": "ndébélé du sud", "xho": "xhosa",
+    "zul": "zoulou", "sot": "sotho", "tsn": "tswana", "tso": "tsonga",
+    "ssw": "swati", "ven": "venda", "afr": "afrikaans", "mlg": "malgache",
+    "hat": "créole haïtien", "que": "quechua", "aym": "aymara", "grn": "guarani",
+    "cat": "catalan", "glv": "mannois", "gle": "irlandais", "mlt": "maltais",
+    "ltz": "luxembourgeois", "gsw": "suisse allemand", "roh": "romanche",
+    "lat": "latin",
+}
+
+
+def _translate_language(code: str, english_name: str) -> str:
+    return _LANGUAGE_FR.get(code, english_name)
+
+
 _WMO_SHORT: dict[int, tuple[str, str]] = {
     0: ("ciel dégagé", "☀️"), 1: ("principalement dégagé", "🌤️"),
     2: ("partiellement nuageux", "⛅"), 3: ("couvert", "☁️"),
@@ -75,6 +117,20 @@ def _index() -> dict[str, dict]:
             if key:
                 idx[_fold(key)] = entry
     return idx
+
+
+@lru_cache(maxsize=1)
+def _by_cca3() -> dict[str, dict]:
+    return {entry["cca3"]: entry for entry in _load_dataset() if entry.get("cca3")}
+
+
+def _border_names(codes: list[str]) -> str:
+    by_code = _by_cca3()
+    names = [
+        str((by_code[code].get("fr_common") or by_code[code].get("common")))
+        for code in codes if code in by_code
+    ]
+    return ", ".join(names)
 
 
 def _lookup(name: str) -> Optional[dict]:
@@ -140,6 +196,10 @@ class CountryInfo:
     area_km2: float
     lat: float
     lon: float
+    demonym: str = ""
+    neighbors: str = ""
+    calling_code: str = ""
+    landlocked: bool = False
     weather_text: str = ""
     weather_emoji: str = ""
     temp_c: Optional[float] = None
@@ -162,19 +222,35 @@ class CountryInfo:
             f"{self.weather_emoji} {self.weather_text}, {self.temp_c:.0f}°C"
             if self.temp_c is not None else "indisponible"
         )
+        area = f"{self.area_km2:,.0f} km²".replace(",", " ") if self.area_km2 else "inconnue"
+        border_line = None
+        if self.neighbors:
+            border_line = f"Frontières : {self.neighbors}"
+        elif not self.landlocked:
+            border_line = "Frontières : aucune (pays insulaire ou isolé)"
+        facts = [
+            f"[FICHE PAYS — {self.name}]",
+            f"Nom officiel : {self.official_name}",
+            f"Capitale : {self.capital or 'inconnue'}",
+            f"Population : {pop}",
+            f"Habitants : {self.demonym}(s)" if self.demonym else None,
+            f"Monnaie : {self.currencies or 'inconnue'}",
+            f"Langues : {self.languages or 'inconnues'}",
+            f"Indicatif téléphonique : {self.calling_code}" if self.calling_code else None,
+            f"Fuseau horaire : {self.timezone or 'inconnu'}",
+            f"Région : {self.region}" + (f" ({self.subregion})" if self.subregion else ""),
+            f"Superficie : {area}" + (" — enclavé, sans accès à la mer" if self.landlocked else ""),
+            border_line,
+            f"Météo à la capitale : {weather}",
+        ]
+        body = "\n".join(fact for fact in facts if fact is not None)
         return (
-            f"[FICHE PAYS — {self.name}]\n"
-            f"Capitale : {self.capital or 'inconnue'}\n"
-            f"Population : {pop}\n"
-            f"Monnaie : {self.currencies or 'inconnue'}\n"
-            f"Langues : {self.languages or 'inconnues'}\n"
-            f"Fuseau horaire : {self.timezone or 'inconnu'}\n"
-            f"Région : {self.region}" + (f" ({self.subregion})" if self.subregion else "") + "\n"
-            f"Météo à la capitale : {weather}\n\n"
+            f"{body}\n\n"
             "Ces données viennent d'un jeu de données pays local, de la "
-            "Banque mondiale (population) et d'Open‑Meteo (météo) : réponds "
-            "à partir d'elles, sans en inventer d'autres. Si l'utilisateur "
-            "demande un autre pays, rappelle show_country_info avec ce pays."
+            "Banque mondiale (population) et d'Open‑Meteo (météo). Réponds "
+            "en développant plusieurs de ces faits (pas juste un ou deux), "
+            "sans en inventer d'autres. Si l'utilisateur demande un autre "
+            "pays, rappelle show_country_info avec ce pays."
         )
 
 
@@ -190,7 +266,10 @@ def fetch_country_info(name: str = "") -> Optional[CountryInfo]:
         f"{v.get('name', code)} ({v.get('symbol', code)})"
         for code, v in (entry.get("currencies") or {}).items()
     )
-    languages = ", ".join((entry.get("languages") or {}).values())
+    languages = ", ".join(
+        _translate_language(code, en_name)
+        for code, en_name in (entry.get("languages") or {}).items()
+    )
 
     weather_text, weather_emoji, temp_c, timezone = "", "", None, ""
     weather = _fetch_weather(lat, lon)
@@ -215,6 +294,10 @@ def fetch_country_info(name: str = "") -> Optional[CountryInfo]:
         subregion=str(entry.get("subregion") or ""),
         area_km2=float(entry.get("area") or 0.0),
         lat=float(lat), lon=float(lon),
+        demonym=str(entry.get("demonym_fr") or ""),
+        neighbors=_border_names(entry.get("borders") or []),
+        calling_code=str(entry.get("calling_code") or ""),
+        landlocked=bool(entry.get("landlocked")),
         weather_text=weather_text, weather_emoji=weather_emoji, temp_c=temp_c,
         raw=entry,
     )

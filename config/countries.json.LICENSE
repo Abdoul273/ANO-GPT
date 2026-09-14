@@ -2,6 +2,7 @@ config/countries.json — données de countries.json (mledoze/countries)
 Source : https://github.com/mledoze/countries
 Licence : ODbL 1.0 (https://github.com/mledoze/countries/blob/master/LICENSE)
 Champs conservés : nom (anglais + traduction française), capitale, monnaies,
-langues, région, superficie, coordonnées, drapeau. Réduit depuis le fichier
-countries.json d'origine (250 pays) pour n'embarquer que ce qu'utilise
-core/country_info.py.
+langues, région, superficie, coordonnées, drapeau, démonyme français, pays
+frontaliers (codes cca3), indicatif téléphonique, enclavement. Réduit depuis
+le fichier countries.json d'origine (250 pays) pour n'embarquer que ce
+qu'utilise core/country_info.py.

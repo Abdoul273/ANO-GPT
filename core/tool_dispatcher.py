@@ -3667,7 +3667,14 @@ class ToolDispatcher:
                                 if info.population else ""
                             ),
                             "currencies": info.currencies,
+                            "languages": info.languages,
                             "timezone": info.timezone,
+                            "area": (
+                                f"{info.area_km2:,.0f} km²".replace(",", " ")
+                                if info.area_km2 else ""
+                            ),
+                            "neighbors": info.neighbors,
+                            "calling_code": info.calling_code,
                             "weather": (
                                 f"{info.weather_emoji} {info.weather_text}, {info.temp_c:.0f}°C"
                                 if info.temp_c is not None else ""

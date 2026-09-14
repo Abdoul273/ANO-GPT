@@ -92,3 +92,67 @@ def test_as_marker_retourne_le_format_attendu_par_map_render(monkeypatch):
     assert marker["lat"] == info.lat
     assert marker["lon"] == info.lon
     assert "Guinée" in marker["name"]
+
+
+# ── Enrichissement : plus de faits par fiche (démonyme, voisins, langues…) ──
+
+def test_les_langues_sont_traduites_en_francais(monkeypatch):
+    monkeypatch.setattr(ci, "_fetch_weather", lambda lat, lon: None)
+    monkeypatch.setattr(ci, "_fetch_population", lambda cca3: None)
+
+    info = ci.fetch_country_info("Japon")
+
+    assert info.languages == "japonais"
+    assert "Japanese" not in info.languages
+
+
+def test_un_pays_enclave_liste_ses_frontieres(monkeypatch):
+    monkeypatch.setattr(ci, "_fetch_weather", lambda lat, lon: None)
+    monkeypatch.setattr(ci, "_fetch_population", lambda cca3: None)
+
+    info = ci.fetch_country_info("Mali")
+
+    assert info.landlocked is True
+    assert "Guinée" in info.neighbors
+    assert "Sénégal" in info.neighbors
+    assert "enclavé" in info.as_tool_result()
+
+
+def test_un_pays_insulaire_navoue_pas_de_frontieres_comme_une_erreur(monkeypatch):
+    monkeypatch.setattr(ci, "_fetch_weather", lambda lat, lon: None)
+    monkeypatch.setattr(ci, "_fetch_population", lambda cca3: None)
+
+    info = ci.fetch_country_info("Japon")
+
+    assert info.landlocked is False
+    assert info.neighbors == ""
+    assert "aucune (pays insulaire ou isolé)" in info.as_tool_result()
+
+
+def test_le_demonyme_napparait_pas_deux_fois_au_pluriel(monkeypatch):
+    """Un bug précédent affichait « Japonaiss » (démonyme déjà invariable + s)."""
+    monkeypatch.setattr(ci, "_fetch_weather", lambda lat, lon: None)
+    monkeypatch.setattr(ci, "_fetch_population", lambda cca3: None)
+
+    result = ci.fetch_country_info("Japon").as_tool_result()
+
+    assert "Japonaiss" not in result
+    assert "Japonais" in result
+
+
+def test_la_fiche_texte_developpe_plusieurs_faits_pas_juste_deux(monkeypatch):
+    monkeypatch.setattr(
+        ci, "_fetch_weather",
+        lambda lat, lon: {
+            "timezone": "Asia/Tokyo",
+            "current": {"weather_code": 0, "temperature_2m": 21.0},
+        },
+    )
+    monkeypatch.setattr(ci, "_fetch_population", lambda cca3: 123_000_000)
+
+    result = ci.fetch_country_info("Japon").as_tool_result()
+
+    # Capitale, population, monnaie, langue, fuseau, région, superficie,
+    # météo : au moins huit faits distincts, pas une ligne ou deux.
+    fact_lines = [ln for ln in result.splitlines() if " : " in ln]
+    assert len(fact_lines) >= 8

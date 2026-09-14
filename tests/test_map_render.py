@@ -243,3 +243,17 @@ def test_globe_places_deviennent_des_points_numerotes():
 def test_globe_echappe_les_apostrophes_du_libelle():
     html = render_globe("Test", CONAKRY, places=[], center_label="Chez l'ami")
     assert "Chez l\\'ami" in html
+
+
+def test_le_panneau_pays_affiche_les_champs_enrichis():
+    card = {
+        "flag": "🇯🇵", "name": "Japon", "capital": "Tokyo",
+        "population": "123 366 734", "currencies": "Yen (¥)",
+        "languages": "japonais", "timezone": "Asia/Tokyo",
+        "area": "377 930 km²", "neighbors": "", "calling_code": "+81",
+        "weather": "☀️ ciel dégagé, 20°C",
+    }
+    html = render_globe("Japon", CONAKRY, places=[], country=card)
+    assert "japonais" in html
+    assert "377 930 km²" in html
+    assert "+81" in html
