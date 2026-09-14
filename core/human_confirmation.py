@@ -6,6 +6,8 @@ aléatoire associé à la demande visible par l'utilisateur.
 """
 from __future__ import annotations
 
+import logging
+
 import secrets
 import threading
 import time
@@ -51,7 +53,7 @@ def _send_notify(message: str) -> None:
         try:
             _notify(message)
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans _send_notify")
 
 
 def _write_log(message: str) -> None:
@@ -59,7 +61,7 @@ def _write_log(message: str) -> None:
         try:
             _log(message)
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans _write_log")
 
 
 def _fingerprint(pending: PendingConfirmation) -> tuple[str, str, str]:
@@ -93,9 +95,9 @@ def request(key: str, title: str, detail: str,
             # Exactement la même opération vient d'aboutir : la relancer
             # doublerait l'appel ou le message aux yeux du destinataire.
             return (
-                "[ACTION_DEJA_EXECUTEE] Cette opération identique vient d'être "
-                "exécutée et confirmée. Ne la relance pas : dis simplement à "
-                "l'utilisateur que c'est déjà fait."
+                "[ACTION_DEJA_EXECUTEE] Cette opération identique a déjà été "
+                "déclenchée. Ne la relance pas : vérifie son résultat avant "
+                "d'annoncer qu'elle a réussi."
             )
         current_pending = _pending
         if (current_pending is not None
@@ -120,7 +122,7 @@ def request(key: str, title: str, detail: str,
         try:
             _hide(superseded)
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans request")
     try:
         _show(pending)
     except Exception as exc:
@@ -151,7 +153,7 @@ def resolve(token: str, accepted: bool, *, source: str = "interface") -> bool:
         try:
             _hide(pending.token)
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans resolve")
     if time.monotonic() - pending.created_at > TIMEOUT_SECONDS:
         _write_log(f"SYS : confirmation expirée — {pending.title}")
         return False
@@ -169,11 +171,12 @@ def resolve(token: str, accepted: bool, *, source: str = "interface") -> bool:
 
     def _run() -> None:
         try:
-            detail = pending.callback() or "terminée"
+            detail = pending.callback() or "Aucun résultat confirmé ; vérifiez l'état de l'opération."
             _write_log(f"SYS : action confirmée depuis {source} — {pending.title} : {detail}")
-            _send_notify(f"Action terminée, exécutée : {detail}")
+            _send_notify(f"Résultat de l'action : {detail}")
         except Exception as exc:
             _write_log(f"ERR : échec après confirmation — {pending.title} : {exc}")
+            _send_notify("L'action n'a pas rendu de résultat confirmé. Vérifiez son état avant de réessayer.")
 
     threading.Thread(target=_run, daemon=True,
                      name=f"ano-confirm-{pending.key}").start()
