@@ -122,6 +122,26 @@ def get_live_position(resolve_place: bool = True, *, max_age_s: float | None = N
     }
 
 
+# Une réponse à plus de 25 km du point demandé n'est pas un quartier, c'est
+# une réponse fausse : Nominatim recale sur la feature la plus proche de son
+# index, et l'index OSM de zones rurales peut être clairsemé au point de
+# renvoyer le bourg le plus proche à des dizaines de km. Mieux vaut ne rien
+# dire qu'annoncer un lieu où l'utilisateur n'est pas.
+_REVERSE_GEOCODE_MAX_DRIFT_KM = 25.0
+# Un mauvais résultat mis en cache restait faux pour toujours (pas de TTL) :
+# l'utilisateur signale son erreur, il n'a aucun moyen de la faire corriger
+# avant l'expiration.
+_GEOCODE_CACHE_TTL_S = 30 * 24 * 3600.0
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    from math import asin, cos, radians, sin, sqrt
+    r = 6371.0
+    dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    return 2 * r * asin(sqrt(a))
+
+
 def reverse_geocode(lat: float, lon: float) -> Optional[dict]:
     """Nom du lieu à ces coordonnées (Nominatim/OSM, sans clé), avec cache.
 
@@ -133,8 +153,9 @@ def reverse_geocode(lat: float, lon: float) -> Optional[dict]:
         return None
     key = f"rev:{round(lat, 3)},{round(lon, 3)}"
     cache = _read_geocode_cache()
-    if key in cache:
-        return cache[key]
+    cached = cache.get(key)
+    if cached and (time.time() - float(cached.get("_at", 0))) < _GEOCODE_CACHE_TTL_S:
+        return cached.get("place")
 
     try:
         r = requests.get(
@@ -144,9 +165,25 @@ def reverse_geocode(lat: float, lon: float) -> Optional[dict]:
             timeout=5,
         )
         r.raise_for_status()
-        addr = (r.json() or {}).get("address") or {}
+        data = r.json() or {}
+        addr = data.get("address") or {}
     except Exception:
         return None
+
+    # Nominatim rend aussi les coordonnées de la feature qu'il a trouvée :
+    # loin du point demandé, sa réponse ne décrit pas où l'utilisateur est.
+    try:
+        found_lat, found_lon = float(data.get("lat")), float(data.get("lon"))
+        drift_km = _haversine_km(lat, lon, found_lat, found_lon)
+    except (TypeError, ValueError):
+        drift_km = None
+    if drift_km is not None and drift_km > _REVERSE_GEOCODE_MAX_DRIFT_KM:
+        print(f"[Géoloc] réponse Nominatim écartée : {drift_km:.0f} km du point demandé")
+        place = {"city": "", "country_code": (addr.get("country_code") or "").lower(),
+                 "country_name": addr.get("country") or ""}
+        cache[key] = {"_at": time.time(), "place": place}
+        _write_geocode_cache(cache)
+        return place
 
     # Du plus fin au plus large : on veut le quartier (T10, Kouria, Keitaya),
     # pas seulement l'agglomération.
@@ -161,7 +198,7 @@ def reverse_geocode(lat: float, lon: float) -> Optional[dict]:
         "country_code": (addr.get("country_code") or "").lower(),
         "country_name": addr.get("country") or "",
     }
-    cache[key] = place
+    cache[key] = {"_at": time.time(), "place": place}
     _write_geocode_cache(cache)
     return place
 
@@ -247,34 +284,98 @@ def _write_geocode_cache(cache: dict) -> None:
         pass
 
 
-def geocode(place: str) -> Optional[Tuple[float, float]]:
-    """Coordonnées d'un lieu (ville, pays) via Open-Meteo (sans clé), avec
-    un petit cache disque puisque ça ne change jamais pour un même lieu."""
-    if not place:
-        return None
-    cache = _read_geocode_cache()
-    if place in cache:
-        lat, lon = cache[place]
-        return lat, lon
+def _nominatim_search(place: str, country_code: str) -> Optional[Tuple[float, float]]:
+    """Repli fin quand Open-Meteo ne connaît pas le lieu (quartier, commune)."""
     if not _REQUESTS:
         return None
     try:
+        params = {"q": place, "format": "json", "limit": 1}
+        if country_code:
+            params["countrycodes"] = country_code.lower()
         r = requests.get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": place, "count": 1, "language": "fr", "format": "json"},
+            "https://nominatim.openstreetmap.org/search",
+            params=params,
+            headers={"User-Agent": "ANO-GPT/1.0 (assistant personnel)"},
             timeout=6,
         )
         r.raise_for_status()
-        results = r.json().get("results") or []
+        results = r.json() or []
         if not results:
             return None
-        top = results[0]
-        lat, lon = float(top["latitude"]), float(top["longitude"])
-        cache[place] = [lat, lon]
-        _write_geocode_cache(cache)
-        return lat, lon
+        return float(results[0]["lat"]), float(results[0]["lon"])
     except Exception:
         return None
+
+
+def geocode(place: str, *, country_code: str = "") -> Optional[Tuple[float, float]]:
+    """Coordonnées d'un lieu (ville, pays) via Open-Meteo (sans clé), avec
+    un petit cache disque puisque ça ne change jamais pour un même lieu.
+
+    ``country_code`` (ISO-3166-1 alpha2, ex. "GN") favorise un pays quand le
+    nom est ambigu : sans lui, « Kaloum » — un nom générique — a déjà
+    répondu un village du Nigeria plutôt que le quartier de Conakry, parce
+    qu'Open-Meteo rend le premier résultat mondial sans contexte. Repli sur
+    la recherche mondiale si rien ne correspond dans le pays indiqué — pour
+    ne pas bloquer une destination délibérément à l'étranger.
+    """
+    if not place:
+        return None
+    cc = country_code.strip().upper()
+    cache = _read_geocode_cache()
+    cache_key = f"{place}@{cc}" if cc else place
+    if cache_key in cache:
+        lat, lon = cache[cache_key]
+        return lat, lon
+    if not _REQUESTS:
+        return None
+
+    def _search(*, with_country: bool) -> Optional[list]:
+        params = {"name": place, "count": 5 if with_country else 1,
+                  "language": "fr", "format": "json"}
+        if with_country and cc:
+            params["countryCode"] = cc
+        r = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params=params, timeout=6,
+        )
+        r.raise_for_status()
+        return r.json().get("results") or []
+
+    try:
+        results = _search(with_country=bool(cc))
+        if results:
+            top = results[0]
+            lat, lon = float(top["latitude"]), float(top["longitude"])
+            cache[cache_key] = [lat, lon]
+            _write_geocode_cache(cache)
+            return lat, lon
+    except Exception:
+        pass
+
+    # Open-Meteo indexe des villes, pas des quartiers : « Kaloum » (un
+    # quartier de Conakry) y est absent avec un biais pays et répond un
+    # village du Niger sans lui. Nominatim (OpenStreetMap), déjà utilisé
+    # pour le géocodage inverse, connaît les échelles plus fines.
+    nominatim_result = _nominatim_search(place, cc)
+    if nominatim_result:
+        cache[cache_key] = list(nominatim_result)
+        _write_geocode_cache(cache)
+        return nominatim_result
+
+    if cc:
+        # Dernier recours, sans biais : peut renvoyer un résultat homonyme
+        # dans un autre pays, mais vaut mieux qu'un échec sec.
+        try:
+            results = _search(with_country=False)
+            if results:
+                top = results[0]
+                lat, lon = float(top["latitude"]), float(top["longitude"])
+                cache[cache_key] = [lat, lon]
+                _write_geocode_cache(cache)
+                return lat, lon
+        except Exception:
+            pass
+    return None
 
 
 def get_user_coords() -> Optional[Tuple[float, float]]:

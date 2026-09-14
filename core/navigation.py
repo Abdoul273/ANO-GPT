@@ -1083,11 +1083,7 @@ class NavigationManager:
         origin_coords: Optional[tuple[float, float]] = None,
     ) -> tuple[str, Optional[NavigationRoute]]:
         """Lance automatiquement la navigation vers un lieu ou une adresse."""
-        from core.geolocation import geocode, get_precise_user_coords
-
-        dest_coords = geocode(query)
-        if not dest_coords:
-            return f"Impossible de localiser « {query} » sur la carte.", None
+        from core.geolocation import geocode, get_precise_user_coords, reverse_geocode
 
         if origin_coords:
             origin = origin_coords
@@ -1105,6 +1101,21 @@ class NavigationManager:
                     "une position IP ou une ancienne position comme point de départ."
                 ), None
             origin = orig
+
+        # Un nom générique (« Kaloum » existe aussi hors de Guinée) a déjà
+        # renvoyé un village à 2000+ km sans ce biais — Open-Meteo rend le
+        # premier résultat mondial sans contexte. Le pays de l'origine
+        # favorise le bon résultat, avec repli mondial si rien n'y correspond.
+        origin_country = ""
+        try:
+            origin_place = reverse_geocode(origin[0], origin[1])
+            origin_country = str((origin_place or {}).get("country_code") or "")
+        except Exception:
+            pass
+
+        dest_coords = geocode(query, country_code=origin_country)
+        if not dest_coords:
+            return f"Impossible de localiser « {query} » sur la carte.", None
 
         route = self.start_navigation(
             origin=origin,
