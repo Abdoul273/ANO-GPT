@@ -319,7 +319,7 @@ def _start_sounddevice_import() -> None:
 from actions.system_monitor    import SystemMonitor
 from actions.proactive         import ProactiveService
 from actions.background_tasks  import BackgroundTaskService
-from memory.config_manager     import get_brief_enabled
+from memory.config_manager     import get_brief_enabled, save_live_voice as save_live_voice
 from core.screen_consciousness import get_screen_consciousness
 from core.live_speech_config   import (
     DEFAULT_LIVE_VOICE,
@@ -359,6 +359,7 @@ from core.audio_engine import (
     AudioEngine,
     SEND_SAMPLE_RATE,
     _OUTPUT_LATENCY_S,
+    _OUTPUT_SLICE_MS as _OUTPUT_SLICE_MS,
     _BARGE_ARM_S as _BARGE_ARM_S,
     _BARGE_CONFIRM_S as _BARGE_CONFIRM_S,
     _update_barge_in as _update_barge_in,

@@ -1920,14 +1920,13 @@ class AudioEngine:
         output_channels = CHANNELS
         self._audio_output_underflows = 0
         last_visual_update = 0.0
-        try:
+        def _prepare_spatial_output():
+            # SciPy et la découverte PipeWire peuvent prendre plusieurs secondes
+            # à froid : ne jamais les importer sur la boucle de réception Live.
             from core.spatial_audio import get_spatial_processor, spatial_audio_requested
             if spatial_audio_requested():
-                spatial_processor = get_spatial_processor(RECEIVE_SAMPLE_RATE)
-                output_channels = 2
-                print("[JARVIS] 🎧 Spatialisation binaurale HRTF active")
-        except Exception as exc:
-            print(f"[JARVIS] ⚠️ Spatialisation en repli mono : {exc}")
+                return get_spatial_processor(RECEIVE_SAMPLE_RATE)
+            return None
 
         async def _open_stream():
             nonlocal stream, last_output_error
@@ -1986,12 +1985,12 @@ class AudioEngine:
                         current.abort()
                     else:
                         current.stop()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logging.getLogger(__name__).debug("Arrêt de sortie audio impossible : %s", exc)
                 try:
                     current.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logging.getLogger(__name__).warning("Fermeture de sortie audio impossible : %s", exc)
 
             # Fermeture synchrone et bornée : pendant l'annulation d'une tâche,
             # déléguer ceci via asyncio.to_thread laisse un Future orphelin et
@@ -2047,6 +2046,13 @@ class AudioEngine:
             return False, reference
 
         try:
+            try:
+                spatial_processor = await loop.run_in_executor(audio_executor, _prepare_spatial_output)
+                if spatial_processor is not None:
+                    output_channels = 2
+                    print("[JARVIS] 🎧 Spatialisation binaurale HRTF active")
+            except Exception as exc:
+                print(f"[JARVIS] ⚠️ Spatialisation en repli mono : {exc}")
             while True:
                 abort_event = getattr(self, "_audio_abort_event", None)
                 if abort_event is not None and abort_event.is_set():
@@ -2129,8 +2135,8 @@ class AudioEngine:
                     if _fdx is not None:
                         try:
                             _fdx.feed_speaker(speaker_reference)
-                        except Exception:
-                            pass  # Ne jamais bloquer la lecture
+                        except Exception as exc:
+                            logging.getLogger(__name__).debug("Référence AEC indisponible : %s", exc)
                     abort_event = getattr(self, "_audio_abort_event", None)
                     if abort_event is not None and abort_event.is_set():
                         _close_stream(abort=True)

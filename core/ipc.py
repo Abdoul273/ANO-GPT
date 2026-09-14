@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -140,6 +141,7 @@ def send_command(line: str, timeout: float = 3.0) -> str:
         raise ConnectionError(f"ANO-GPT is not running (no socket at {path})")
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        deadline = time.monotonic() + timeout
         s.settimeout(timeout)
         try:
             s.connect(str(path))
@@ -148,13 +150,17 @@ def send_command(line: str, timeout: float = 3.0) -> str:
         s.sendall((line.strip() + "\n").encode("utf-8"))
         chunks = []
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("IPC reply timed out; command outcome is unknown")
+            s.settimeout(remaining)
             try:
                 buf = s.recv(4096)
-            except socket.timeout:
-                break
+            except socket.timeout as exc:
+                raise TimeoutError("IPC reply timed out; command outcome is unknown") from exc
             if not buf:
-                break
+                raise ConnectionError("IPC reply incomplete; command outcome is unknown")
             chunks.append(buf)
             if b"\n" in buf:
                 break
-    return b"".join(chunks).decode("utf-8", errors="replace").strip()
+    return b"".join(chunks).split(b"\n", 1)[0].decode("utf-8", errors="replace").strip()

@@ -127,7 +127,7 @@ def test_adapt_command_for_arch():
     assert adapt_command_for_arch("sudo apt install -y nmap") == "sudo pacman -S --needed nmap"
     assert adapt_command_for_arch("sudo apt-get install -y wireshark-qt") == "sudo pacman -S --needed wireshark-qt"
     assert adapt_command_for_arch("apt install git curl") == "pacman -S --needed git curl"
-    assert adapt_command_for_arch("sudo apt-get update") == "sudo pacman -Sy"
+    assert adapt_command_for_arch("sudo apt-get update") == "checkupdates"
     assert adapt_command_for_arch("sudo apt upgrade -y") == "sudo pacman -Syu"
     assert adapt_command_for_arch("sudo apt remove --purge nmap") == "sudo pacman -Rns nmap"
     assert adapt_command_for_arch("apt search ripgrep") == "pacman -Ss ripgrep"

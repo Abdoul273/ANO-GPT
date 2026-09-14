@@ -40,7 +40,7 @@ CORE: frozenset[str] = frozenset({
     # reconnexion suivante aurait déjà laissé passer la question.
     "screen_process", "capture_control", "point_on_screen", "visual_recognition",
     # Carte et position
-    "show_map", "close_map", "location",
+    "show_map", "close_map", "location", "show_country_info",
     # Téléphone (ANO-Remote)
     "phone_call", "phone_hangup", "phone_sms", "phone_contacts",
     # Temps

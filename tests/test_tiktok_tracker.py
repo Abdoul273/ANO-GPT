@@ -133,3 +133,12 @@ def test_tool_is_declared_to_the_model():
     from core.tool_dispatcher import TOOL_DECLARATIONS
     names = {d["name"] for d in TOOL_DECLARATIONS}
     assert "tiktok_tracker" in names
+
+
+def test_browser_selection_uses_only_chrome_policy(monkeypatch):
+    from core import browser_policy
+    monkeypatch.setenv("ANO_TIKTOK_BROWSER", "/usr/bin/firefox")
+    monkeypatch.setattr(browser_policy, "chrome_binary", lambda: None)
+    assert tt._browser_executable() is None
+    monkeypatch.setattr(browser_policy, "chrome_binary", lambda: "/usr/bin/google-chrome")
+    assert tt._browser_executable() == "/usr/bin/google-chrome"

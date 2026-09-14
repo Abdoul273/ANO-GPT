@@ -75,3 +75,33 @@ def test_une_action_deja_executee_ne_repart_pas():
             break
         threading.Event().wait(0.01)
     assert len(runs) == 1
+
+
+def test_callback_failure_is_not_announced_as_success():
+    shown, notifications = [], []
+    completed = threading.Event()
+    def notify(text):
+        notifications.append(text)
+        if len(notifications) == 2:
+            completed.set()
+    human_confirmation.bind(show=shown.append, notify=notify)
+    human_confirmation.request("sms", "SMS", "simulation", lambda: "Téléphone absent : SMS non envoyé.")
+    assert human_confirmation.resolve(shown[0].token, True)
+    assert completed.wait(1)
+    assert notifications[-1] == "Résultat de l'action : Téléphone absent : SMS non envoyé."
+    assert "Action terminée" not in notifications[-1]
+    human_confirmation.bind(show=shown.append)
+
+
+def test_callback_exception_notifies_user():
+    shown = []
+    failed = threading.Event()
+    def fail(): raise TimeoutError("simulation")
+    def notify(text):
+        if "pas rendu de résultat confirmé" in text:
+            failed.set()
+    human_confirmation.bind(show=shown.append, notify=notify)
+    human_confirmation.request("sms", "SMS", "simulation", fail)
+    assert human_confirmation.resolve(shown[0].token, True)
+    assert failed.wait(1)
+    human_confirmation.bind(show=shown.append)

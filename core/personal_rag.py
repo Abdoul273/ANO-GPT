@@ -355,7 +355,7 @@ class TreeSitterCodeExtractor:
             content_str = content_bytes.decode("utf-8", errors="replace")
         except Exception as e:
             logger.error("Impossible de lire %s: %s", file_path, e)
-            return []
+            raise
 
         parser = self._parsers[lang]
         chunks: List[CodeChunk] = []
@@ -455,10 +455,7 @@ class TreeSitterCodeExtractor:
 
     def _extract_structural_fallback(self, file_path: Path, lang: str) -> List[CodeChunk]:
         """Découpage symbolique sans extension native pour CPython 3.14."""
-        try:
-            text = file_path.read_text("utf-8", errors="replace")
-        except OSError:
-            return []
+        text = file_path.read_text("utf-8", errors="replace")
         lines = text.splitlines()
         filename = file_path.name
         chunks: List[CodeChunk] = []
@@ -872,10 +869,7 @@ class TreeSitterCodeExtractor:
     def _fallback_extract(self, path: Path, content: str = "") -> List[CodeChunk]:
         """Découpage par blocs de lignes avec chevauchement en cas d'absence de parser."""
         if not content:
-            try:
-                content = path.read_text("utf-8", errors="replace")
-            except Exception:
-                return []
+            content = path.read_text("utf-8", errors="replace")
 
         lines = content.splitlines()
         chunks: List[CodeChunk] = []
@@ -913,7 +907,7 @@ class MarkdownDocExtractor:
             content = file_path.read_text("utf-8", errors="replace")
         except Exception as e:
             logger.error("Erreur lecture markdown %s: %s", file_path, e)
-            return []
+            raise
 
         lines = content.splitlines()
         filename = file_path.name
@@ -988,7 +982,7 @@ class TextDocExtractor:
             content = file_path.read_text("utf-8", errors="replace")
         except Exception as e:
             logger.error("Erreur lecture fichier texte %s: %s", file_path, e)
-            return []
+            raise
 
         lines = content.splitlines()
         filename = file_path.name
@@ -1044,8 +1038,7 @@ class PDFDocExtractor:
 
     def extract_chunks(self, file_path: Path) -> List[CodeChunk]:
         if not HAS_PYPDF:
-            logger.warning("pypdf non disponible pour extraire %s", file_path)
-            return []
+            raise RuntimeError("pypdf non disponible pour extraire le document")
 
         chunks: List[CodeChunk] = []
         filename = file_path.name
@@ -1075,6 +1068,7 @@ class PDFDocExtractor:
                 )
         except Exception as e:
             logger.error("Erreur extraction PDF %s: %s", file_path, e)
+            raise
 
         for idx, c in enumerate(chunks):
             c.chunk_index = idx
@@ -1462,19 +1456,20 @@ class PersonalRAG:
             if existing_rec["file_hash"] == current_hash and abs(existing_rec["mtime"] - current_mtime) < 0.01:
                 return False, 0, existing_rec["chunk_count"]
 
-        # Extraction des nouveaux blocs (chunks)
-        if ext in SUPPORTED_CODE_EXTENSIONS:
-            new_chunks = self.code_extractor.extract_chunks(file_path)
-        elif ext in (".md", ".markdown"):
-            new_chunks = self.md_extractor.extract_chunks(file_path)
-        elif ext in (".txt", ".text", ".rst"):
-            new_chunks = self.txt_extractor.extract_chunks(file_path)
-        elif ext == ".pdf":
-            new_chunks = self.pdf_extractor.extract_chunks(file_path)
-        else:
-            new_chunks = []
-
-        if not new_chunks:
+        try:
+            # Extraction des nouveaux blocs (chunks)
+            if ext in SUPPORTED_CODE_EXTENSIONS:
+                new_chunks = self.code_extractor.extract_chunks(file_path)
+            elif ext in (".md", ".markdown"):
+                new_chunks = self.md_extractor.extract_chunks(file_path)
+            elif ext in (".txt", ".text", ".rst"):
+                new_chunks = self.txt_extractor.extract_chunks(file_path)
+            elif ext == ".pdf":
+                new_chunks = self.pdf_extractor.extract_chunks(file_path)
+            else:
+                new_chunks = []
+        except Exception:
+            logger.exception("Indexation impossible ; version précédente conservée : %s", file_path)
             return False, 0, 0
 
         # Récupération des blocs existants pour ce fichier

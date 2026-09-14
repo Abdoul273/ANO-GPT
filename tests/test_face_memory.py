@@ -39,6 +39,7 @@ class FakeEngine:
 
 @pytest.fixture
 def mem(tmp_path, monkeypatch):
+    monkeypatch.setattr(vr, "_keep_photo", lambda *args, **kwargs: "")
     saved: list[tuple] = []
     monkeypatch.setattr(memory_store, "save", lambda value, **kw: saved.append((value, kw)) or "ok")
     monkeypatch.setattr(memory_store, "forget", lambda key: "ok")
@@ -154,6 +155,8 @@ def test_watcher_announces_each_person_once_per_cooldown(mem):
     assert len(events) == 1
     unknown = fm.Match(face=_face(5), person=None, similarity=0.1, pending_id="V9")
     watcher._announce([known, unknown])
+    assert len(events) == 1  # Une seule apparition ne suffit pas.
+    watcher._announce([known, unknown])
     assert len(events) == 2 and events[1][0].pending_id == "V9"
 
 
@@ -207,7 +210,7 @@ def test_tool_object_path_uses_gemini_search_and_personal_memory(mem, monkeypatc
     monkeypatch.setattr(vr, "_search_object", lambda q, budget_s=10.0: f"résultats pour {q} : ~25 €")
     monkeypatch.setattr(memory_store, "search", lambda q, limit=5, **kw: [{"id": 1, "value": "Mon Arduino sert au projet serre."}])
     session, player = {}, Player()
-    out = vr.visual_recognition({"action": "identify", "question": "c'est quoi ça ?"}, player=player,
+    out = vr.visual_recognition({"action": "identify", "question": "c'est quoi ça et quel est son prix ?"}, player=player,
                                 session_memory=session, grab_frame=lambda: (b"img", "image/jpeg"))
     assert "[OBJET IDENTIFIÉ" in out and "Arduino Uno R3" in out and "25 €" in out
     assert "projet serre" in out and session[vr.LAST_OBJECT_KEY]["brand"] == "Arduino"
@@ -254,3 +257,205 @@ def test_pack_and_declaration():
     assert "visual_recognition" in {d["name"] for d in tp.select_declarations(TOOL_DECLARATIONS, frozenset())}
     assert any(d["name"] == "visual_recognition" for d in TOOL_DECLARATIONS)
     assert "visual_recognition" in _TOOL_LABELS
+
+
+def test_simple_object_identification_does_not_search(mem, monkeypatch):
+    monkeypatch.setattr(vr, "identify_object", lambda *args: {"name": "objet", "confidence": 0.9})
+    def unexpected_search(*args, **kwargs):
+        pytest.fail("Une identification simple ne doit pas attendre le web")
+    monkeypatch.setattr(vr, "_search_object", unexpected_search)
+    assert "objet" in vr.visual_recognition({"action": "identify", "question": "c'est quoi ça ?"},
+                                           grab_frame=lambda: b"img")
+
+
+def test_identical_question_rechecks_changed_scene(mem, monkeypatch):
+    seen = []
+    def identify(image, *args):
+        seen.append(image)
+        return {"name": image.decode(), "confidence": 0.9}
+    monkeypatch.setattr(vr, "identify_object", identify)
+    for image in (b"premier", b"second"):
+        report = vr.visual_recognition({"action": "identify", "expect": "object"},
+                                       grab_frame=lambda image=image: image)
+        assert image.decode() in report
+    assert seen == [b"premier", b"second"]
+
+
+def test_two_similar_people_require_confirmation(mem):
+    mem.enroll("Karim", faces=[_face(3)])
+    mem.enroll("Ali", faces=[_face(3, noise=.08)])
+    result = mem.identify(b"img", faces=[_face(3)])[0]
+    assert result.similarity > fm.SURE_THRESHOLD
+    assert result.margin < fm.IDENTITY_MARGIN
+    assert result.status == "maybe"
+    assert all(p.seen_count == 0 for p in mem.store.list_people())
+
+
+def test_runner_up_excludes_other_photos_of_same_person(mem):
+    mem.enroll("Karim", faces=[_face(3), _face(3, noise=.1)])
+    result = mem.identify(b"img", faces=[_face(3, noise=.05)])[0]
+    assert result.status == "known"
+
+
+def test_identifying_never_silently_trains_a_profile(mem):
+    person, _, _ = mem.enroll("Karim", faces=[_face(3)])
+    # Empreinte ressemblante mais assez différente pour déclencher l'ancien
+    # apprentissage automatique (similarité entre 0.42 et 0.80).
+    candidate = _face(3, noise=1.0)
+    for _ in range(4):
+        assert mem.identify(b"img", faces=[candidate])[0].status == "known"
+    assert mem.store.get(person.id).vectors == 1
+
+
+@pytest.mark.parametrize("kwargs", [{"sharp": 2}, {"size": 30}])
+def test_bad_capture_cannot_be_enrolled_through_pending(mem, kwargs):
+    result = mem.identify(b"img", faces=[_face(3, **kwargs)])[0]
+    assert result.status == "unknown" and not result.pending_id
+    assert "NON IDENTIFIABLE" in mem.describe([result])
+    assert not mem.pending()
+
+
+@pytest.mark.parametrize("vector", [np.zeros(128), np.full(128, np.nan), np.ones(127), np.full(128, np.inf)])
+def test_invalid_embeddings_rejected_without_creating_person(mem, vector):
+    face = _face(3)
+    face.embedding = vector
+    with pytest.raises(ValueError, match="empreinte"):
+        mem.enroll("Karim", faces=[face])
+    assert mem.store.count() == 0
+    result = mem.identify(b"img", faces=[face])[0]
+    assert result.status == "unknown" and not result.pending_id
+
+
+def test_normalization_and_duplicate_suppression(mem):
+    face = _face(3)
+    face.embedding *= 20
+    person, added, _ = mem.enroll("Karim", faces=[face, face])
+    assert added == 1
+    assert mem.store.best_match(_vec(3))[1] == pytest.approx(1)
+    assert mem.store.add_vectors(person.id, [(_vec(3) * 5, .8)]) == 0
+    assert mem.store.get(person.id).vectors == 1
+
+
+def test_corrupt_stored_vector_does_not_break_valid_profiles(mem):
+    person, _, _ = mem.enroll("Karim", faces=[_face(3)])
+    with mem.store._conn() as conn:
+        conn.execute("INSERT INTO face_vectors(person_id, vec, quality, created_at) VALUES (?, ?, ?, ?)",
+                     (person.id, b"broken", .9, "test"))
+    mem.store._reload_cache()
+    assert mem.store.best_match(_vec(3))[0] == person.id
+
+
+def test_failed_enrollment_preserves_pending(mem, monkeypatch):
+    result = mem.identify(b"img", faces=[_face(3)])[0]
+    def fail(*args, **kwargs):
+        raise OSError("disk unavailable")
+    monkeypatch.setattr(mem.store, "upsert_person", fail)
+    with pytest.raises(OSError):
+        mem.enroll("Karim", pending_id=result.pending_id)
+    assert mem.pending()[0].id == result.pending_id
+
+
+def test_pending_expiry_checked_before_enrollment(mem, monkeypatch):
+    result = mem.identify(b"img", faces=[_face(3)])[0]
+    pending = mem.pending()[0]
+    monkeypatch.setattr(fm.time, "monotonic", lambda: pending.last_seen + fm.PENDING_TTL_S + 1)
+    with pytest.raises(ValueError):
+        mem.enroll("Karim", pending_id=result.pending_id)
+    assert mem.store.count() == 0
+
+
+def test_pending_count_is_bounded(mem, monkeypatch):
+    monkeypatch.setattr(fm, "MAX_PENDING_FACES", 3)
+    for seed in range(8):
+        mem.identify(b"img", faces=[_face(seed)])
+    assert len(mem.pending()) == 3
+
+
+def test_mixed_people_are_not_enrolled_together(mem):
+    with pytest.raises(ValueError, match="captures incohérentes"):
+        mem.enroll("Karim", faces=[_face(3), _face(8)])
+    assert mem.store.count() == 0
+
+
+def test_watcher_requires_consecutive_observations_and_limits_writes(mem):
+    person, _, _ = mem.enroll("Karim", faces=[_face(3)])
+    known = fm.Match(_face(3), person, .9)
+    events = []
+    watcher = fm.FaceWatcher(mem, lambda: b"", lambda *event: events.append(event))
+    watcher._announce([known])
+    watcher._announce([])
+    watcher._announce([known])
+    assert not events
+    watcher._announce([known])
+    watcher._announce([known])
+    assert len(events) == 1
+    assert mem.store.get(person.id).seen_count == 1
+
+
+def test_watcher_stop_keeps_reference_to_unfinished_worker(mem):
+    class Worker:
+        def join(self, timeout):
+            pass
+        def is_alive(self):
+            return True
+    watcher = fm.FaceWatcher(mem, lambda: b"", lambda *args: None)
+    worker = Worker()
+    watcher._thread = worker
+    watcher.stop()
+    assert watcher._thread is worker and watcher.running
+
+
+def test_tool_refuses_ambiguous_group_enrollment(mem, monkeypatch):
+    monkeypatch.setattr(vr, "_grab_best", lambda *a, **k: (b"img", "image/jpeg", [_face(3), _face(8)]))
+    answer = vr.visual_recognition({"action": "remember_person", "name": "Karim"}, grab_frame=lambda: b"img")
+    assert "Plusieurs visages" in answer
+    assert mem.store.count() == 0
+
+
+def test_two_faces_in_one_frame_never_share_a_pending_identity(mem):
+    matches = mem.identify(b"img", faces=[_face(3, x=10), _face(3, noise=.1, x=300)])
+    assert len({match.pending_id for match in matches}) == 2
+    mem.enroll("Karim", pending_id=matches[0].pending_id)
+    assert [pending.id for pending in mem.pending()] == [matches[1].pending_id]
+
+
+def test_unusable_face_card_asks_for_better_capture(mem):
+    matches = mem.identify(b"img", faces=[_face(3, sharp=2)])
+    player = Player()
+    vr._show_faces_card(player, matches)
+    assert "Image à reprendre" in player.cards[0][2]
+    assert "dis-moi qui" not in player.cards[0][2]
+
+
+def test_model_loading_is_serialized_and_published_together(monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    started, release = threading.Event(), threading.Event()
+    calls = []
+    detector, recognizer = object(), object()
+    def make_detector(*args):
+        calls.append("detector")
+        started.set()
+        assert release.wait(2)
+        return detector
+    def make_recognizer(*args):
+        calls.append("recognizer")
+        return recognizer
+    monkeypatch.setattr(fm, "ensure_models", lambda: True)
+    monkeypatch.setattr(fm, "_cv2", lambda: SimpleNamespace(
+        setNumThreads=lambda count: None,
+        FaceDetectorYN=SimpleNamespace(create=make_detector),
+        FaceRecognizerSF=SimpleNamespace(create=make_recognizer)))
+    engine = fm.FaceEngine()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(engine._load)
+        try:
+            assert started.wait(1)
+            assert engine._det is None and engine._rec is None
+            second = pool.submit(engine._load)
+        finally:
+            release.set()
+        assert first.result(timeout=2) and second.result(timeout=2)
+    assert calls == ["detector", "recognizer"]

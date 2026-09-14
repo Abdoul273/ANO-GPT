@@ -608,6 +608,42 @@ def test_une_erreur_portaudio_pendant_la_coupure_ne_ferme_pas_lapp(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_spatial_initialization_keeps_event_loop_responsive(monkeypatch):
+    from core import spatial_audio
+
+    started, release = threading.Event(), threading.Event()
+
+    def slow_device_detection():
+        started.set()
+        assert release.wait(2)
+        return False
+
+    monkeypatch.setattr(spatial_audio, "spatial_audio_requested", slow_device_detection)
+
+    async def scenario():
+        host = types.SimpleNamespace(
+            audio_in_queue=asyncio.Queue(),
+            set_speaking=lambda value: None,
+            reset_audio_and_turn_state=lambda reason: None,
+        )
+        task = asyncio.create_task(JarvisLive._play_audio(host))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            # Le worker attend encore : la boucle doit pouvoir annuler l'audio.
+            assert not release.is_set()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, .5)
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+    asyncio.run(scenario())
+
+
 def test_interrupt_pendant_reflexion_arme_le_rejet_et_remet_en_ecoute():
     j = _StubJarvis(model_turn_active=False)
     j.ui = _StateUI()

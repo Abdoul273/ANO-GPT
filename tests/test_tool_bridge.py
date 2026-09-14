@@ -80,6 +80,51 @@ def test_un_outil_sans_retour_ne_produit_pas_le_mot_none():
     assert decode_reply("OK " + reply) == ""
 
 
+@pytest.mark.parametrize("args", [[], "", 0, False, None])
+def test_falsey_invalid_arguments_never_reach_handler(args):
+    calls = []
+    reply = dispatch({"x": lambda a: calls.append(a)}, json.dumps({"name": "x", "args": args}))
+    with pytest.raises(ToolError, match="objet JSON"):
+        decode_reply("OK " + reply)
+    assert calls == []
+
+
+@pytest.mark.parametrize("stall", [False, True])
+def test_partial_socket_reply_is_never_a_success(tmp_path, monkeypatch, stall):
+    from core import ipc
+
+    socket_file = tmp_path / "partial.sock"
+    monkeypatch.setattr(ipc, "socket_path", lambda: socket_file)
+
+    async def scenario():
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def partial(reader, writer):
+            try:
+                await reader.readline()
+                writer.write(b"OK partial")
+                await writer.drain()
+                if stall:
+                    await release.wait()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                finished.set()
+
+        server = await asyncio.start_unix_server(partial, path=str(socket_file))
+        try:
+            with pytest.raises((TimeoutError, ConnectionError)):
+                await asyncio.to_thread(ipc.send_command, "ping", .1)
+        finally:
+            release.set()
+            server.close()
+            await server.wait_closed()
+            await asyncio.wait_for(finished.wait(), 1)
+
+    asyncio.run(scenario())
+
+
 def test_une_erreur_du_socket_est_distinguee_dune_erreur_doutil():
     """L'agent réagit différemment : relancer l'app, ou corriger son appel."""
     with pytest.raises(ToolError):

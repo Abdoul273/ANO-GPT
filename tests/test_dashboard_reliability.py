@@ -110,3 +110,34 @@ def test_notify_capture_broadcasts_from_worker_thread(tmp_path, monkeypatch):
         assert received[0]["name"] == "photo.jpg"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("route", ["/login", "/api/pair", "/api/device-login"])
+@pytest.mark.parametrize("payload", [[], 42, {"pin": 42, "key": 42, "device_token": 42}])
+def test_authentication_rejects_non_object_or_non_text(dashboard, route, payload):
+    with TestClient(dashboard.app) as client:
+        assert client.post(route, json=payload).status_code == 400
+
+
+@pytest.mark.parametrize("route", ["/api/live_position", "/api/navigation/state"])
+def test_location_requires_authentication(dashboard, route):
+    with TestClient(dashboard.app) as client:
+        assert client.get(route).status_code == 401
+
+
+@pytest.mark.parametrize("route", ["/ws", "/ws/phone-audio", "/ws/phone-camera"])
+def test_revoke_invalidates_open_socket_and_http_token(dashboard, monkeypatch, route):
+    from starlette.websockets import WebSocketDisconnect
+    monkeypatch.setattr(server, "_save_devices", lambda devices: None)
+    dashboard._tokens.add("test-session")
+    dashboard._device_sessions["device"] = {"session_key": "fake"}
+    with TestClient(dashboard.app) as client:
+        with client.websocket_connect(route + "?token=test-session") as ws:
+            response = client.post("/api/revoke-devices", headers={"Authorization": "Bearer test-session"})
+            assert response.status_code == 200
+            assert response.json()["revoked"] == 1
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+        assert client.post("/api/command", json={"text": "test"},
+                           headers={"Authorization": "Bearer test-session"}).status_code == 401
+    assert not dashboard._authenticated_clients

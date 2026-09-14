@@ -36,10 +36,23 @@ def test_shell_workspace_navigation_is_confirmed_without_window_move(monkeypatch
     assert "Aucune fenêtre n'a été déplacée" in result
 
 
+def test_raw_legacy_hyprctl_workspace_is_routed_to_verified_action(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        shell_exec,
+        "hypr_control",
+        lambda parameters, player=None: calls.append(parameters) or "Navigation confirmée",
+    )
+
+    result = shell_exec.run_shell({"command": "hyprctl dispatch workspace 2"})
+
+    assert result == "Navigation confirmée"
+    assert calls == [{"action": "workspace", "value": "2"}]
+
+
 def test_move_to_workspace_needs_an_identifiable_active_window(monkeypatch):
     monkeypatch.setattr(shell_exec, "_hypr_active_window", lambda: {})
 
     result = shell_exec.hypr_control({"action": "move_to_workspace", "value": "1"})
 
     assert "Déplacement annulé" in result
-

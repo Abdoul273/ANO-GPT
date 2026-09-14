@@ -71,11 +71,27 @@ def test_contrat_sms_entrant_demande_les_trois_modes_sans_envoi_implicite():
     assert "SMS ENTRANT" in prompt
 
 
-def test_envoi_auto_reponse_est_ponctuel_et_exige_un_drapeau_explicite():
-    source = (ROOT / "core/tool_dispatcher.py").read_text()
-    assert "auto_reply_authorized" in source
-    assert "if auto_reply_authorized:" in source
-    assert "return human_confirmation.request(" in source
+def test_un_drapeau_modele_ne_peut_pas_autoriser_un_sms(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from core import human_confirmation
+    from core.tool_dispatcher import ToolDispatcher
+    calls = []
+    async def send(*args):
+        calls.append(args)
+        return {"ok": True}
+    pending = []
+    monkeypatch.setattr(human_confirmation, "request",
+                        lambda *args: pending.append(args[-1]) or "en attente")
+    async def scenario():
+        host = SimpleNamespace(_dashboard=SimpleNamespace(request_phone_sms=send))
+        result = await ToolDispatcher._send_phone_sms(host, {
+            "target": "FAKE", "body": "simulation", "auto_reply_authorized": True,
+        })
+        assert result == "en attente" and not calls
+        await asyncio.to_thread(pending[0])
+        assert len(calls) == 1
+    asyncio.run(scenario())
 
 
 def test_module_android_applique_explicitement_le_plugin_kotlin():

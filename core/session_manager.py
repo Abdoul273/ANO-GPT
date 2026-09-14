@@ -11,6 +11,8 @@ Concurrence
 """
 from __future__ import annotations
 
+import logging
+
 import asyncio
 from core.text_clean import strip_emoji
 import json
@@ -512,7 +514,7 @@ class SessionManager:
                 stop_watcher()
                 closed.append("veille des visages")
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans close_all_cameras")
         studio = getattr(self, "_camera", None)
         if studio is not None and getattr(studio, "active", False):
             try:
@@ -529,7 +531,7 @@ class SessionManager:
         try:
             self.ui.stop_camera_stream()
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans close_all_cameras")
         if not closed:
             return "La caméra est déjà fermée."
         return "Caméra fermée (" + ", ".join(closed) + ")."
@@ -750,7 +752,7 @@ class SessionManager:
                 try:
                     self._activity_cancel()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).warning("Échec auxiliaire dans _submit_text_turn")
             trace = getattr(self, "_live_send_trace", None)
             if trace is not None:
                 trace.append((time.monotonic(), "text_turn", text[:80]))
@@ -844,7 +846,7 @@ class SessionManager:
                 f"{short}\n\nDis-le-moi autrement ou réessaie — je n'ai pas pu terminer cette action.",
             )
         except Exception:
-            pass  # jamais laisser un souci d'affichage masquer l'erreur réelle
+            logging.getLogger(__name__).warning("Échec auxiliaire dans speak_error")
         self.speak(f"{user_address()}, l'outil {tool_name} a rencontré une erreur. {short}")
 
     # ── Cerveau externe ──────────────────────────────────────────────────
@@ -1156,6 +1158,18 @@ class SessionManager:
                 msg = await self.out_queue.get()
                 marker = msg.get("activity") if isinstance(msg, dict) else None
                 if marker != "video":
+                    # La file peut contenir du PCM capturé avant une réponse,
+                    # une interruption ou une coupure réseau. Ne pas le rejouer.
+                    epoch = getattr(self, "_speech_output_epoch", 0)
+                    captured_at = msg.get("_captured_at")
+                    stale = (isinstance(captured_at, (int, float))
+                             and time.monotonic() - captured_at > 1.0)
+                    muted = (msg.get("_audio_source", "pc") != "phone"
+                             and getattr(getattr(self, "ui", None), "muted", False))
+                    if (stale or muted or getattr(self, "_is_speaking", False)
+                            or getattr(self, "_interrupted", False)
+                            or msg.get("_audio_epoch", epoch) != epoch):
+                        continue
                     captions.push(msg)
                 try:
                     if marker == "video":
@@ -1376,7 +1390,7 @@ class SessionManager:
                                 try:
                                     txt = STTCorrector().correct(txt)
                                 except Exception:
-                                    pass
+                                    logging.getLogger(__name__).warning("Échec auxiliaire dans _receive_audio")
                                 # Mémoriser aussi les fragments différés. Le
                                 # serveur peut envoyer soit une révision
                                 # cumulative (« ouvre » → « ouvre Firefox »),
@@ -1484,12 +1498,12 @@ class SessionManager:
                                                     name="screen-context-inject", ui=self.ui,
                                                 )
                                         except Exception:
-                                            pass
+                                            logging.getLogger(__name__).warning("Échec auxiliaire dans _receive_audio")
                                     try:
                                         from core.prosody import get_prosody_manager
                                         get_prosody_manager().record_user_query(merged or txt)
                                     except Exception:
-                                        pass
+                                        logging.getLogger(__name__).warning("Échec auxiliaire dans _receive_audio")
                                     # Retour visuel immédiat : la phrase s'écrit dans
                                     # le panneau de gauche pendant qu'elle est dite.
                                     self.ui.set_user_transcript(merged)

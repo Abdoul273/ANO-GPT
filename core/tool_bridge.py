@@ -125,7 +125,7 @@ def dispatch(handlers: Dict[str, Callable[[dict], Any]], raw: str) -> str:
         return _fail("la requête doit être un objet JSON")
 
     name = str(payload.get("name") or "").strip()
-    args = payload.get("args") or {}
+    args = payload.get("args", {})
     if not isinstance(args, dict):
         return _fail("'args' doit être un objet JSON")
     if not name:

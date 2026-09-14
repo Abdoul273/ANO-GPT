@@ -6,8 +6,10 @@ from pathlib import Path
 print("Installing requirements...")
 subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], timeout=1800, check=True)
 
-print("Installing Playwright browsers...")
-subprocess.run([sys.executable, "-m", "playwright", "install"], check=True, timeout=1800)
+from core.browser_policy import chrome_binary
+
+if not chrome_binary():
+    print("Google Chrome est requis pour les fonctions navigateur (Arch : yay -S google-chrome).")
 
 if platform.system() == "Windows":
     try:

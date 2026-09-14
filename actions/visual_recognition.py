@@ -21,6 +21,8 @@ jamais l'image lui-même.
 """
 from __future__ import annotations
 
+import logging
+
 import time
 from pathlib import Path
 from typing import Any
@@ -372,7 +374,7 @@ def _keep_photo(player: Any, session_memory, image_bytes: bytes, mime: str,
         try:
             show(title, image_bytes, str(path or ""))
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans _keep_photo")
     if session_memory is not None and path is not None:
         session_memory[LAST_PHOTO_KEY] = str(path)
     return Path(path).name if path is not None else ""
@@ -386,17 +388,19 @@ def _show_faces_card(player: Any, matches: list[fm.Match]) -> None:
         parts: list[str] = []
         for m in matches:
             thumb = fm.thumb_markdown(m.face.thumb_jpeg)
-            if m.status == "known" and m.person is not None:
+            if m.reason:
+                parts.append(f"{thumb}\n\n**Image à reprendre**  \n_{m.reason}_")
+            elif m.status == "known" and m.person is not None:
                 p = m.person
                 seen = f" · vu {p.seen_count}×" if p.seen_count > 1 else ""
-                parts.append(f"{thumb}\n\n**{p.label()}**{seen}  \n_certitude {m.similarity:.0%}_")
+                parts.append(f"{thumb}\n\n**{p.label()}**{seen}  \n_similarité {m.similarity:.2f} (pas une probabilité)_")
             elif m.status == "maybe" and m.person is not None:
-                parts.append(f"{thumb}\n\n**{m.person.name} ?**  \n_ressemblance {m.similarity:.0%} — à confirmer_")
+                parts.append(f"{thumb}\n\n**{m.person.name} ?**  \n_similarité {m.similarity:.2f} — à confirmer_")
             else:
                 parts.append(f"{thumb}\n\n**Inconnu** ({m.pending_id})  \n_dis-moi qui c'est_")
         show(CARD_TYPE, "👤 Reconnaissance", "\n\n---\n\n".join(parts))
     except Exception:
-        pass
+        logging.getLogger(__name__).warning("Échec auxiliaire dans _show_faces_card")
 
 
 def _show_object_card(player: Any, data: dict, image_bytes: bytes) -> None:
@@ -414,7 +418,7 @@ def _show_object_card(player: Any, data: dict, image_bytes: bytes) -> None:
         im.save(buf, format="JPEG", quality=72)
         body.append(f"![objet](data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('ascii')})")
     except Exception:
-        pass  # la carte vaut aussi sans vignette
+        logging.getLogger(__name__).warning("Échec auxiliaire dans _show_object_card")
     try:
         body.append(f"**{data.get('name', 'Objet')}**")
         bm = " ".join(x for x in (data.get("brand"), data.get("model")) if x)
@@ -424,7 +428,7 @@ def _show_object_card(player: Any, data: dict, image_bytes: bytes) -> None:
             body.append(str(data["description"]))
         show(CARD_TYPE, "🔎 Objet identifié", "\n\n".join(body))
     except Exception:
-        pass
+        logging.getLogger(__name__).warning("Échec auxiliaire dans _show_object_card")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -446,26 +450,15 @@ def _pick_pending(mem: fm.FaceMemory, pending_id: str, which: str) -> fm.Pending
     return pending[0]
 
 
-# Un même appel rejoué (reconnexion, modèle qui insiste) ne doit pas reprendre
-# une photo : l'utilisateur a peut-être déjà reposé l'objet, et le modèle
-# commenterait une image qui n'a plus rien à voir avec la question.
-_REPEAT_WINDOW_S = 25.0
-_last_identify: dict = {}
-
-
 def _identify(p: dict, player, session_memory, grab_frame, progress,
               save_photo: Callable[..., Any] | None = None) -> str:
     source = "screen" if str(p.get("source") or "camera").lower().startswith(("screen", "ecran", "écran")) else "camera"
     question = str(p.get("question") or p.get("text") or "").strip()
     want = str(p.get("expect") or "auto").lower()
-    key = (source, want, question.casefold()[:80])
-    last = _last_identify
-    if last and last.get("key") == key and time.monotonic() - float(last.get("at", 0.0)) < _REPEAT_WINDOW_S:
-        progress("même demande qu'il y a un instant : je réutilise la photo déjà prise")
-        return str(last["report"]) + "\n\n(Même photo que précédemment : ne reprends pas de photo, réponds avec ceci.)"
-    report = _identify_once(p, source, question, want, player, session_memory, grab_frame, progress, save_photo)
-    _last_identify.update({"key": key, "at": time.monotonic(), "report": report})
-    return report
+    # Une nouvelle demande peut viser une nouvelle scène, même formulée à
+    # l'identique. Ne jamais réutiliser un rapport sans vérifier l'image.
+    return _identify_once(p, source, question, want, player, session_memory,
+                          grab_frame, progress, save_photo)
 
 
 def _identify_once(p: dict, source: str, question: str, want: str, player, session_memory,
@@ -554,6 +547,9 @@ def _remember_person(p: dict, player, session_memory, grab_frame, progress) -> s
         try:
             for _ in range(2):
                 _img, _mime, got = _grab_best("camera", grab_frame, frames=3, spacing=0.3)
+                if len(got) > 1:
+                    return ("Plusieurs visages sont visibles : présente une seule personne pour l'apprentissage, "
+                            "ou identifie d'abord la scène puis précise le dossier pending_id à retenir.")
                 faces.extend(got[:1])
                 time.sleep(0.4)
         except Exception as exc:
@@ -577,7 +573,7 @@ def _remember_person(p: dict, player, session_memory, grab_frame, progress) -> s
             thumb = fm.thumb_markdown(mem.store.thumb(person.id))
             show(CARD_TYPE, "👤 Visage mémorisé", f"{thumb}\n\n**{person.label()}**  \n_{person.vectors} empreinte(s)_")
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans _remember_person")
     if person.is_owner:
         return f"C'est noté : ce visage, c'est toi{', ' + person.name if person.name and person.name != 'Toi' else ''}. Je te reconnaîtrai désormais."
     if new:
@@ -692,7 +688,7 @@ def _watch(p: dict, player, grab_frame, speak: Callable[[str], None] | None) -> 
             try:
                 log(f"SYS : veille visages — {text}")
             except Exception:
-                pass
+                logging.getLogger(__name__).warning("Échec auxiliaire dans _on_event")
         if callable(speak) and text:
             try:
                 speak(text)
@@ -733,7 +729,7 @@ def visual_recognition(parameters: dict | None = None, player: Any = None,
             if callable(log):
                 log(f"SYS : reconnaissance visuelle — {msg}.")
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Échec auxiliaire dans _progress")
 
     if action in ("identify", "who", "what", "look", "regarde"):
         return _identify(p, player, session_memory, grab_frame, _progress, save_photo)

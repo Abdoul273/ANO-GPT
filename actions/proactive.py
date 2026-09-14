@@ -433,6 +433,16 @@ def desktop_blocks_proactivity() -> str:
             for block in blocks:
                 if "corked: yes" in block:
                     continue
+                # PipeWire crée ce flux passif pour alimenter la source AEC
+                # d'ANO-GPT. Il ne correspond pas à un appel utilisateur et
+                # n'a souvent ni PID ni application.name : l'ancien filtre le
+                # classait donc à tort comme un appel permanent.
+                if (
+                    'media.name = "echo-cancel capture"' in block
+                    or 'node.name = "echo-cancel-capture"' in block
+                    or "node.passive = \"true\"" in block
+                ):
+                    continue
                 if any(own in block for own in ("ano-gpt", "jarvis", "python")):
                     continue
                 return "appel"

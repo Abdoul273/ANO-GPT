@@ -1,6 +1,6 @@
 {
   "https://abdoulgoudoussediallo25-resource.services.ai.azure.com/openai/v1": {
-    "fetched": 1788952390.0009823,
+    "fetched": 1789322612.6105149,
     "roles": {
       "chat": [
         "anogpt-brain",
@@ -100,7 +100,7 @@
         "gpt-audio-mini",
         "Cohere-rerank-v4.0-fast",
         "Cohere-rerank-v4.0-pro",
-        "muse-spark-1.2",
+        "muse-spark-1.3",
         "model-router",
         "gpt-audio",
         "gpt-oss-120b",
@@ -118,6 +118,8 @@
         "FLUX.2-pro",
         "MAI-Image-2.6-Flash",
         "MAI-Image-2.5-Pro",
+        "gpt-image-2.5-flare",
+        "gpt-image-2.5-sunburst",
         "FLUX.2-flex",
         "gpt-image-1.5",
         "gpt-image-1-mini",
@@ -192,7 +194,7 @@
         "grok-4.6",
         "mistral-medium-3-5",
         "mistral-ocr-4-0",
-        "muse-spark-1.2"
+        "muse-spark-1.3"
       ],
       "served": {
         "anogpt-brain": "gpt-5.6-terra"

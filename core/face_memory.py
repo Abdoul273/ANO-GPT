@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -52,11 +53,15 @@ MODEL_URLS = {
 # à chaque démarrage : on refuse tout ce qui est manifestement trop petit.
 _MIN_MODEL_BYTES = {DETECTOR_PATH: 200_000, RECOGNIZER_PATH: 30_000_000}
 
-# Seuils cosinus SFace. OpenCV recommande 0,363 ; on garde une marge des deux
-# côtés : au-dessus de SURE on affirme, entre les deux on propose un prénom
-# avec réserve, en dessous c'est un inconnu.
+# Seuils cosinus SFace : OpenCV publie 0,363 sur LFW, pas une probabilité
+# universelle. On conserve les seuils existants et exige aussi une image
+# exploitable et une séparation suffisante entre deux identités.
 SURE_THRESHOLD = 0.42
 MAYBE_THRESHOLD = 0.34
+# Marge entre deux PERSONNES, pas deux photos de la même personne.
+IDENTITY_MARGIN = 0.08
+MAX_PENDING_FACES = 32
+DUPLICATE_SIMILARITY = 0.9999
 # Deux apparitions du même inconnu à quelques secondes d'écart : on les fusionne
 # dans la même attente plutôt que d'ouvrir un second dossier.
 PENDING_MERGE_THRESHOLD = 0.45
@@ -73,6 +78,17 @@ MIN_SHARPNESS = 25.0
 DETECT_MAX_DIM = 640
 
 OWNER_WORDS = ("moi", "me", "c'est moi", "cest moi", "moi-meme", "moi même", "myself")
+
+
+def _embedding(value: np.ndarray) -> np.ndarray:
+    """Valide et normalise une empreinte SFace sans modifier l'original."""
+    vector = np.asarray(value, dtype=np.float32).reshape(-1)
+    if vector.size != 128 or not np.isfinite(vector).all():
+        raise ValueError("empreinte SFace invalide (128 valeurs finies requises)")
+    norm = float(np.linalg.norm(vector.astype(np.float64)))
+    if norm < 1e-12:
+        raise ValueError("empreinte SFace vide")
+    return (vector / norm).astype(np.float32)
 
 
 def _fold(value: str) -> str:
@@ -150,6 +166,11 @@ class DetectedFace:
         sharp_q = min(1.0, self.sharpness / 120.0)
         return max(0.0, 0.5 * size_q + 0.3 * sharp_q + 0.2 * self.score)
 
+    def usable(self) -> bool:
+        return (self.size >= MIN_ENROLL_FACE_PX
+                and np.isfinite(self.sharpness) and self.sharpness >= MIN_SHARPNESS
+                and np.isfinite(self.score) and self.score >= MIN_DETECT_SCORE)
+
 
 @dataclass
 class Person:
@@ -176,10 +197,15 @@ class Match:
     person: Person | None
     similarity: float
     pending_id: str = ""     # rempli pour un inconnu ou un « peut-être »
+    margin: float = 1.0
+    reason: str = ""
 
     @property
     def status(self) -> str:
-        if self.person is not None and self.similarity >= SURE_THRESHOLD:
+        if not self.face.usable() or self.reason:
+            return "unknown"
+        if (self.person is not None and self.similarity >= SURE_THRESHOLD
+                and self.margin >= IDENTITY_MARGIN):
             return "known"
         if self.person is not None and self.similarity >= MAYBE_THRESHOLD:
             return "maybe"
@@ -196,9 +222,11 @@ class PendingFace:
     best_quality: float
     guess: Person | None = None
     guess_similarity: float = 0.0
+    qualities: list[float] = field(default_factory=list)
 
     def matches(self, vec: np.ndarray) -> float:
-        return max(float(np.dot(v, vec)) for v in self.vectors)
+        # Évite la dérive A~B, B~C, mais A différent de C.
+        return min((float(np.dot(v, vec)) for v in self.vectors), default=-1.0)
 
 
 # ── Moteur ───────────────────────────────────────────────────────────────────
@@ -208,6 +236,7 @@ class FaceEngine:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._load_lock = threading.Lock()
         self._det = None
         self._rec = None
         self._det_size = (0, 0)
@@ -215,7 +244,11 @@ class FaceEngine:
         self.error = ""
 
     def _load(self) -> bool:
-        if self._det is not None:
+        with self._load_lock:
+            return self._load_models()
+
+    def _load_models(self) -> bool:
+        if self._det is not None and self._rec is not None:
             return True
         if self.error:
             return False
@@ -228,10 +261,11 @@ class FaceEngine:
                 cv2.setNumThreads(1)
             except Exception:
                 pass
-            self._det = cv2.FaceDetectorYN.create(
+            detector = cv2.FaceDetectorYN.create(
                 str(DETECTOR_PATH), "", (320, 320), MIN_DETECT_SCORE, 0.3, 50,
             )
-            self._rec = cv2.FaceRecognizerSF.create(str(RECOGNIZER_PATH), "")
+            recognizer = cv2.FaceRecognizerSF.create(str(RECOGNIZER_PATH), "")
+            self._det, self._rec = detector, recognizer
             self.available = True
             return True
         except Exception as exc:
@@ -305,8 +339,10 @@ class FaceEngine:
                 except Exception as exc:
                     print(f"[Visages] empreinte impossible : {exc}")
                     continue
-                norm = float(np.linalg.norm(feat)) or 1.0
-                feat = feat / norm
+                try:
+                    feat = _embedding(feat)
+                except ValueError:
+                    continue
                 box = (max(0, x), max(0, y), bw, bh)
                 sharp = self._sharpness(gray[box[1]:box[1] + bh, box[0]:box[0] + bw])
                 faces.append(DetectedFace(
@@ -333,6 +369,7 @@ class FaceStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=5.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _init(self) -> None:
@@ -377,8 +414,17 @@ class FaceStore:
             if not rows:
                 self._matrix, self._owners = None, []
                 return
-            self._owners = [int(r["person_id"]) for r in rows]
-            self._matrix = np.stack([np.frombuffer(r["vec"], dtype=np.float32) for r in rows])
+            owners, vectors = [], []
+            for row in rows:
+                try:
+                    vector = _embedding(np.frombuffer(row["vec"], dtype=np.float32))
+                except ValueError:
+                    logging.getLogger(__name__).warning("Empreinte invalide ignorée dans le cache des visages")
+                    continue
+                owners.append(int(row["person_id"]))
+                vectors.append(vector)
+            self._owners = owners
+            self._matrix = np.stack(vectors) if vectors else None
 
     @staticmethod
     def _row_to_person(row: sqlite3.Row, vectors: int = 0) -> Person:
@@ -462,8 +508,21 @@ class FaceStore:
         """Ajoute des empreintes ; au-delà du plafond, les moins bonnes partent."""
         if not vectors:
             return 0
+        vectors = [(_embedding(v), float(q)) for v, q in vectors]
+        if any(not np.isfinite(q) or not 0 <= q <= 1 for _, q in vectors):
+            raise ValueError("qualité d'empreinte invalide")
         with self._lock, self._conn() as conn:
             now = _now()
+            existing = [] if self._matrix is None else list(
+                self._matrix[np.asarray(self._owners) == person_id]
+            )
+            distinct = []
+            for vector, quality in vectors:
+                if any(float(np.dot(vector, old)) >= DUPLICATE_SIMILARITY for old in existing):
+                    continue
+                distinct.append((vector, quality))
+                existing.append(vector)
+            vectors = distinct
             conn.executemany(
                 "INSERT INTO face_vectors(person_id, vec, quality, created_at) VALUES (?,?,?,?)",
                 [(person_id, np.asarray(v, dtype=np.float32).tobytes(), float(q), now) for v, q in vectors],
@@ -534,12 +593,20 @@ class FaceStore:
 
     def best_match(self, vec: np.ndarray) -> tuple[int | None, float]:
         """(person_id, cosinus max) sur toutes les empreintes connues."""
+        pid, score, _ = self.match_candidates(vec)
+        return pid, score
+
+    def match_candidates(self, vec: np.ndarray) -> tuple[int | None, float, float]:
+        """Meilleur profil et score du meilleur AUTRE profil, calculés en RAM."""
+        vector = _embedding(vec)
         with self._lock:
             if self._matrix is None or len(self._owners) == 0:
-                return None, 0.0
-            sims = self._matrix @ np.asarray(vec, dtype=np.float32)
+                return None, 0.0, -1.0
+            sims = np.clip(self._matrix @ vector, -1.0, 1.0)
             idx = int(np.argmax(sims))
-            return self._owners[idx], float(sims[idx])
+            owner = self._owners[idx]
+            others = sims[np.asarray(self._owners) != owner]
+            return owner, float(sims[idx]), float(others.max()) if others.size else -1.0
 
     def count(self) -> int:
         with self._lock, self._conn() as conn:
@@ -565,14 +632,24 @@ class FaceMemory:
         for key in [k for k, p in self._pending.items() if p.last_seen < cutoff]:
             self._pending.pop(key, None)
 
-    def _remember_pending(self, face: DetectedFace, guess: Person | None, sim: float) -> str:
+    def _remember_pending(self, face: DetectedFace, guess: Person | None, sim: float,
+                          excluded: set[str] | None = None) -> str:
+        if not face.usable():
+            return ""
         with self._lock:
             self._prune_pending()
             now = time.monotonic()
-            for pend in self._pending.values():
-                if pend.matches(face.embedding) >= PENDING_MERGE_THRESHOLD:
+            ranked = sorted(((pend.matches(face.embedding), pend.id)
+                             for pend in self._pending.values() if pend.id not in (excluded or set())),
+                            reverse=True)
+            if ranked:
+                score, key = ranked[0]
+                runner_up = ranked[1][0] if len(ranked) > 1 else -1.0
+                pend = self._pending[key]
+                if score >= PENDING_MERGE_THRESHOLD and score - runner_up >= IDENTITY_MARGIN:
                     if len(pend.vectors) < MAX_PENDING_VECTORS:
                         pend.vectors.append(face.embedding)
+                        pend.qualities.append(face.enroll_quality())
                     pend.last_seen = now
                     if face.enroll_quality() > pend.best_quality and face.thumb_jpeg:
                         pend.best_quality = face.enroll_quality()
@@ -581,11 +658,15 @@ class FaceMemory:
                         pend.guess, pend.guess_similarity = guess, sim
                     return pend.id
             self._pending_seq += 1
+            if len(self._pending) >= MAX_PENDING_FACES:
+                oldest = min(self._pending, key=lambda key: self._pending[key].last_seen)
+                self._pending.pop(oldest)
             pid = f"V{self._pending_seq}"
             self._pending[pid] = PendingFace(
                 id=pid, vectors=[face.embedding], thumb_jpeg=face.thumb_jpeg,
                 first_seen=now, last_seen=now, best_quality=face.enroll_quality(),
                 guess=guess, guess_similarity=sim,
+                qualities=[face.enroll_quality()],
             )
             return pid
 
@@ -609,19 +690,27 @@ class FaceMemory:
         if faces is None:
             faces = self.engine.detect(image_bytes)
         matches: list[Match] = []
+        used_pending: set[str] = set()
         for face in faces:
-            pid, sim = self.store.best_match(face.embedding)
+            try:
+                face.embedding = _embedding(face.embedding)
+            except ValueError:
+                matches.append(Match(face, None, 0.0, reason="empreinte invalide ; reprendre une image"))
+                continue
+            if not face.usable():
+                matches.append(Match(face, None, 0.0, reason="visage trop petit ou flou ; se rapprocher et mieux éclairer"))
+                continue
+            pid, sim, runner_up = self.store.match_candidates(face.embedding)
             person = self.store.get(pid) if pid is not None and sim >= MAYBE_THRESHOLD else None
-            match = Match(face=face, person=person, similarity=sim)
+            match = Match(face=face, person=person, similarity=sim, margin=sim - runner_up)
             if match.status == "known":
                 if record:
                     self.store.record_sighting(person.id, sim, source)  # type: ignore[union-attr]
-                    # Une rencontre nette enrichit le profil : la personne sera
-                    # reconnue sous cet angle-là aussi la prochaine fois.
-                    if face.enroll_quality() >= 0.45 and sim < 0.80:
-                        self.store.add_vectors(person.id, [(face.embedding, face.enroll_quality())])  # type: ignore[union-attr]
+                    # L'apprentissage reste explicite : une fausse correspondance
+                    # ne doit jamais contaminer durablement l'identité apprise.
             else:
-                match.pending_id = self._remember_pending(face, person, sim)
+                match.pending_id = self._remember_pending(face, person, sim, used_pending)
+                used_pending.add(match.pending_id)
             matches.append(match)
         return matches
 
@@ -667,27 +756,31 @@ class FaceMemory:
         thumb = b""
         if pending_id:
             with self._lock:
-                pend = self._pending.pop(pending_id, None)
+                self._prune_pending()
+                pend = self._pending.get(pending_id)
             if pend is not None:
-                vectors.extend((v, max(0.3, pend.best_quality)) for v in pend.vectors)
+                qualities = pend.qualities if len(pend.qualities) == len(pend.vectors) else [pend.best_quality] * len(pend.vectors)
+                vectors.extend(zip(pend.vectors, qualities))
                 thumb = pend.thumb_jpeg
         for face in faces or []:
-            if face.size >= MIN_ENROLL_FACE_PX and face.sharpness >= MIN_SHARPNESS:
+            if face.usable():
                 vectors.append((face.embedding, face.enroll_quality()))
                 if not thumb or face.enroll_quality() > 0.6:
                     thumb = face.thumb_jpeg or thumb
         if not vectors:
             raise ValueError("aucune empreinte exploitable")
+        vectors = [(_embedding(v), q) for v, q in vectors]
+        if any(float(np.dot(left, right)) < PENDING_MERGE_THRESHOLD
+               for i, (left, _) in enumerate(vectors) for right, _ in vectors[i + 1:]):
+            raise ValueError("captures incohérentes : présenter une seule personne et recommencer")
         existed = self.store.find(name) is not None
         person = self.store.upsert_person(name, relation=relation, notes=notes,
                                           is_owner=is_owner, thumb=thumb)
         added = self.store.add_vectors(person.id, vectors)
-        # Les autres dossiers en attente qui étaient ce même visage n'ont plus
-        # lieu d'être.
+        # Ne supprimer que le dossier explicitement choisi : un sosie dans la
+        # même scène peut avoir une empreinte proche sans être la même personne.
         with self._lock:
-            for key, pend in list(self._pending.items()):
-                if any(pend.matches(v) >= PENDING_MERGE_THRESHOLD for v, _ in vectors):
-                    self._pending.pop(key, None)
+            self._pending.pop(pending_id, None)
         person = self.store.get(person.id) or person
         self._write_long_term(person, first=not existed)
         return person, added, not existed
@@ -750,13 +843,15 @@ class FaceMemory:
             if several and position:
                 rank = xs.index(m.face.center_x)
                 where = " (à gauche)" if rank == 0 else (" (à droite)" if rank == len(xs) - 1 else " (au centre)")
-            if m.status == "known" and m.person is not None:
+            if m.reason:
+                lines.append(f"- NON IDENTIFIABLE{where} : {m.reason}. Ne pas proposer de nom.")
+            elif m.status == "known" and m.person is not None:
                 p = m.person
                 seen = f", vu {p.seen_count} fois" if p.seen_count > 1 else ""
                 last = self._ago(p.last_seen)
                 last = f", dernière fois {last}" if last and p.seen_count > 1 else ""
                 notes = f". Notes : {p.notes}" if p.notes else ""
-                lines.append(f"- CONNU{where} : {p.label()} (certitude {m.similarity:.2f}{seen}{last}){notes}")
+                lines.append(f"- CONNU{where} : {p.label()} (similarité {m.similarity:.2f}{seen}{last}){notes}")
             elif m.status == "maybe" and m.person is not None:
                 lines.append(
                     f"- PEUT-ÊTRE{where} : ressemble à {m.person.label()} (similarité {m.similarity:.2f}, "
@@ -765,7 +860,7 @@ class FaceMemory:
                 )
             else:
                 lines.append(
-                    f"- INCONNU{where} : personne jamais vue. Dossier {m.pending_id}. "
+                    f"- INCONNU{where} : aucune identité confirmée. Dossier {m.pending_id}. "
                     f"Demande à l'utilisateur qui c'est ; à sa réponse ⇒ remember_person "
                     f"name=… relation=… pending_id={m.pending_id}."
                 )
@@ -777,8 +872,7 @@ class FaceMemory:
 class FaceWatcher:
     """Reconnaît en continu sur le flux caméra ouvert et annonce les arrivées.
 
-    Une image toutes les `interval` secondes, un seul fil : sur cette machine
-    c'est ~5 % d'un cœur, la voix n'en souffre pas. Chaque personne connue
+    Une image toutes les `interval` secondes, un seul fil. Chaque personne connue
     n'est annoncée qu'une fois par `cooldown`, un inconnu une fois par
     `unknown_cooldown`.
     """
@@ -796,6 +890,7 @@ class FaceWatcher:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_announced: dict[str, float] = {}
+        self._previous: set[str] = set()
         self.started_at = 0.0
         self.frames = 0
 
@@ -807,6 +902,7 @@ class FaceWatcher:
         if self.running:
             return
         self._stop.clear()
+        self._previous.clear()
         self.started_at = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="face-watch", daemon=True)
         self._thread.start()
@@ -816,31 +912,49 @@ class FaceWatcher:
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
-        self._thread = None
+        if thread is None or not thread.is_alive():
+            self._thread = None
 
     def _run(self) -> None:
         while not self._stop.wait(self.interval):
             try:
                 frame = self.grab_frame()
                 if not frame:
+                    self._previous.clear()
                     continue
                 self.frames += 1
-                matches = self.memory.identify(frame, source="veille")
+                matches = self.memory.identify(frame, source="veille", record=False)
                 self._announce(matches)
             except Exception as exc:
+                self._previous.clear()
                 print(f"[Visages] veille : {exc}")
 
     def _announce(self, matches: list[Match]) -> None:
         now = time.monotonic()
         fresh: list[Match] = []
+        observed: set[str] = set()
+        # Les inconnus expirés ne doivent pas faire grossir la veille à l'infini.
+        max_age = max(self.cooldown, self.unknown_cooldown)
+        self._last_announced = {key: stamp for key, stamp in self._last_announced.items()
+                                if now - stamp < max_age}
         for m in matches:
+            if m.reason or not m.face.usable() or m.status == "maybe":
+                continue
             if m.status == "known" and m.person is not None:
                 key, cool = f"p{m.person.id}", self.cooldown
             else:
+                if not m.pending_id:
+                    continue
                 key, cool = f"u{m.pending_id}", self.unknown_cooldown
-            if now - self._last_announced.get(key, -1e9) >= cool:
+            if key in observed:
+                continue
+            observed.add(key)
+            if key in self._previous and now - self._last_announced.get(key, -1e9) >= cool:
                 self._last_announced[key] = now
+                if m.status == "known":
+                    self.memory.store.record_sighting(m.person.id, m.similarity, "veille")
                 fresh.append(m)
+        self._previous = observed
         if fresh:
             self.on_event("faces", fresh)
 

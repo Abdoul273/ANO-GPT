@@ -147,7 +147,7 @@ def cartesian_to_spherical(x: float, y: float, z: float) -> SphericalCoords:
         return SphericalCoords(0.0, 0.0, 0.1)
 
     # Azimut : angle dans le plan horizontal (X-Z)
-    azimuth_rad = math.atan2(x, max(1e-6, z))
+    azimuth_rad = math.atan2(x, z)
     azimuth_deg = math.degrees(azimuth_rad)
 
     # Élévation : angle par rapport au plan horizontal

@@ -129,3 +129,47 @@ def test_un_appel_pipewire_bloque_la_prise_de_parole(monkeypatch):
         ),
     )
     assert proactive.desktop_blocks_proactivity() == "appel"
+
+
+def test_echo_cancel_passif_nest_pas_pris_pour_un_appel(monkeypatch):
+    monkeypatch.setattr(
+        proactive.shutil, "which",
+        lambda name: f"/usr/bin/{name}" if name == "pactl" else None,
+    )
+    monkeypatch.setattr(
+        proactive.kit, "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "Source Output #12\n"
+                "Corked: no\n"
+                'media.name = "Echo-Cancel Capture"\n'
+                'node.name = "echo-cancel-capture"\n'
+                'node.passive = "true"\n'
+            ),
+        ),
+    )
+    assert proactive.desktop_blocks_proactivity() == ""
+
+
+def test_un_vrai_appel_reste_detecte_avec_echo_cancel_present(monkeypatch):
+    monkeypatch.setattr(
+        proactive.shutil, "which",
+        lambda name: f"/usr/bin/{name}" if name == "pactl" else None,
+    )
+    monkeypatch.setattr(
+        proactive.kit, "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "Source Output #12\n"
+                "Corked: no\n"
+                'media.name = "Echo-Cancel Capture"\n'
+                'node.passive = "true"\n'
+                "Source Output #13\n"
+                "Corked: no\n"
+                'application.name = "Google Chrome input"\n'
+            ),
+        ),
+    )
+    assert proactive.desktop_blocks_proactivity() == "appel"

@@ -80,6 +80,16 @@ def test_cartesian_and_spherical_conversions():
     assert pytest.approx(back.distance_m, abs=1e-2) == orig.distance_m
 
 
+@pytest.mark.parametrize("azimuth", [-179, -135, -90, 90, 135, 179])
+def test_spatial_coordinates_preserve_rear_hemisphere(azimuth):
+    original = SphericalCoords(azimuth, 20, 1.5)
+    cart = spherical_to_cartesian(original)
+    restored = cartesian_to_spherical(cart.x, cart.y, cart.z)
+    assert restored.azimuth_deg == pytest.approx(azimuth)
+    assert restored.elevation_deg == pytest.approx(20)
+    assert restored.distance_m == pytest.approx(1.5)
+
+
 def test_screen_coords_to_spherical():
     # Centre de l'écran (u=0.5, v=0.45 = hauteur yeux)
     center = screen_coords_to_spherical(0.5, 0.45)

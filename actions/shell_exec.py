@@ -500,7 +500,7 @@ def adapt_command_for_arch(command: str) -> str:
     elif re.search(r"(?:sudo\s+)?apt(?:-get)?\s+update\b", cmd):
         cmd = re.sub(
             r"(sudo\s+)?apt(?:-get)?\s+update\b.*",
-            r"\1pacman -Sy",
+            "checkupdates",
             cmd,
         )
     elif re.search(r"(?:sudo\s+)?apt(?:-get)?\s+upgrade\b", cmd):
@@ -550,6 +550,19 @@ def run_shell(parameters=None, player=None, **_kwargs) -> str:
 
     if not command:
         return "Aucune commande fournie."
+
+    # Hyprland 0.56 traite désormais ``dispatch workspace 2`` comme une
+    # expression Lua et la refuse. Le modèle peut encore fournir cette forme
+    # historique dans ``command`` au lieu d'utiliser l'action dédiée : on la
+    # ramène ici vers le chemin qui choisit la bonne syntaxe et relit l'état
+    # réel avant d'annoncer le succès.
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        argv = []
+    if len(argv) == 4 and argv[:3] == ["hyprctl", "dispatch", "workspace"]:
+        return hypr_control({"action": "workspace", "value": argv[3]}, player=player)
+
     if _is_blocked(command):
         return f"Commande refusée par sécurité (potentiellement destructrice) : {command}"
     if _is_risky(command) and params.get("_human_approval") is not _HUMAN_APPROVED:

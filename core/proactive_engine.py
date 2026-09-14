@@ -658,9 +658,16 @@ class ProactiveEngine:
 
                 blocked = await asyncio.to_thread(desktop_blocks_proactivity)
                 if blocked:
-                    self.ui.write_log(
-                        f"SYS: Annonce proactive différée ({blocked})."
-                    )
+                    # Plusieurs événements peuvent être prêts ensemble. Une
+                    # seule ligne suffit pour expliquer le blocage courant ;
+                    # répéter la même phrase pour chacun ressemble à une panne.
+                    now = time.monotonic()
+                    previous = getattr(self, "_last_proactive_defer_log", None)
+                    if not previous or previous[0] != blocked or now - previous[1] >= 300.0:
+                        self.ui.write_log(
+                            f"SYS: Annonce proactive différée ({blocked})."
+                        )
+                        self._last_proactive_defer_log = (blocked, now)
                     self._proactive.defer(event, 30.0)
                     continue
 

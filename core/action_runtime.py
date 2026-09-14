@@ -379,13 +379,18 @@ class ActionRuntime:
                 if str((properties.get(f) or {}).get("type", "")).upper() in ("STRING", "")
             ]
             if len(missing_text) == 1 and len(stray_text) == 1:
-                stray_field, stray_value = next(iter(stray_text.items()))
-                prepared[missing_text[0]] = stray_value
-                missing.remove(missing_text[0])
-                print(
-                    f"[Actions] {name} : `{missing_text[0]}` repris depuis le champ "
-                    f"non déclaré `{stray_field}`."
-                )
+                stray_value = next(iter(stray_text.values()))
+                field = missing_text[0]
+                field_schema = properties.get(field) or {}
+                try:
+                    value = _coerce_value(stray_value, str(field_schema.get("type", "")), field, field_schema)
+                    allowed = field_schema.get("enum")
+                    if allowed and value not in allowed:
+                        raise ValueError("valeur attendue : " + " | ".join(map(str, allowed)))
+                    prepared[field] = value
+                    missing.remove(field)
+                except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+                    problems.append(f"{field}: {exc}")
         if missing:
             hint = ""
             if stray_text:
@@ -493,8 +498,8 @@ class ActionRuntime:
 def friendly_runtime_error(name: str, exc: BaseException) -> str:
     if isinstance(exc, asyncio.TimeoutError):
         return (
-            f"L’action {name} n'a rien rendu dans le délai imparti : elle a été annulée. "
-            "Dis-le à l'utilisateur en une phrase, sans relancer l'action, et "
+            f"L’action {name} n'a rien rendu dans le délai imparti : son résultat n'est pas confirmé. "
+            "Un effet peut encore avoir eu lieu ; vérifie son état sans relancer l’action, et "
             "demande-lui s'il veut réessayer."
         )
     if isinstance(exc, ActionValidationError):

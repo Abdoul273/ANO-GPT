@@ -65,7 +65,7 @@ tree-sitter-rust
 pypdf
 
 # AEC full-duplex : nécessite libspeexdsp.so (paquet système speexdsp)
-# Arch: pacman -S speexdsp | Debian: apt install libspeexdsp-dev | Fedora: dnf install speexdsp-devel
+# Arch / EndeavourOS : sudo pacman -S speexdsp
 
 aiohttp>=3.10,<4
 # Reconnaissance musicale (actions/music_recognition.py) : empreinte Shazam.

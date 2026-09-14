@@ -413,3 +413,24 @@ def test_watchdog_background_monitoring(temp_rag, tmp_path):
     assert res[0].symbol_name == "live_tested_function"
 
     temp_rag.stop_watcher()
+
+
+def test_empty_document_removes_stale_chunks(temp_rag, tmp_path):
+    path = tmp_path / "empty_after_index.txt"
+    path.write_text("Un contenu personnel de test à retirer de la recherche.")
+    assert temp_rag.index_file(path)[1] > 0
+    path.write_text("")
+    assert temp_rag.index_file(path) == (True, 0, 0)
+    assert temp_rag.storage.get_existing_chunks(str(path.resolve())) == {}
+    assert temp_rag.index_file(path) == (False, 0, 0)
+
+
+def test_failed_extraction_preserves_previous_document(temp_rag, tmp_path, monkeypatch):
+    path = tmp_path / "unreadable.txt"
+    path.write_text("Ce contenu doit rester indexé après une erreur de lecture.")
+    temp_rag.index_file(path)
+    before = temp_rag.storage.get_existing_chunks(str(path.resolve()))
+    def fail(path): raise OSError("simulation")
+    monkeypatch.setattr(temp_rag.txt_extractor, "extract_chunks", fail)
+    assert temp_rag.index_file(path, force=True) == (False, 0, 0)
+    assert temp_rag.storage.get_existing_chunks(str(path.resolve())) == before
