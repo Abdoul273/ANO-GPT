@@ -619,3 +619,38 @@ def test_le_rythme_gps_accelere_en_navigation_active():
     start = APP_HTML.index("function _getGeoInterval")
     block = APP_HTML[start:start + 200]
     assert "_navActive ? 1200 : 30000" in block
+
+
+def test_start_navigation_to_query_centre_la_carte_sur_lorigine_pas_la_destination(monkeypatch):
+    """render_map() initialise userPos (le point de départ utilisé côté JS
+    pour la requête OSRM de drawRoute) sur le centre reçu de show_map. En
+    centrant sur la destination, un guidage démarré calculait un
+    « itinéraire » de la destination vers elle-même : aucun tracé, juste un
+    point figé — malgré un message vocal annonçant un guidage actif."""
+    import core.geolocation as geo_module
+
+    origin = (9.50, -13.70)
+    dest = (9.51, -13.71)
+    monkeypatch.setattr(geo_module, "get_precise_user_coords", lambda *a, **k: origin)
+    monkeypatch.setattr(geo_module, "geocode", lambda q, **k: dest)
+    monkeypatch.setattr(geo_module, "reverse_geocode", lambda *a, **k: None)
+
+    mgr = nav_module.NavigationManager()
+    route = _tiny_route()
+    monkeypatch.setattr(mgr, "start_navigation", lambda **k: route)
+
+    calls = []
+
+    class FakePlayer:
+        def show_map(self, title, lat, lon, radius_km=3.0):
+            calls.append(("show_map", title, lat, lon))
+
+        def start_navigation(self, dest_lat, dest_lon, dest_name):
+            calls.append(("start_navigation", dest_lat, dest_lon, dest_name))
+
+    mgr.start_navigation_to_query("Kaloum", player=FakePlayer())
+
+    show_map_call = next(c for c in calls if c[0] == "show_map")
+    assert (show_map_call[2], show_map_call[3]) == origin, (
+        "show_map doit centrer sur l'origine, pas sur la destination"
+    )

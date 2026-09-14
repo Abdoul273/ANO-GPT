@@ -173,6 +173,7 @@ class MediaHostMixin:
                 )
             # Une base distante est indispensable : sans elle la page est jugée
             # locale et le navigateur refuse Leaflet/globe.gl et leurs tuiles.
+            self._map_loading = True
             self._map_view.setHtml(html, QUrl("https://unpkg.com/"))
         else:
             # Repli fonctionnel : ne jamais annoncer une carte affichée alors
@@ -398,6 +399,43 @@ class MediaHostMixin:
         """Démarre le guidage pas-à-pas vers une destination."""
         self._nav_sig.emit(float(dest_lat), float(dest_lon), dest_name)
 
+    def _on_map_load_finished(self, ok: bool) -> None:
+        """Connecté une fois pour toutes à QWebEngineView.loadFinished.
+
+        Sert de référence sur l'état de chargement pour tout code qui doit
+        attendre une page fraîchement rechargée avant d'y injecter du JS
+        (ex. _on_start_navigation, juste après un show_map)."""
+        self._map_loading = False
+
+    def _run_js_when_map_ready(self, js: str) -> None:
+        """Exécute ``js`` tout de suite si la page est prête, sinon dès la
+        fin du chargement en cours.
+
+        setHtml() est asynchrone : injecter du JS juste après sans attendre
+        risque de tomber sur une page encore vide, où les fonctions
+        window.ANO_* n'existent pas encore — l'appel se tait alors
+        silencieusement (garde ``if (window.ANO_...)``), sans rien faire ni
+        rien signaler. C'est ce qui a fait un guidage « lancé » sans aucun
+        tracé : show_map recentre la carte (nouveau chargement) puis
+        start_navigation injectait son JS aussitôt après, sur cette page pas
+        encore prête.
+        """
+        if self._map_view is None:
+            return
+        if not getattr(self, "_map_loading", False):
+            self._map_view.page().runJavaScript(js)
+            return
+
+        def _run_once(ok: bool) -> None:
+            try:
+                self._map_view.loadFinished.disconnect(_run_once)
+            except Exception:
+                pass
+            if ok:
+                self._map_view.page().runJavaScript(js)
+
+        self._map_view.loadFinished.connect(_run_once)
+
     def _on_start_navigation(self, dest_lat: float, dest_lon: float, dest_name: str) -> None:
         if self._map_view is None or not self._map_cont.isVisible():
             return
@@ -415,18 +453,7 @@ class MediaHostMixin:
                 places=args["places"], center_label=args["center_label"],
                 mode="leaflet",
             )
-
-            def _run_once(ok: bool) -> None:
-                try:
-                    self._map_view.loadFinished.disconnect(_run_once)
-                except Exception:
-                    pass
-                if ok:
-                    self._map_view.page().runJavaScript(js)
-
-            self._map_view.loadFinished.connect(_run_once)
-        else:
-            self._map_view.page().runJavaScript(js)
+        self._run_js_when_map_ready(js)
 
     def _toggle_map_view(self) -> None:
         """Bouton d'en-tête : bascule entre le globe et la carte de rues.

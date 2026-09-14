@@ -342,6 +342,13 @@ class SceneMixin:
         if webengine_enabled() and QWebEngineView is not None:
             self._map_view = QWebEngineView()
             lay.addWidget(self._map_view, stretch=1)
+            # Un guidage démarré juste après un show_map (le cas courant :
+            # navigate affiche la destination puis lance le guidage) injecte
+            # son JS sur une page encore en train de charger — ANO_START_
+            # NAVIGATION n'existe pas encore, l'appel ne fait alors rien,
+            # silencieusement. _on_start_navigation attend ce signal avant
+            # d'agir si un chargement est en cours.
+            self._map_view.loadFinished.connect(self._on_map_load_finished)
         else:
             self._map_view = None
             fallback = QLabel(
@@ -358,6 +365,7 @@ class SceneMixin:
         # démarrage d'un guidage. Voir media_host._render_map.
         self._map_mode = "leaflet"
         self._map_last_args = None
+        self._map_loading = False
         return cont
 
     def _connect_window_signals(self) -> None:
@@ -477,6 +485,7 @@ class SceneMixin:
                 self._thought_overlay.fade_out()
 
     def _install_shortcuts(self) -> None:
+        QShortcut(QKeySequence("F1"), self).activated.connect(self._show_welcome_hud)
         QShortcut(QKeySequence("F4"), self).activated.connect(self._mute_from_shortcut)
         QShortcut(QKeySequence("F8"), self).activated.connect(self._toggle_gesture_control)
         QShortcut(QKeySequence("F11"), self).activated.connect(self._toggle_fullscreen)

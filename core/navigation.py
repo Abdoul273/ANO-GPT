@@ -1127,10 +1127,21 @@ class NavigationManager:
         if not route:
             return f"Impossible de calculer l'itinéraire vers « {query} ».", None
 
-        # Affichage de la carte et du tracé sur l'interface graphique
+        # Affichage de la carte et du tracé sur l'interface graphique.
+        # Centrer sur la destination semblait naturel, mais render_map()
+        # initialise userPos (le point de départ utilisé côté JS pour la
+        # requête OSRM de drawRoute) sur ce centre — un guidage démarré
+        # depuis la destination elle-même calculait un « itinéraire » de la
+        # destination vers la destination : aucun tracé, juste un point figé,
+        # même si le message vocal annonçait un guidage actif. Centrer sur
+        # l'origine réelle le corrige ; ANO_UPDATE_GPS recale ensuite userPos
+        # sur chaque relevé GPS du téléphone une fois le guidage en cours.
         if player:
             try:
-                player.show_map(query, dest_coords[0], dest_coords[1], radius_km=max(2.0, (route.distance_m / 1000.0) * 1.3))
+                player.show_map(
+                    f"Guidage vers {query}", origin[0], origin[1],
+                    radius_km=max(2.0, (route.distance_m / 1000.0) * 1.3),
+                )
                 if hasattr(player, "start_navigation"):
                     player.start_navigation(dest_coords[0], dest_coords[1], query)
             except Exception:

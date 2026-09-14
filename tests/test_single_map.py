@@ -144,9 +144,23 @@ def test_le_guidage_recharge_en_leaflet_si_le_globe_est_affiche():
     """Un globe ne sait pas guider rue par rue : il faut les tuiles Leaflet."""
     body = _method("_on_start_navigation")
     assert 'mode="leaflet"' in body
-    assert "loadFinished" in body, (
-        "le JS de démarrage doit attendre que la page Leaflet soit chargée"
-    )
+    assert "_run_js_when_map_ready" in body
+
+
+def test_le_js_de_navigation_attend_toujours_une_page_prete():
+    """setHtml() est asynchrone : injecter le JS de démarrage juste après un
+    show_map (le cas courant — navigate affiche la destination PUIS lance
+    le guidage) tombait parfois sur une page encore vide, où ANO_START_
+    NAVIGATION n'existait pas encore. L'appel se taisait alors sans rien
+    faire ni rien signaler : un guidage « lancé » sans aucun tracé."""
+    body = _method("_run_js_when_map_ready")
+    assert "_map_loading" in body
+    assert "loadFinished" in body
+
+
+def test_render_map_marque_le_chargement_en_cours():
+    body = _method("_render_map")
+    assert "_map_loading = True" in body
 
 
 def test_la_navigation_deja_en_leaflet_nattend_pas_un_rechargement():
