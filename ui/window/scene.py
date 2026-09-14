@@ -311,6 +311,21 @@ class SceneMixin:
         self._map_title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         hdr.addWidget(self._map_title)
         hdr.addStretch()
+        # Bascule manuelle : le globe (aperçu) et la carte de rues (Leaflet)
+        # montrent tous deux la position — l'un ou l'autre, au choix, sans
+        # perdre l'endroit affiché.
+        self._map_toggle_btn = QPushButton("🌐  GLOBE")
+        self._map_toggle_btn.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        self._map_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._map_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {C.TEXT_DIM}; background: transparent;
+                border: none; padding: 2px 6px;
+            }}
+            QPushButton:hover {{ color: {C.PRI}; }}
+        """)
+        self._map_toggle_btn.clicked.connect(self._toggle_map_view)
+        hdr.addWidget(self._map_toggle_btn)
         close_btn = QPushButton("✕  FERMER")
         close_btn.setFont(QFont("Inter", 8, QFont.Weight.Bold))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -337,9 +352,11 @@ class SceneMixin:
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
             lay.addWidget(fallback, stretch=1)
-        # Suivi du rendu actuellement chargé : « globe » (aperçu, défaut) ou
-        # « leaflet » (guidage pas-à-pas). Voir media_host._render_map.
-        self._map_mode = "globe"
+        # Suivi du rendu actuellement chargé : « leaflet » (carte de rues,
+        # défaut) ou « globe » (aperçu). Bascule manuelle via le bouton
+        # d'en-tête (_toggle_map_view) ou automatique vers Leaflet au
+        # démarrage d'un guidage. Voir media_host._render_map.
+        self._map_mode = "leaflet"
         self._map_last_args = None
         return cont
 

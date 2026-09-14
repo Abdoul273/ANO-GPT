@@ -125,11 +125,19 @@ def test_une_position_inconnue_est_avouee_et_non_inventee():
 
 # ── Deux rendus, une seule carte : globe (aperçu) et Leaflet (guidage) ──────
 
-def test_le_rendu_par_defaut_est_le_globe():
-    """L'aperçu (position, recherche) utilise « world monitor », pas Leaflet."""
+def test_le_rendu_par_defaut_reste_la_carte_de_rues():
+    """« Montre ma position » doit rester sur la carte, pas sur le globe."""
     body = _method("_render_map")
     assert "from core.map_render import render_globe" in body
-    assert 'mode: str = "globe"' in body
+    assert 'mode: str = "leaflet"' in body
+
+
+def test_un_bouton_bascule_entre_le_globe_et_la_carte():
+    """Les deux vues existent, la position doit s'afficher sur les deux."""
+    body = _method("_toggle_map_view")
+    assert "_map_last_args" in body
+    assert '"globe" if' in body and '"leaflet"' in body
+    assert "_render_map" in body
 
 
 def test_le_guidage_recharge_en_leaflet_si_le_globe_est_affiche():

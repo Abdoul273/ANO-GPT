@@ -133,7 +133,7 @@ class MediaHostMixin:
     # Leaflet, seul rendu qui a les tuiles de rue et le moteur OSRM.
     def _render_map(self, title: str, lat: float, lon: float, radius_km: float,
                     *, places: list, center_label: str, count: int = 0,
-                    mode: str = "globe") -> None:
+                    mode: str = "leaflet") -> None:
         self._dismiss_interactive_overlays()
         if hasattr(self, "_image_gallery"):
             self._image_gallery.dismiss_now()
@@ -160,6 +160,10 @@ class MediaHostMixin:
                     title, (lat, lon), places=places, center_label=center_label,
                 )
             self._map_mode = mode
+            if hasattr(self, "_map_toggle_btn") and self._map_toggle_btn is not None:
+                self._map_toggle_btn.setText(
+                    "🌐  GLOBE" if mode == "leaflet" else "🗺️  CARTE"
+                )
             # Une base distante est indispensable : sans elle la page est jugée
             # locale et le navigateur refuse Leaflet/globe.gl et leurs tuiles.
             self._map_view.setHtml(html, QUrl("https://unpkg.com/"))
@@ -409,6 +413,22 @@ class MediaHostMixin:
             self._map_view.loadFinished.connect(_run_once)
         else:
             self._map_view.page().runJavaScript(js)
+
+    def _toggle_map_view(self) -> None:
+        """Bouton d'en-tête : bascule entre le globe et la carte de rues.
+
+        Réutilise les derniers paramètres affichés — pas de nouvelle requête
+        GPS, juste un autre rendu du même endroit.
+        """
+        args = getattr(self, "_map_last_args", None)
+        if not args or self._map_view is None or not self._map_cont.isVisible():
+            return
+        next_mode = "globe" if getattr(self, "_map_mode", "leaflet") == "leaflet" else "leaflet"
+        self._render_map(
+            args["title"], args["lat"], args["lon"], args["radius_km"],
+            places=args["places"], center_label=args["center_label"],
+            count=len(args["places"]), mode=next_mode,
+        )
 
     def close_map(self) -> None:
         self._map_close_sig.emit()
