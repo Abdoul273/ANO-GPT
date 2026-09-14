@@ -105,21 +105,23 @@ résolu depuis les coordonnées GPS exactes. Une question de suivi sur le
 quartier se répond depuis cette même donnée, sans nouvel outil ni recherche
 web.
 
-## 5. Voix fatiguée / basse — plus permissif
+## 5. Voix fatiguée / basse — essai annulé, revenu au réglage d'origine
 
 Sous Python 3.14 (cette machine), le détecteur de voix principal (Silero, un
 modèle IA) est désactivé par un contournement documenté d'un bug d'ONNX
-Runtime — un détecteur de repli moins précis (webrtcvad) tournait seul, réglé
-sur son niveau le plus strict. Une voix moins énergique (fatigue, murmure)
-tombait sous ce seuil et n'était jamais transcrite, alors que le texte tapé
-marchait toujours.
+Runtime — un détecteur de repli moins précis (webrtcvad) tourne seul.
+Assoupli un cran (mode 1) pour laisser passer une voix fatiguée, il a
+**capté la voix de tiers parlant à côté** et exécuté des commandes non
+voulues (l'assistant s'est fermé de lui-même, croyant qu'on le lui avait
+demandé) : sans Silero, webrtcvad ne fait aucune identification de
+locuteur — assoupli, il devient sensible à *toute* voix dans la pièce, pas
+seulement celle qui parle plus bas.
 
-Le réglage est descendu d'un cran (toujours un vrai filtre de bruit, moins
-strict sur une voix simplement calme). **Non vérifié en conditions réelles**
-faute de micro dans cet environnement — à tester en priorité, et à signaler
-dans les deux sens : si une voix basse passe enfin, mais aussi si du bruit de
-fond se met à déclencher le micro à tort (signe qu'il faudrait remonter d'un
-cran, `core/audio_vad.py` → `VADConfig.webrtc_mode`).
+**Revenu au réglage d'origine** (mode 3, le plus strict) : mieux vaut rater
+une voix trop basse que réagir à celle de quelqu'un d'autre. Le problème de
+départ (voix fatiguée non transcrite) reste réel mais n'a pas de solution
+sûre par ce seul réglage — il faudrait une vraie identification de locuteur
+(hors de portée d'un ajustement de seuil).
 
 ## 6. Couper le barge-in (interruption automatique à la voix)
 

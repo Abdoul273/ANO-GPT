@@ -184,9 +184,11 @@ def test_one_loud_click_cannot_validate_a_whole_clip():
         assert vad.is_speech(np.zeros(320 * len(scores), dtype=np.int16)) is expected
 
 
-def test_le_mode_webrtc_par_defaut_nest_plus_tres_restrictif():
-    """Mode 3 (le plus strict) rejetait une voix basse/fatiguée sous
-    Python >= 3.14, où Silero (ML, le VAD réellement robuste) est
-    désactivé — voir _init_silero. Le texte tapé marchait toujours (aucun
-    VAD sur ce chemin), seule la voix calme était perdue."""
-    assert VADConfig().webrtc_mode < 3
+def test_le_mode_webrtc_par_defaut_reste_le_plus_restrictif():
+    """Un essai plus permissif (mode 1, pour une voix basse/fatiguée) a fait
+    exécuter des commandes venant de tiers parlant à côté — sans Silero
+    (désactivé sous Python >= 3.14, voir _init_silero) pour distinguer une
+    phrase adressée d'une voix quelconque, webrtcvad ne fait aucune
+    identification de locuteur. Mieux vaut rater une voix basse que réagir
+    à celle de quelqu'un d'autre : remis au réglage d'origine."""
+    assert VADConfig().webrtc_mode == 3
