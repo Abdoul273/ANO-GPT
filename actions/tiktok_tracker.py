@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import os
 import random
-import shutil
 import tempfile
 import threading
 import time
@@ -109,15 +108,8 @@ _UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 
 
 def _browser_executable() -> Optional[str]:
-    override = os.environ.get("ANO_TIKTOK_BROWSER")
-    if override and Path(override).exists():
-        return override
-    for name in ("google-chrome-stable", "google-chrome", "chromium",
-                 "chromium-browser", "brave", "brave-browser", "microsoft-edge"):
-        found = shutil.which(name)
-        if found:
-            return found
-    return None   # Playwright utilisera son Chromium embarqué s'il existe
+    from core.browser_policy import chrome_binary
+    return chrome_binary()
 
 
 def _to_int(value: Any) -> int:
@@ -197,7 +189,7 @@ def fetch_snapshot(handle: str, timeout_s: float = FETCH_TIMEOUT_S) -> dict[str,
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # pragma: no cover - dépend de l'installation
         raise RuntimeError(
-            "Playwright manquant : pip install playwright && playwright install chromium"
+            "Playwright manquant : installez le paquet Python playwright et Google Chrome"
         ) from exc
 
     deadline = time.monotonic() + timeout_s
@@ -215,14 +207,15 @@ def fetch_snapshot(handle: str, timeout_s: float = FETCH_TIMEOUT_S) -> dict[str,
         launch: dict[str, Any] = {
             "headless": True,
             "args": [
-                "--headless=new", "--no-sandbox", "--disable-gpu",
+                "--headless=new", "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
                 "--renderer-process-limit=2", "--mute-audio",
             ],
         }
         exe = _browser_executable()
-        if exe:
-            launch["executable_path"] = exe
+        if not exe:
+            raise RuntimeError("Google Chrome est introuvable. Aucun autre navigateur n'a été ouvert.")
+        launch["executable_path"] = exe
         browser = pw.chromium.launch(**launch)
         try:
             ctx = browser.new_context(
@@ -572,6 +565,12 @@ def tiktok_tracker(parameters: dict | None = None, player: Any = None,
         return _history_summary(state, hours)
 
     if action in {"videos", "vidéos", "video", "top"}:
+        snaps = state.get("snapshots") or []
+        if not snaps or not snaps[-1].get("items"):
+            try:
+                _, _, state = poll_once(player, state)
+            except Exception as exc:
+                return f"Impossible de lire les vidéos TikTok @{handle} : {exc}"
         return _videos_summary(state)
 
     # status (défaut) : lecture fraîche si la dernière est trop vieille.
