@@ -707,6 +707,32 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "show_country_info",
+        "description": (
+            "Displays a floating info card for a country on the map/globe — capital, "
+            "population, currency, languages, timezone, current weather at the capital. "
+            "Works for ANY country in the world, not just Guinea. Use when the user asks "
+            "about a country (« montre-moi les infos sur le Japon », « c'est quoi la "
+            "capitale du Brésil », « météo au Sénégal en ce moment »). Centers the map on "
+            "that country and speaks the key facts back — don't just open it silently."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "country": {
+                    "type": "STRING",
+                    "description": "Country name, in French or English (e.g. 'Japon', 'Brésil', "
+                                    "'Sénégal'). Omit for Guinée, the default.",
+                },
+                "view": {
+                    "type": "STRING",
+                    "description": "'carte' or 'globe'. Omit to keep the current style on screen.",
+                },
+            },
+            "required": []
+        }
+    },
+    {
         "name": "navigate",
         "description": (
             "Démarre ou contrôle le guidage GPS parlé pas-à-pas et l'itinéraire néon animé. "
@@ -2379,6 +2405,7 @@ _TOOL_LABELS = {
     "focus_guard": "Bouclier anti-distraction",
     "youtube_video": "YouTube",
     "show_map": "Carte",
+    "show_country_info": "Fiche pays",
     "reminder": "Rappel",
     "computer_control": "Contrôle de l'ordinateur",
     "game_updater": "Mise à jour de jeu",
@@ -3613,6 +3640,43 @@ class ToolDispatcher:
                     return f"Carte affichée, centrée sur {label} ({lat:.4f}, {lon:.4f}){style}."
 
                 result = await loop.run_in_executor(None, _do_show_map)
+
+            elif name == "show_country_info":
+                country_query = (args.get("country") or "").strip()
+                _view_arg = str(args.get("view") or "").strip().casefold()
+                view = "globe" if "globe" in _view_arg else (
+                    "leaflet" if _view_arg else None
+                )
+
+                def _do_show_country():
+                    from core.country_info import fetch_country_info
+                    info = fetch_country_info(country_query)
+                    if info is None:
+                        return (
+                            f"Je ne trouve pas de pays correspondant à « {country_query} ». "
+                            "Vérifie l'orthographe ou essaie le nom en anglais."
+                        )
+                    radius = max(200.0, (info.area_km2 or 1.0) ** 0.5 * 6.0)
+                    self.ui.show_map(
+                        info.name, info.lat, info.lon, radius, view=view,
+                        country={
+                            "flag": info.flag, "name": info.name,
+                            "capital": info.capital,
+                            "population": (
+                                f"{info.population:,}".replace(",", " ")
+                                if info.population else ""
+                            ),
+                            "currencies": info.currencies,
+                            "timezone": info.timezone,
+                            "weather": (
+                                f"{info.weather_emoji} {info.weather_text}, {info.temp_c:.0f}°C"
+                                if info.temp_c is not None else ""
+                            ),
+                        },
+                    )
+                    return info.as_tool_result()
+
+                result = await loop.run_in_executor(None, _do_show_country)
 
             elif name == "navigate":
                 r = await loop.run_in_executor(

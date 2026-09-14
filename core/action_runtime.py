@@ -67,6 +67,9 @@ _POLICIES: dict[str, ActionPolicy] = {
     "generate_video": ActionPolicy(timeout_s=60.0),
     "generate_document": ActionPolicy(timeout_s=210.0),
     "weather_report": ActionPolicy(timeout_s=25.0, max_concurrency=2),
+    # Dataset pays local (immédiat) + météo Open-Meteo + population Banque
+    # mondiale, chacune bornée à 6 s ; large marge sous ce plafond.
+    "show_country_info": ActionPolicy(timeout_s=20.0, max_concurrency=2),
     # Caelestia est borné à 7 s : garder 3 s pour le dispatcher et la copie
     # éventuelle du fichier sans retenir un tour Live trente secondes.
     "capture_control": ActionPolicy(timeout_s=10.0),

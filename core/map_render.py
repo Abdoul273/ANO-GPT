@@ -1053,6 +1053,7 @@ def render_map(
     radius_km: float = 3.0,
     center_label: str = "Votre position",
     mark_center: bool = True,
+    country: dict[str, Any] | None = None,
 ) -> str:
     """Construit la page Leaflet de la grande carte avec support du guidage pas-à-pas."""
     payload = [_marker_payload(index, place)
@@ -1076,13 +1077,14 @@ def render_map(
 <html><head><meta charset="utf-8"/>
 <link rel="stylesheet" href="{_LEAFLET_CSS}"/>
 <script src="{_LEAFLET_JS}"></script>
-<style>{_STYLE}</style></head>
+<style>{_STYLE}{_COUNTRY_PANEL_STYLE}</style></head>
 <body>
 <div id="map"></div>
 <div class="grid"></div>
 <div class="sweep"></div>
 <div class="crt"></div>
 {_hud(title, center_label, len(payload))}
+{_country_panel(country)}
 {_nav_hud()}
 {_route_panel()}
 <script>
@@ -1155,6 +1157,7 @@ def render_globe(
     *,
     places: list[dict[str, Any]] | None = None,
     center_label: str = "Votre position",
+    country: dict[str, Any] | None = None,
 ) -> str:
     """Construit la vue « world monitor » : globe.gl, aperçu seulement.
 
@@ -1180,13 +1183,62 @@ def render_globe(
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
 <script src="{_GLOBE_JS}"></script>
-<style>{_GLOBE_STYLE}</style></head>
+<style>{_GLOBE_STYLE}{_COUNTRY_PANEL_STYLE}</style></head>
 <body>
 <div id="globe"></div>
 {_hud(title, center_label, len(places or []))}
+{_country_panel(country)}
 <script>
 {script}
 </script></body></html>"""
+# Panneau pays : même vocabulaire visuel que le HUD, en haut à droite pour
+# ne jamais chevaucher le bandeau de gauche. Partagé entre Leaflet et globe
+# (core/country_info.py fournit les données, quel que soit le pays demandé).
+_COUNTRY_PANEL_STYLE = """
+  .country { position:absolute; top:14px; right:14px; z-index:660;
+    padding:10px 14px 11px; min-width:200px; max-width:min(50vw,300px);
+    color:#cdf6ff; background:var(--panel);
+    border:1px solid rgba(0,229,255,.34);
+    box-shadow:0 0 26px var(--panel-glow), inset 0 0 26px rgba(0,229,255,.05);
+    clip-path:polygon(9px 0, 100% 0, 100% 100%, 0 100%, 0 9px);
+    animation:bootin .5s cubic-bezier(.2,.9,.25,1) both; }
+  .country .flag { font-size:22px; }
+  .country .name { font-size:14px; font-weight:800; color:#e8fdff;
+    margin-top:3px; text-shadow:0 0 12px rgba(0,229,255,.5); }
+  .country .row { font-size:11px; color:rgba(205,246,255,.86); margin-top:4px;
+    display:flex; justify-content:space-between; gap:10px; }
+  .country .row b { color:var(--amber); font-weight:700; }
+"""
+
+
+def _country_panel(info: dict[str, Any] | None) -> str:
+    """Fiche pays flottante, en haut à droite. Vide si aucun pays demandé."""
+    if not info:
+        return ""
+    rows = []
+    if info.get("capital"):
+        rows.append(("Capitale", info["capital"]))
+    if info.get("population"):
+        rows.append(("Population", info["population"]))
+    if info.get("currencies"):
+        rows.append(("Monnaie", info["currencies"]))
+    if info.get("timezone"):
+        rows.append(("Fuseau", info["timezone"]))
+    if info.get("weather"):
+        rows.append(("Météo", info["weather"]))
+    rows_html = "".join(
+        f'<div class="row"><span>{_html_escape(k)}</span><b>{_html_escape(str(v))}</b></div>'
+        for k, v in rows
+    )
+    return (
+        '<div class="country">'
+        f'<div class="flag">{info.get("flag", "")}</div>'
+        f'<div class="name">{_html_escape(info.get("name", ""))}</div>'
+        f'{rows_html}'
+        '</div>'
+    )
+
+
 def _hud(title: str, center_label: str, count: int) -> str:
     """Bandeau d'état, en haut à gauche de la carte."""
     if count:

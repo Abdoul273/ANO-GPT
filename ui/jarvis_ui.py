@@ -301,8 +301,8 @@ class JarvisUI:
         self._win.stop_camera_stream()
 
     def show_map(self, title: str, lat: float, lon: float, radius_km: float = 3.0,
-                 view: str | None = None) -> bool:
-        return self._win.show_map(title, lat, lon, radius_km, view=view)
+                 view: str | None = None, country: dict | None = None) -> bool:
+        return self._win.show_map(title, lat, lon, radius_km, view=view, country=country)
 
     def update_live_position(self, lat: float, lon: float, accuracy_m: float | None = None,
                              heading: float | None = None, speed: float | None = None) -> None:

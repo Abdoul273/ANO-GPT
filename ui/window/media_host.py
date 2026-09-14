@@ -113,13 +113,14 @@ class MediaHostMixin:
     # pendant qu'une recherche de lieux ouvrait la carte cyberpunk dans un
     # petit panneau flottant : deux styles, deux tailles, pour la même chose.
     def _on_show_map(self, title: str, lat: float, lon: float, radius_km: float,
-                     view: str = "") -> None:
+                     view: str = "", country: dict | None = None) -> None:
         # Une vue explicitement demandée impose son mode ; sinon on garde
         # celui déjà affiché s'il y en a un (bascule persistante entre deux
         # appels), Leaflet par défaut sinon.
         mode = view or getattr(self, "_map_mode", None) or "leaflet"
         self._render_map(title, lat, lon, radius_km, places=[],
-                         center_label=title or "Votre position", mode=mode)
+                         center_label=title or "Votre position", mode=mode,
+                         country=country or None)
 
     def _on_show_places(self, query: str, lat: float, lon: float,
                         places: list) -> None:
@@ -138,7 +139,7 @@ class MediaHostMixin:
     # Leaflet, seul rendu qui a les tuiles de rue et le moteur OSRM.
     def _render_map(self, title: str, lat: float, lon: float, radius_km: float,
                     *, places: list, center_label: str, count: int = 0,
-                    mode: str = "leaflet") -> None:
+                    mode: str = "leaflet", country: dict | None = None) -> None:
         self._dismiss_interactive_overlays()
         if hasattr(self, "_image_gallery"):
             self._image_gallery.dismiss_now()
@@ -150,19 +151,20 @@ class MediaHostMixin:
         # guidage démarre pendant que le globe est affiché.
         self._map_last_args = {
             "title": title, "lat": lat, "lon": lon, "radius_km": radius_km,
-            "places": places, "center_label": center_label,
+            "places": places, "center_label": center_label, "country": country,
         }
         if self._map_view is not None:
             if mode == "leaflet":
                 from core.map_render import render_map
                 html = render_map(
                     title, (lat, lon), places=places, radius_km=radius_km,
-                    center_label=center_label, mark_center=True,
+                    center_label=center_label, mark_center=True, country=country,
                 )
             else:
                 from core.map_render import render_globe
                 html = render_globe(
                     title, (lat, lon), places=places, center_label=center_label,
+                    country=country,
                 )
             self._map_mode = mode
             if hasattr(self, "_map_toggle_btn") and self._map_toggle_btn is not None:
@@ -366,14 +368,16 @@ class MediaHostMixin:
         self._relayout()
 
     def show_map(self, title: str, lat: float, lon: float, radius_km: float = 3.0,
-                 view: str | None = None) -> bool:
+                 view: str | None = None, country: dict | None = None) -> bool:
         """Thread-safe : peut être appelé depuis n'importe quel thread
         (les tools tournent dans un executor, jamais sur le thread Qt).
 
         ``view`` : "leaflet"/"globe" pour imposer un rendu, "" pour garder
-        celui déjà affiché (comportement historique)."""
+        celui déjà affiché (comportement historique).
+        ``country`` : fiche pays flottante (voir core/country_info.py),
+        None pour ne rien afficher."""
         self._map_sig.emit(title[:60], float(lat), float(lon), float(radius_km),
-                           str(view or ""))
+                           str(view or ""), country or {})
         return True
 
     def update_live_position(self, lat: float, lon: float, accuracy_m: float | None = None,
@@ -437,7 +441,7 @@ class MediaHostMixin:
         self._render_map(
             args["title"], args["lat"], args["lon"], args["radius_km"],
             places=args["places"], center_label=args["center_label"],
-            count=len(args["places"]), mode=next_mode,
+            count=len(args["places"]), mode=next_mode, country=args.get("country"),
         )
 
     def close_map(self) -> None:

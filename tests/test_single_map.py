@@ -180,3 +180,30 @@ def test_on_show_map_garde_la_vue_deja_affichee_par_defaut():
     body = _method("_on_show_map")
     assert "getattr(self, \"_map_mode\", None)" in body
     assert 'mode=mode' in body
+
+
+# ── Fiche pays : n'importe quel pays, panneau flottant sur la carte ─────────
+
+def test_loutil_show_country_info_existe_et_marche_pour_nimporte_quel_pays():
+    start = DISPATCHER.index('"name": "show_country_info"')
+    block = DISPATCHER[start:start + 1400]
+    assert "ANY country" in block
+    assert '"country"' in block
+
+
+def test_le_handler_pays_affiche_la_carte_avec_le_panneau():
+    start = DISPATCHER.index('elif name == "show_country_info":')
+    block = DISPATCHER[start:start + 1600]
+    assert "fetch_country_info" in block
+    assert "self.ui.show_map(" in block
+    assert "country={" in block
+
+
+def test_le_panneau_pays_se_propage_jusquau_rendu():
+    """country doit traverser show_map → signal Qt → _on_show_map → _render_map."""
+    body_show_map = _method("show_map")
+    assert "country" in body_show_map
+    body_on_show_map = _method("_on_show_map")
+    assert "country" in body_on_show_map
+    body_render = _method("_render_map")
+    assert "country=country" in body_render

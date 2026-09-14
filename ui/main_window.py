@@ -40,7 +40,7 @@ class MainWindow(
     _cam_frame_sig  = pyqtSignal(bytes)
     _clipboard_sig  = pyqtSignal(str)
     _setmute_sig    = pyqtSignal(bool)
-    _map_sig        = pyqtSignal(str, float, float, float, str)
+    _map_sig        = pyqtSignal(str, float, float, float, str, dict)
     _map_close_sig  = pyqtSignal()
     _image_gallery_sig = pyqtSignal(str, list)
     _image_gallery_close_sig = pyqtSignal()
