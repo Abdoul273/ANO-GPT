@@ -40,11 +40,12 @@ def test_clean_then_restore_is_reversible_without_overwrite(monkeypatch, tmp_pat
     assert (tmp_path / "note.txt").read_text() == "à archiver"
 
 
-def test_unrecognized_task_never_runs_generated_code(monkeypatch):
-    monkeypatch.setattr(
-        desktop, "_ask_gemini_for_desktop_action",
-        lambda task: (_ for _ in ()).throw(AssertionError("must not be called")),
-    )
+def test_unrecognized_task_never_runs_generated_code():
+    # L'exécution de code généré par l'IA (exec() dans le process principal)
+    # a été retirée : aucune fonction de ce genre ne doit même exister.
+    assert not hasattr(desktop, "_execute_generated_code")
+    assert not hasattr(desktop, "_ask_gemini_for_desktop_action")
+    assert not hasattr(desktop, "_build_sandbox")
 
     result = desktop.desktop_control({"action": "task", "task": "fais n'importe quoi"})
 

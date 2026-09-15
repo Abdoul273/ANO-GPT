@@ -26,8 +26,6 @@ Ajouts :
     - environnement Wayland/Hyprland restauré pour tous les appels.
 """
 import json
-import importlib
-import importlib.util
 import os
 import platform
 import random
@@ -41,18 +39,6 @@ from typing import Optional, Dict, Any, List
 
 from core import action_kit as kit
 from core.live_model_policy import FAST_MODEL
-
-class _LazyPyAutoGUI:
-    _module = None
-
-    def __getattr__(self, name):
-        if self._module is None:
-            self._module = importlib.import_module("pyautogui")
-        return getattr(self._module, name)
-
-
-pyautogui = _LazyPyAutoGUI()
-_PYAUTOGUI = importlib.util.find_spec("pyautogui") is not None
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 _WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY"))
@@ -621,118 +607,6 @@ Retourne uniquement le JSON, sans commentaire."""
     except Exception as e:
         print(f"[Desktop] AI detection error: {e}")
     return None
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# Sandbox pour l'exécution sécurisée de code généré par l'IA
-# ════════════════════════════════════════════════════════════════════════════
-
-def _build_sandbox() -> dict:
-    import time
-    safe_builtins = {
-        "print": print, "len": len, "str": str, "int": int, "float": float,
-        "bool": bool, "list": list, "dict": dict, "tuple": tuple,
-        "range": range, "enumerate": enumerate, "sorted": sorted,
-        "isinstance": isinstance, "hasattr": hasattr,
-        "max": max, "min": min, "sum": sum, "abs": abs,
-        "zip": zip, "map": map, "filter": filter,
-    }
-    sandbox = {
-        "__builtins__": safe_builtins,
-        "Path": Path,
-        "time": time,
-        "shutil": type("shutil", (), {
-            "copy2": shutil.copy2,
-            "copytree": shutil.copytree,
-            "disk_usage": shutil.disk_usage,
-        })(),
-        "os_path": os.path,
-    }
-    if _PYAUTOGUI:
-        sandbox["pyautogui"] = pyautogui
-    if _OS == "Windows":
-        try:
-            import ctypes, winreg
-            sandbox["ctypes"] = ctypes
-            sandbox["winreg"] = type("winreg", (), {
-                "OpenKey": winreg.OpenKey,
-                "QueryValueEx": winreg.QueryValueEx,
-                "HKEY_CURRENT_USER": winreg.HKEY_CURRENT_USER,
-            })()
-        except ImportError:
-            pass
-    return sandbox
-
-
-def _strip_code_fences(code: str) -> str:
-    """Retire proprement les clôtures markdown ``` du code généré."""
-    code = (code or "").strip()
-    if code.startswith("```"):
-        lines = code.split("\n")
-        end = len(lines)
-        for i in range(len(lines) - 1, 0, -1):
-            if lines[i].strip().startswith("```"):
-                end = i
-                break
-        code = "\n".join(lines[1:end]).strip()
-    return code
-
-
-def _execute_generated_code(code: str, player=None) -> str:
-    if not code or code.strip() == "UNSAFE":
-        return "Cette action ne peut pas être exécutée en toute sécurité."
-    code = _strip_code_fences(code)
-    if not code:
-        return "Code vide généré par l'IA."
-    sandbox = _build_sandbox()
-    output_lines = []
-    sandbox["__builtins__"]["print"] = lambda *a: output_lines.append(" ".join(str(x) for x in a))
-    try:
-        exec(compile(code, "<jarvis_desktop>", "exec"), sandbox)
-        return "\n".join(output_lines) if output_lines else "Action réalisée avec succès."
-    except Exception as e:
-        print(f"[Desktop] Exec error: {e}\nCode:\n{code[:300]}")
-        return f"Erreur d'exécution : {e}"
-
-
-def _ask_gemini_for_desktop_action(task: str) -> str:
-    api_key = _get_api_key()
-    if not api_key:
-        return "Clé API indisponible pour l'IA."
-    try:
-        from google import genai as _genai
-        _client = _genai.Client(api_key=api_key)
-    except Exception as e:
-        return f"IA indisponible : {e}"
-    desktop = str(_get_desktop())
-    os_specific = ("- ctypes (appels API Windows, lecture seule)\n- winreg (registre, lecture seule)"
-                   if _OS == "Windows" else
-                   "- subprocess n'est pas disponible ; utilisez pyautogui ou Path uniquement")
-    prompt = f"""Tu es un assistant d'automatisation du bureau.
-OS actuel : {_OS}
-Chemin du bureau : {desktop}
-Génère un code Python SÛR pour accomplir la tâche ci-dessous.
-Modules autorisés UNIQUEMENT :
-pyautogui (souris, clavier - si nécessaire)
-pathlib.Path (inspection de fichiers/dossiers, PAS de suppression)
-shutil.copy2, shutil.copytree, shutil.disk_usage (PAS move, PAS rmtree)
-os_path (équivalent os.path, lecture seule)
-time.sleep
-{os_specific}
-Règles strictes :
-AUCUNE suppression de fichier (pas de unlink, rmtree, remove)
-AUCUN appel subprocess
-AUCUN exec() ou eval() dans le code
-AUCUNE instruction import (les modules sont déjà injectés)
-AUCUNE écriture de fichier sauf demande explicite
-Si la tâche ne peut pas être accomplie en sécurité avec ces outils, réponds exactement : UNSAFE
-Renvoyer UNIQUEMENT le code Python. Aucune explication, aucun markdown.
-Tâche : {task}"""
-    try:
-        response = _client.models.generate_content(model=FAST_MODEL, contents=prompt)
-        return _strip_code_fences(response.text)
-    except Exception as e:
-        return f"Erreur IA : {e}"
 
 
 # ════════════════════════════════════════════════════════════════════════════
