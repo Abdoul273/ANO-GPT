@@ -4149,7 +4149,14 @@ class ToolDispatcher:
                     else:
                         lines = []
                         for row in rows:
-                            state = "ERREUR" if row["error"] else ("ACTIF" if row["enabled"] else "INACTIF")
+                            if row["error"]:
+                                state = "ERREUR"
+                            elif row["enabled"]:
+                                state = "ACTIF"
+                            elif row.get("needs_approval"):
+                                state = "EN ATTENTE D'APPROBATION (code modifié ou jamais activé)"
+                            else:
+                                state = "INACTIF"
                             lines.append(f"- {row['name']} — {state}" + (f" : {row['error']}" if row["error"] else ""))
                         result = "Plugins ANO-GPT :\n" + "\n".join(lines)
                         self.ui.show_card("info", "Plugins ANO-GPT", result)
