@@ -118,14 +118,24 @@ def _head(cwd: Path) -> str:
     return out if code == 0 else ""
 
 
-def _changed_files(cwd: Path, since: str) -> list[str]:
+def _dirty_files(cwd: Path) -> set[str]:
+    """Fichiers modifiés/non suivis présents avant même que l'agent ne travaille."""
+    code, out = _run(["git", "status", "--porcelain"], cwd, 10)
+    if code != 0:
+        return set()
+    return {line[3:] for line in out.splitlines() if line.strip()}
+
+
+def _changed_files(cwd: Path, since: str, pre_existing_dirty: set[str]) -> list[str]:
+    """Fichiers réellement touchés par CETTE réparation : jamais ceux déjà
+    modifiés avant qu'elle ne commence — un dépôt sale à l'entrée ne doit
+    jamais suffire à faire passer une réparation ratée pour réussie."""
     if not since:
         return []
     code, out = _run(["git", "diff", "--name-only", since, "HEAD"], cwd, 10)
-    files = [l for l in out.splitlines() if l.strip()] if code == 0 else []
-    code, dirty = _run(["git", "status", "--porcelain"], cwd, 10)
-    files += [l[3:] for l in dirty.splitlines() if l.strip()] if code == 0 else []
-    return sorted(set(files))
+    files = {l for l in out.splitlines() if l.strip()} if code == 0 else set()
+    files |= _dirty_files(cwd) - pre_existing_dirty
+    return sorted(files)
 
 
 def _summary_from_output(out: str) -> str:
@@ -150,6 +160,10 @@ def repair(inc: incident_log.Incident, player: Any = None, speak: Any = None,
         result: dict[str, Any] = {"incident": inc.key, "ok": False, "engine": "", "files": [], "summary": ""}
         try:
             before = _head(cwd)
+            pre_existing_dirty = _dirty_files(cwd)
+            if pre_existing_dirty:
+                print(f"[AutoFix] dépôt déjà modifié avant réparation ({len(pre_existing_dirty)} "
+                      "fichier(s)) : exclus du diff attribué à cette réparation.")
             _card(player, f"**{inc.source}** — {inc.message[:120]}\n\n"
                           f"Fichier : `{inc.file or '?'}`\n\n⏳ Analyse et correction par {engines[0]}…")
             last_out = ""
@@ -168,15 +182,22 @@ def repair(inc: incident_log.Incident, player: Any = None, speak: Any = None,
                     code, out = 1, f"{engine} : {exc}"
                 last_out = out
                 print(f"[AutoFix] {engine} terminé en {time.monotonic() - started:.0f}s (code {code})")
-                files = _changed_files(cwd, before)
-                if files:
+                files = _changed_files(cwd, before, pre_existing_dirty)
+                # Un code de sortie non nul veut dire que l'agent a échoué ou a
+                # été interrompu : même s'il a laissé des fichiers modifiés
+                # (correctif partiel, crash en cours d'écriture), ce n'est pas
+                # une réparation réussie tant qu'il n'a pas terminé proprement.
+                if files and code == 0:
                     result.update(ok=True, engine=engine, files=files, summary=_summary_from_output(out))
                     break
-                if code == 0 and engine != "dev_agent":
+                if code == 0 and not files and engine != "dev_agent":
                     # L'agent a répondu sans modifier de fichier : il a jugé
                     # qu'il n'y avait rien à corriger. On le rapporte tel quel.
                     result.update(ok=False, engine=engine, summary=_summary_from_output(out))
                     break
+                if files and code != 0:
+                    print(f"[AutoFix] {engine} a laissé {len(files)} fichier(s) modifié(s) mais a "
+                          f"échoué (code {code}) : non retenu comme correctif.")
             if not result["summary"]:
                 result["summary"] = _summary_from_output(last_out) or "aucune réponse de l'agent"
         finally:
