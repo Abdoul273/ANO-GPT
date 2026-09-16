@@ -1915,10 +1915,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 if (
                     not session_connected
                     and not self._live_models.using_fallback
-                    and (
-                        self._live_models.should_fallback(e)
-                        or is_invalid_live_setup_error(e)
-                    )
+                    and self._live_models.should_fallback(e)
                 ):
                     fallback = self._live_models.activate_fallback()
                     self._conn.forget_session()

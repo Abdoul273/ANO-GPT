@@ -24,3 +24,9 @@ def test_une_simple_coupure_reseau_ne_change_pas_le_modele():
     assert not policy.should_fallback("TimeoutError: network unavailable")
     assert policy.current == DEFAULT_PRIMARY_MODEL
 
+
+def test_une_erreur_de_configuration_ne_change_pas_le_modele():
+    policy = LiveModelPolicy()
+    assert not policy.should_fallback("Invalid JSON payload: unknown setup field")
+    assert policy.current == DEFAULT_PRIMARY_MODEL
+
