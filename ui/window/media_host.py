@@ -90,7 +90,12 @@ class MediaHostMixin:
             self._cam_stream_sig.emit(False)
 
     def stop_camera_stream(self) -> None:
+        """Arrête le flux et masque immédiatement son overlay plein cadre."""
         self._cam_stop.set()
+        # Cette méthode est aussi appelée depuis la boucle audio, hors du
+        # thread Qt : le signal garantit que le panneau caméra est réellement
+        # retiré de l'écran, au lieu de seulement arrêter les images.
+        self._cam_stream_sig.emit(False)
 
     def _close_camera_view(self) -> None:
         """Ferme immédiatement l'overlay puis libère la source en arrière-plan."""

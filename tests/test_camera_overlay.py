@@ -86,6 +86,18 @@ def test_le_bouton_fermer_arrete_aussi_camera_studio(window):
     assert called.wait(1.0)
 
 
+def test_larret_programmatique_masque_aussi_la_vue_camera(window, qapp):
+    """La commande vocale passe par stop_camera_stream, pas par le bouton Qt."""
+    ui = _facade(window)
+    window._on_cam_stream(True)
+    assert window._cam_cont.isVisible()
+
+    ui.stop_camera_stream()
+    qapp.processEvents()
+
+    assert not window._cam_cont.isVisible()
+
+
 def test_lorbe_reste_vivant_en_petit_sur_une_vue_plein_ecran(window, qapp):
     """Une image décorative ne réagirait plus à la voix : on garde le vrai canvas."""
     orb = window.hud

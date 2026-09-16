@@ -532,6 +532,13 @@ class SessionManager:
             self.ui.stop_camera_stream()
         except Exception:
             logging.getLogger(__name__).warning("Échec auxiliaire dans close_all_cameras")
+        try:
+            # Une analyse ponctuelle peut avoir laissé son aperçu caméra dans
+            # la pile de notifications. Le fermer avec le flux évite une carte
+            # qui prétend encore que la caméra est ouverte.
+            self.ui.dismiss_cards("info", "👁 Caméra")
+        except Exception:
+            logging.getLogger(__name__).warning("Échec auxiliaire dans close_all_cameras")
         if not closed:
             return "La caméra est déjà fermée."
         return "Caméra fermée (" + ", ".join(closed) + ")."
