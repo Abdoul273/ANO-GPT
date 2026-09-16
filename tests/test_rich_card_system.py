@@ -204,6 +204,16 @@ def test_generic_card_actions_and_live_update():
     assert card not in manager._cards
 
 
+def test_identical_non_confirmation_cards_are_coalesced():
+    """Une annonce publiée puis prononcée ne doit pas doubler sa carte."""
+    manager = CardManager()
+    first = manager.add_card("info", "🕌 PRIÈRE", "Il est l'heure de Asr.")
+    second = manager.add_card("info", "🕌 PRIÈRE", "Il est l'heure de Asr.")
+
+    assert second is first
+    assert len(manager._cards) == 1
+
+
 def test_card_scrollbars_are_masked():
     """Vérifie que toutes les barres de défilement des cartes sont totalement masquées."""
     from PyQt6.QtCore import Qt

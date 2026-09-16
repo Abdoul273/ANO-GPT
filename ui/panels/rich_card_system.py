@@ -808,6 +808,7 @@ class GlassCard(QFrame):
 
     def set_body(self, body: str) -> None:
         """Met à jour le texte d'une carte générique en place avec barre de scroll masquée."""
+        self._body_text = str(body or "")
         label = getattr(self, "_body_label", None)
         if label is None:
             label = CardTextBrowser(self)
@@ -2191,6 +2192,23 @@ class CardManager(QWidget):
         Supporte à la fois une instance de GlassCard ou les signatures rétro-compatibles
         de l'ancien RightCardStack (type, titre, corps).
         """
+        # Plusieurs producteurs (veille, annonce vocale, outil) peuvent livrer
+        # la même information à quelques millisecondes d'écart. Une seule carte
+        # doit alors rester visible ; les confirmations restent volontairement
+        # distinctes car chacune porte une action utilisateur.
+        if not isinstance(card_or_type, GlassCard):
+            requested_type = str(card_or_type).strip().lower()
+            requested_title = str(title or "Information")
+            requested_body = str(body or "")
+            if "confirm" not in requested_type:
+                for existing in self._cards:
+                    if (
+                        existing.card_type == requested_type
+                        and existing.card_title == requested_title
+                        and getattr(existing, "_body_text", "") == requested_body
+                    ):
+                        self._reorganize_remaining_cards()
+                        return existing
         # Construction de carte si chaîne passée
         if isinstance(card_or_type, GlassCard):
             card = card_or_type
