@@ -827,6 +827,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # coûte une reconnexion, la refermer n'apporterait rien.
         self._active_tool_packs: frozenset[str] = frozenset()
         self._toolkit_reconnect_requested = False
+        self._preserve_toolkit_context_on_reconnect = False
         self._context_compression_enabled = True
         self._live_models = LiveModelPolicy(
             primary=voice_settings.get("live_model", LIVE_MODEL),
@@ -2005,8 +2006,12 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     ),
                     last_turn_complete_at=self._last_turn_complete_at,
                     now=time.monotonic(),
+                    preserve_toolkit_context=bool(
+                        getattr(self, "_preserve_toolkit_context_on_reconnect", False)
+                    ),
                 ):
                     self._conn.forget_session()
+                self._preserve_toolkit_context_on_reconnect = False
                 self._conn.on_disconnected()
                 # La phrase restée sans réponse repartira à la reprise.
                 if self._live_user_text:

@@ -44,6 +44,19 @@ def test_reprise_inactive_ancienne_peut_conserver_le_contexte():
     ) is False
 
 
+def test_reconnexion_doutils_garde_le_contexte_meme_apres_une_reponse_recente():
+    """Ouvrir musique/fichiers ne doit jamais remettre Gemini à zéro."""
+    assert _resume_would_replay_turn(
+        model_turn_active=False,
+        audio_turn_pending=False,
+        audio_playing=False,
+        audio_queued=False,
+        last_turn_complete_at=100.0,
+        now=105.0,
+        preserve_toolkit_context=True,
+    ) is False
+
+
 class _StubUI:
     def __init__(self):
         self.logs = []

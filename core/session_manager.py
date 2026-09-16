@@ -106,8 +106,15 @@ def _resume_would_replay_turn(
     *, model_turn_active: bool, audio_turn_pending: bool,
     audio_playing: bool, audio_queued: bool,
     last_turn_complete_at: float, now: float,
+    preserve_toolkit_context: bool = False,
 ) -> bool:
     """Vrai si une poignée Gemini risque de rejouer la dernière réponse."""
+    # Un élargissement d'outils est une reconnexion voulue : jeter la poignée
+    # à ce moment efface tout le fil que les nouveaux outils doivent justement
+    # continuer. La protection anti-relecture reste active pour les coupures
+    # réseau et les réponses réellement interrompues.
+    if preserve_toolkit_context:
+        return False
     recent_complete = (
         last_turn_complete_at > 0
         and now - last_turn_complete_at < 15.0
@@ -354,6 +361,7 @@ class SessionManager:
             return False
         self._active_tool_packs = active | fresh
         self._toolkit_reconnect_requested = True
+        self._preserve_toolkit_context_on_reconnect = True
         self._voice_reconnect_requested = True
         print(f"[Outils] {origin} → paquets ouverts : {tool_packs.labels(fresh)}")
         event = getattr(self, "_voice_change_event", None)
