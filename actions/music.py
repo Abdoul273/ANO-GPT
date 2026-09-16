@@ -1146,6 +1146,34 @@ def _fmt_playback(title: str, origin: str, note: str) -> str:
     return f"{base} {note}" if note else base
 
 
+def _play_with_internal_player_or_fallback(
+    target: str, is_url: bool, title: str, origin: str, thumbnail: str = "",
+) -> str:
+    """Lance MPV intégré, ou VLC si MPV est absent/refuse le média.
+
+    Le module IPC est importable même si le binaire ``mpv`` n'est pas présent.
+    Dans ce cas, le repli VLC doit être réel, et son MPRIS garde la carte
+    musique d'ANO-GPT synchronisée.
+    """
+    ipc = get_player()
+    try:
+        started = ipc.play(target, title=title, artist=origin, thumbnail=thumbnail)
+    except TypeError:
+        # Compatibilité avec un ancien lecteur IPC ou les doubles de test.
+        started = ipc.play(target, title=title, artist=origin)
+    if started is not False:
+        return f"« {title} » ({origin}) — lecture lancée en arrière-plan sans fenêtre."
+
+    ok, note = _launch_with_fallback(target, is_url, preferred=None)
+    if not ok:
+        return f"Impossible de lancer « {title} » : {note}"
+    if kit.which("playerctl"):
+        # VLC expose normalement « vlc » via MPRIS ; ce moniteur actualise
+        # titre, progression et contrôles dans le panneau musique.
+        ipc.watch_mpris_player("vlc")
+    return _fmt_playback(title, origin, note + " — repli sur VLC")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Lancement effectif d'un résultat (local ou flux déjà résolu)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1169,15 +1197,9 @@ def _play_result(target: str, is_url: bool, title: str, origin: str,
         _sm_set(session_memory, _LOCAL_VIDEO_CURRENT_KEY, video)
         return f"« {title} » — lecture dans le lecteur vidéo intégré."
     if _HAS_IPC_PLAYER and not chosen:
-        ipc = get_player()
-        if thumbnail:
-            try:
-                ipc.play(target, title=title, artist=origin, thumbnail=thumbnail)
-            except TypeError:
-                ipc.play(target, title=title, artist=origin)
-        else:
-            ipc.play(target, title=title, artist=origin)
-        return f"« {title} » ({origin}) — lecture lancée en arrière-plan sans fenêtre."
+        return _play_with_internal_player_or_fallback(
+            target, is_url, title, origin, thumbnail,
+        )
 
     chosen_bin = _resolve_player(chosen, is_url) if chosen else None
     if chosen and not chosen_bin:
@@ -1241,9 +1263,9 @@ def _play_youtube_best(query: str, chosen: str, session_memory,
                             chosen, session_memory, player=player, thumbnail=thumb)
 
     if _HAS_IPC_PLAYER and not chosen:
-        ipc = get_player()
-        ipc.play(target, title=title, artist=uploader, thumbnail=thumb)
-        return f"« {title} » ({uploader}) — lecture lancée en arrière-plan sans fenêtre."
+        return _play_with_internal_player_or_fallback(
+            target, True, title, uploader, thumb,
+        )
 
     # Repli lecteur vidéo intégré si disponible
     if player is not None and hasattr(player, "play_video"):

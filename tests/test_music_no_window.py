@@ -41,6 +41,34 @@ def test_sans_lecteur_demande_la_lecture_est_headless(monkeypatch):
     assert "sans fenêtre" in out
 
 
+def test_absence_du_lecteur_interne_bascule_vers_un_vrai_lecteur(monkeypatch):
+    """Un import IPC sans binaire mpv ne doit jamais produire un faux succès."""
+    class MissingMPV:
+        def play(self, *args, **kwargs):
+            return False
+
+        def watch_mpris_player(self, name):
+            assert name == "vlc"
+            return True
+
+    monkeypatch.setattr(music, "get_player", lambda: MissingMPV())
+    monkeypatch.setattr(
+        music.kit, "which",
+        lambda name: "/usr/bin/playerctl" if name == "playerctl" else "",
+    )
+    monkeypatch.setattr(
+        music, "_launch_with_fallback",
+        lambda *args, **kwargs: (True, "lecture audio confirmée"),
+    )
+
+    out = music._play_result(
+        "/musique/morceau.mp3", False, "Morceau", "Local",
+        chosen="", session_memory=None,
+    )
+
+    assert "repli sur VLC" in out
+
+
 def test_fermer_la_fenetre_narrete_la_chaine_de_replis(monkeypatch):
     """Le cœur du bug : une fermeture volontaire ne doit RIEN relancer."""
     calls = []

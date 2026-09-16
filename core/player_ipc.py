@@ -231,14 +231,18 @@ class MPVPlayerIPC:
             pass
         return None
 
-    def play(self, url_or_path: str, title: str = "", artist: str = "", thumbnail: str = "", thumbnail_bytes: bytes = b""):
+    def play(self, url_or_path: str, title: str = "", artist: str = "", thumbnail: str = "", thumbnail_bytes: bytes = b"") -> bool:
         """Joue un fichier local ou une URL (audio direct ou YouTube)."""
         if not self._ensure_mpv_running():
-            return
+            return False
 
         # Le lecteur interne reprend la main : ses contrôles ne doivent pas
         # continuer à piloter Spotify après une lecture YouTube ou locale.
         self._external_player = ""
+
+        loaded = self._send_command(["loadfile", url_or_path, "replace"])
+        if loaded is None:
+            return False
 
         self._current_track["title"] = title or Path(url_or_path).stem
         self._current_track["artist"] = artist or "Musique"
@@ -246,7 +250,6 @@ class MPVPlayerIPC:
         self._current_track["thumbnail_bytes"] = thumbnail_bytes
         self._current_track["state"] = "playing"
 
-        self._send_command(["loadfile", url_or_path, "replace"])
         self._send_command(["set_property", "pause", False])
         self._notify()
 
@@ -263,6 +266,7 @@ class MPVPlayerIPC:
                 except Exception:
                     pass
             threading.Thread(target=_fetch_thumb, daemon=True).start()
+        return True
 
     def add_to_queue(self, url_or_path: str, title: str = "", artist: str = "", thumbnail: str = ""):
         """Ajoute un morceau à la playlist courante sans couper la lecture."""
