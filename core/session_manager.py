@@ -1275,28 +1275,6 @@ class SessionManager:
                     if response.server_content:
                         sc = response.server_content
 
-                        # Gemini Live peut fournir une hypothèse pendant que
-                        # l'utilisateur parle. Elle améliore la synchronisation
-                        # visuelle, mais ne devient jamais une commande ni du
-                        # contexte : seule la transcription finale ci-dessous
-                        # a ce droit.
-                        interim = getattr(sc, "interim_input_transcription", None)
-                        interim_text = _clean_transcript(getattr(interim, "text", ""))
-                        if interim_text and getattr(self, "_activity_open", False):
-                            evidence_ms = float(getattr(self, "_voice_evidence_ms", 0.0))
-                            audio_ms = max(
-                                0.0,
-                                (time.monotonic() - getattr(self, "_activity_since", time.monotonic()))
-                                * 1000.0 + AudioPreprocessor._ATTACK_MS,
-                            )
-                            if transcript_guard.assess(
-                                interim_text,
-                                acoustic_voice_ms=evidence_ms,
-                                audio_duration_ms=audio_ms,
-                                partial=True,
-                            ).accepted:
-                                self.ui.set_user_transcript(interim_text)
-
                         # Extraction des Thinking Tokens (Gemini 2.0 Flash Thinking)
                         if getattr(sc, "model_turn", None):
                             for part in getattr(sc.model_turn, "parts", []):
@@ -1354,38 +1332,6 @@ class SessionManager:
                         # garde acoustique, Vosk ni seconde passe réseau.
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
-                            if txt:
-                                evidence_ms = (
-                                    self._voice_evidence_ms if self._activity_open
-                                    else self._last_voice_evidence_ms
-                                )
-                                audio_ms = (
-                                    max(
-                                        0.0,
-                                        (time.monotonic() - self._activity_since) * 1000.0
-                                        + AudioPreprocessor._ATTACK_MS,
-                                    )
-                                    if self._activity_open else self._last_voice_audio_ms
-                                )
-                                assessment = transcript_guard.assess(
-                                    txt,
-                                    acoustic_voice_ms=evidence_ms,
-                                    audio_duration_ms=audio_ms,
-                                    partial=self._activity_open,
-                                )
-                                if not assessment.accepted:
-                                    if not assessment.deferred:
-                                        print(
-                                            f"[STT] 🛡️ Transcription Live rejetée "
-                                            f"({assessment.reason}): {txt!r}"
-                                        )
-                                        self._noise_turn = True
-                                        self._live_user_text = ""
-                                        # Gemini a déjà reçu le PCM, mais sa
-                                        # réponse éventuelle ne doit jamais
-                                        # être jouée pour un bruit d'atelier.
-                                        self.interrupt()
-                                    txt = ""
                             if txt and (not in_buf or in_buf[-1] != txt):
                                 # Les sous-titres instantanés s'effacent : la
                                 # transcription de Live prend l'écran.
