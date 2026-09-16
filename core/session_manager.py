@@ -1275,6 +1275,15 @@ class SessionManager:
                     if response.server_content:
                         sc = response.server_content
 
+                        # Affichage progressif de ce que l'utilisateur dit.
+                        # Cette hypothèse Live reste strictement visuelle : la
+                        # transcription finale est la seule qui alimente le
+                        # contexte, les outils ou les actions de l'assistant.
+                        interim = getattr(sc, "interim_input_transcription", None)
+                        interim_text = _clean_transcript(getattr(interim, "text", ""))
+                        if interim_text and getattr(self, "_activity_open", False):
+                            self.ui.set_user_transcript(interim_text)
+
                         # Extraction des Thinking Tokens (Gemini 2.0 Flash Thinking)
                         if getattr(sc, "model_turn", None):
                             for part in getattr(sc.model_turn, "parts", []):
