@@ -1242,6 +1242,13 @@ class SessionManager:
                         # Ce tour a été jugé « bruit » par le garde-fou local :
                         # sa réponse est coupée dès le premier bloc audio, avant
                         # qu'un seul son ne sorte des enceintes. L'interruption
+                        # Dès que Gemini commence à répondre, la demande qui a
+                        # déclenché ce tour n'est plus « sans réponse ».
+                        # Attendre exclusivement `turn_complete` laissait une
+                        # ancienne phrase dans la file de reprise lorsqu'une
+                        # reconnexion technique survenait au milieu de la
+                        # réponse ; elle pouvait alors écraser le fil courant.
+                        self._live_user_text = ""
                         # tentée au moment du rejet arrivait souvent trop tôt —
                         # le tour du modèle n'avait pas encore commencé.
                         if self._noise_turn:
@@ -1335,6 +1342,10 @@ class SessionManager:
                                     ))
                                 self._queue_spoken_text(txt)
                                 _speaking_started = True
+                            # Certains tours texte n'ont pas de PCM sortant :
+                            # leur transcription de sortie confirme tout aussi
+                            # bien que la demande a commencé à être traitée.
+                            self._live_user_text = ""
 
                         # Transcription unique Mark-LII : celle de Gemini Live
                         # est affichée telle qu'elle arrive, sans correcteur,

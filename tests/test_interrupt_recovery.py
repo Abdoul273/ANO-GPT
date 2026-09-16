@@ -113,6 +113,17 @@ def test_la_transcription_de_sortie_referme_aussi():
     assert "_clear_interrupted()" in block
 
 
+def test_une_reponse_commencee_ne_peut_plus_etre_rejouee_apres_reconnexion():
+    """Une réponse partielle vaut mieux qu'une ancienne demande hors contexte."""
+    audio_start = MAIN.index("if audio_data:")
+    audio_block = MAIN[audio_start:audio_start + 700]
+    assert 'self._live_user_text = ""' in audio_block
+
+    transcript_start = MAIN.index("sc.output_transcription and sc.output_transcription.text")
+    transcript_block = MAIN[transcript_start:transcript_start + 450]
+    assert 'self._live_user_text = ""' in transcript_block
+
+
 def test_le_drapeau_nest_arme_que_pendant_un_tour_reel():
     """Armé hors tour, c'est la réponse SUIVANTE qui était jetée."""
     body = inspect.getsource(
