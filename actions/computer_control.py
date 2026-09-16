@@ -485,6 +485,29 @@ def _type_text(text: str, interval: float = 0.03) -> str:
         return "Aucun outil de saisie disponible (ydotool, wtype, xdotool ou pyautogui)."
 
 
+def _terminal_command_from_voice_text(text: str) -> str:
+    """Extrait une commande si le modèle a recopié toute la consigne vocale."""
+    raw = str(text or "").strip()
+    match = re.search(
+        r"\b(?:tu\s+)?(?:tape(?:s|r)?|écri(?:s|re)|saisi(?:s|r)|entre(?:s|r))\s+"
+        r"(?:(?:la|une)\s+)?commande\s+(?P<command>.+)$",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return raw
+    command = match.group("command").strip().strip("'\"«» ")
+    # L'indication « dans Kitty sur le bureau 3 » vise la fenêtre, jamais la
+    # commande à taper. On ne retire que les noms de terminaux connus.
+    command = re.sub(
+        r"\s+(?:dans|sur)\s+(?:kitty|le\s+terminal|terminal|konsole|alacritty|foot)\b.*$",
+        "",
+        command,
+        flags=re.IGNORECASE,
+    ).strip().rstrip(".?!")
+    return command or raw
+
+
 def _press_key(key: str) -> str:
     key = (key or "").strip()
     if not key:
@@ -1401,7 +1424,7 @@ def computer_control(parameters: dict, **kwargs) -> str:
     print(f"[ComputerControl] ▶ {action} {params}")
     try:
         if action == "type":
-            text = params.get("text", "")
+            text = _terminal_command_from_voice_text(params.get("text", ""))
             if not text:
                 return "Aucun texte à taper."
             target_win = params.get("window") or params.get("title")

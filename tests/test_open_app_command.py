@@ -22,6 +22,16 @@ from actions.open_app import _parse_open_command_locally, open_app
 import actions.computer_control as cc
 
 
+def test_la_consigne_vocale_complete_n_est_pas_tapee_dans_le_terminal():
+    assert cc._terminal_command_from_voice_text(
+        "tape la commande claude dans kitty sur le bureau 3"
+    ) == "claude"
+    assert cc._terminal_command_from_voice_text(
+        "Va sur le bureau 3 et ouvre Kitty et tu tapes la commande AGAGAGY."
+    ) == "AGAGAGY"
+    assert cc._terminal_command_from_voice_text("claude --help") == "claude --help"
+
+
 def test_markdown_file_uses_markdown_studio_without_explicit_app(monkeypatch, tmp_path):
     """Un .md ouvert sans application explicite est confié à Markdown Studio."""
     note = tmp_path / "note de projet.md"
