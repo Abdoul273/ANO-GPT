@@ -827,7 +827,12 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # coûte une reconnexion, la refermer n'apporterait rien.
         self._active_tool_packs: frozenset[str] = frozenset()
         self._toolkit_reconnect_requested = False
-        self._preserve_toolkit_context_on_reconnect = False
+        # Les paquets d'outils obligent à ouvrir une nouvelle session Live.
+        # On y remet un court contexte local plutôt que de réemployer une
+        # poignée Gemini liée à l'ancienne configuration (elle peut rester
+        # connectée mais ne plus accepter de tour).
+        self._toolkit_context_on_reconnect = False
+        self._recent_live_turns: list[tuple[str, str]] = []
         self._context_compression_enabled = True
         self._live_models = LiveModelPolicy(
             primary=voice_settings.get("live_model", LIVE_MODEL),
@@ -1192,6 +1197,11 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         précède est une autre histoire et mérite son propre résumé.
         """
         try:
+            user_text = " ".join((user_text or "").split())
+            assistant_text = " ".join((assistant_text or "").split())
+            if user_text or assistant_text:
+                self._recent_live_turns.append((user_text, assistant_text))
+                del self._recent_live_turns[:-4]
             if self._episode.idle_seconds > 600:
                 self._flush_episode("silence")
             self._episode.add_turn(user_text, assistant_text)
@@ -1852,11 +1862,11 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 if root_exc is not e:
                     err_str = f"{err_str} — {root_str}"
                 if self._toolkit_reconnect_requested:
-                    # Élargissement de la boîte à outils : contrairement à un
-                    # changement de voix, la poignée de reprise est conservée —
-                    # la conversation continue là où elle s'était arrêtée, et
-                    # `_resend_unanswered` renvoie la demande en attente avec
-                    # les nouveaux outils.
+                    # Élargissement de la boîte à outils : la poignée de
+                    # reprise sera jetée dans le `finally`, car Gemini peut
+                    # garder une session ouverte mais muette si ses outils ont
+                    # changé. `_resend_unanswered` remet un bref contexte local
+                    # avec la demande en attente sur la nouvelle session.
                     self._toolkit_reconnect_requested = False
                     self._voice_reconnect_requested = False
                     self._voice_change_event.clear()
@@ -1996,7 +2006,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 # reconnexion (le briefing observé deux fois). Dans cette
                 # fenêtre, une session neuve avec notre contexte reconstruit
                 # est plus sûre qu'une reprise ambiguë.
-                if _resume_would_replay_turn(
+                if getattr(self, "_toolkit_context_on_reconnect", False) or _resume_would_replay_turn(
                     model_turn_active=self._model_turn_active,
                     audio_turn_pending=self._audio_turn_pending,
                     audio_playing=self._audio_turn_active,
@@ -2006,12 +2016,8 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     ),
                     last_turn_complete_at=self._last_turn_complete_at,
                     now=time.monotonic(),
-                    preserve_toolkit_context=bool(
-                        getattr(self, "_preserve_toolkit_context_on_reconnect", False)
-                    ),
                 ):
                     self._conn.forget_session()
-                self._preserve_toolkit_context_on_reconnect = False
                 self._conn.on_disconnected()
                 # La phrase restée sans réponse repartira à la reprise.
                 if self._live_user_text:
@@ -2022,7 +2028,8 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 # finie. Une coupure de dix secondes que l'on va rattraper
                 # n'est pas une fin de séance : la raconter comme telle
                 # découpait un même échange en trois souvenirs bancals.
-                if self._conn.conversation_lost():
+                if (not getattr(self, "_toolkit_context_on_reconnect", False)
+                        and self._conn.conversation_lost()):
                     self._flush_episode("fin de session")
 
             self.set_speaking(False)

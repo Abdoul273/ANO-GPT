@@ -44,8 +44,8 @@ def test_reprise_inactive_ancienne_peut_conserver_le_contexte():
     ) is False
 
 
-def test_reconnexion_doutils_garde_le_contexte_meme_apres_une_reponse_recente():
-    """Ouvrir musique/fichiers ne doit jamais remettre Gemini à zéro."""
+def test_reconnexion_doutils_jette_une_reprise_recente_ambiguë():
+    """Les outils changent : le contexte local est plus sûr qu'une poignée Live."""
     assert _resume_would_replay_turn(
         model_turn_active=False,
         audio_turn_pending=False,
@@ -53,8 +53,7 @@ def test_reconnexion_doutils_garde_le_contexte_meme_apres_une_reponse_recente():
         audio_queued=False,
         last_turn_complete_at=100.0,
         now=105.0,
-        preserve_toolkit_context=True,
-    ) is False
+    ) is True
 
 
 class _StubUI:

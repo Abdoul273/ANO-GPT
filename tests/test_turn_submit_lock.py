@@ -32,6 +32,11 @@ class _UI:
         self.logs.append(line)
 
 
+class _Connection:
+    def should_apologize(self) -> bool:
+        return False
+
+
 class _Host:
     _submit_text_turn = SessionManager._submit_text_turn
     _defer_turn = SessionManager._defer_turn
@@ -47,6 +52,9 @@ class _Host:
         self._active_turn_task = None
         self._deferred_turns: list[str] = []
         self._unanswered: list[str] = []
+        self._conn = _Connection()
+        self._toolkit_context_on_reconnect = False
+        self._recent_live_turns: list[tuple[str, str]] = []
 
     def _maybe_show_clock_particles(self, text: str) -> None:
         pass
@@ -115,6 +123,22 @@ async def _test_result_without_session_is_deferred_then_flushed():
     assert host._deferred_turns == []
 
 
+async def _test_toolkit_reconnect_replays_local_context_without_live_handle():
+    host = _Host()
+    host._toolkit_context_on_reconnect = True
+    host._recent_live_turns = [("où est le morceau ?", "Il est dans Musique.")]
+    host._unanswered = ["lance-le"]
+    asyncio.create_task(_finish_turn(host, 0.5))
+    await host._resend_unanswered()
+    assert host.session.sent == [
+        "[Contexte local juste avant la reconnexion. Continue cette "
+        "conversation naturellement, sans le répéter.]\n"
+        "Utilisateur : où est le morceau ?\nANO-GPT : Il est dans Musique.\n\n"
+        "lance-le"
+    ]
+    assert host._toolkit_context_on_reconnect is False
+
+
 async def _test_spawn_logged_reports_exception():
     ui = _UI()
 
@@ -151,6 +175,10 @@ def test_external_reset_never_releases_the_lock():
 
 def test_result_without_session_is_deferred_then_flushed():
     asyncio.run(_test_result_without_session_is_deferred_then_flushed())
+
+
+def test_toolkit_reconnect_replays_local_context_without_live_handle():
+    asyncio.run(_test_toolkit_reconnect_replays_local_context_without_live_handle())
 
 
 def test_spawn_logged_reports_exception():

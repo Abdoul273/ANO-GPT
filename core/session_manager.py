@@ -350,9 +350,9 @@ class SessionManager:
         """Ouvre les paquets que cette phrase réclame et relance la session.
 
         Gemini Live fige ses outils à la connexion : les élargir impose une
-        reconnexion. Elle est faite tout de suite, poignée de reprise gardée,
-        et ``_resend_unanswered`` renvoie la demande en attente — l'utilisateur
-        obtient sa réponse avec le bon outil au lieu d'un refus.
+        reconnexion. La session suivante est neuve (une poignée associée à une
+        autre liste d'outils peut se figer), et ``_resend_unanswered`` y remet
+        les derniers tours locaux avec la demande en attente.
         """
         wanted = tool_packs.resolve(text)
         active = getattr(self, "_active_tool_packs", frozenset())
@@ -361,7 +361,7 @@ class SessionManager:
             return False
         self._active_tool_packs = active | fresh
         self._toolkit_reconnect_requested = True
-        self._preserve_toolkit_context_on_reconnect = True
+        self._toolkit_context_on_reconnect = True
         self._voice_reconnect_requested = True
         print(f"[Outils] {origin} → paquets ouverts : {tool_packs.labels(fresh)}")
         event = getattr(self, "_voice_change_event", None)
@@ -1753,9 +1753,25 @@ class SessionManager:
             "une demi-phrase si la coupure a duré.]\n"
             if self._conn.should_apologize() else ""
         )
-        text = note + "\n".join(pending)
+        recent_turns = list(getattr(self, "_recent_live_turns", ())[-4:])
+        local_context = ""
+        if getattr(self, "_toolkit_context_on_reconnect", False) and recent_turns:
+            lines = []
+            for user_text, assistant_text in recent_turns:
+                if user_text:
+                    lines.append(f"Utilisateur : {user_text[:500]}")
+                if assistant_text:
+                    lines.append(f"ANO-GPT : {assistant_text[:500]}")
+            if lines:
+                local_context = (
+                    "[Contexte local juste avant la reconnexion. Continue cette "
+                    "conversation naturellement, sans le répéter.]\n"
+                    + "\n".join(lines) + "\n\n"
+                )
+        text = note + local_context + "\n".join(pending)
         try:
             await self._submit_text_turn(text)
+            self._toolkit_context_on_reconnect = False
             self.ui.write_log(f"SYS : reprise de « {pending[-1][:60]} ».")
         except Exception as exc:
             print(f"[JARVIS] Reprise impossible : {exc}")
