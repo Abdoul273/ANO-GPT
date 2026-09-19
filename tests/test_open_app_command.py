@@ -250,3 +250,61 @@ def test_open_app_targets_newly_opened_window(monkeypatch):
     assert cc_calls[0].get("window") == "address:0x999999"
     assert 4.5 in ready_timeouts
     assert any("0x999999" in str(win) for win in focused_windows)
+
+
+def _prepare_reuse(monkeypatch, entry):
+    """Kitty vient d'être lancé par l'assistant : le journal connaît sa fenêtre."""
+    launches = []
+    monkeypatch.setattr(oa, "_SYSTEM", "Linux")
+    monkeypatch.setattr(oa, "_HAS_TRACKER", True)
+    tracker = MagicMock()
+    tracker.last_launched = lambda app, max_age=None, nickname=None: entry
+    monkeypatch.setattr(oa, "_tracker", tracker)
+    monkeypatch.setitem(oa._OS_LAUNCHERS, "Linux",
+                        lambda name, instance_name=None: launches.append(name) or True)
+    monkeypatch.setattr(oa, "_is_process_running", lambda app: True)
+    monkeypatch.setattr(oa, "_hyprctl_json", lambda *args: [])
+    monkeypatch.setattr(oa, "_focus_workspace", lambda ws: True)
+    monkeypatch.setattr(oa, "_focus_window", lambda w: True)
+    monkeypatch.setattr(oa, "_window_ready", lambda w, timeout=3.5: True)
+    monkeypatch.setattr(oa.time, "sleep", lambda s: None)
+    mock_cc = MagicMock(return_value="Texte tapé : «claude» (validé par Entrée)")
+    monkeypatch.setattr(oa, "computer_control", mock_cc)
+    return launches, mock_cc
+
+
+def test_tape_la_commande_reutilise_la_fenetre_deja_ouverte(monkeypatch):
+    """« ouvre kitty » puis « tape la commande claude » : la commande part dans
+    la fenêtre déjà ouverte, aucune nouvelle fenêtre n'est lancée."""
+    entry = {"address": "0xabc", "workspace": 2, "app": "kitty"}
+    launches, mock_cc = _prepare_reuse(monkeypatch, entry)
+
+    result = open_app({"app_name": "Kitty", "command": "claude"})
+
+    assert launches == []
+    payload = mock_cc.call_args[0][0]
+    assert payload["text"] == "claude"
+    assert payload["window"] == "address:0xabc"
+    assert payload["press_enter"] is True
+    assert "déjà ouvert" in result and "claude" in result
+
+
+def test_nouvelle_fenetre_demandee_ne_reutilise_pas(monkeypatch):
+    entry = {"address": "0xabc", "workspace": 2, "app": "kitty"}
+    launches, _ = _prepare_reuse(monkeypatch, entry)
+
+    open_app({"app_name": "kitty", "command": "btop",
+              "description": "ouvre une nouvelle fenêtre kitty et tape btop"})
+
+    assert launches, "une nouvelle fenêtre était explicitement demandée"
+
+
+def test_saisie_echouee_est_signalee(monkeypatch):
+    entry = {"address": "0xabc", "workspace": 2, "app": "kitty"}
+    launches, mock_cc = _prepare_reuse(monkeypatch, entry)
+    mock_cc.return_value = "Aucun outil de saisie disponible"
+
+    result = open_app({"app_name": "kitty", "command": "claude"})
+
+    assert launches == []
+    assert "échoué" in result

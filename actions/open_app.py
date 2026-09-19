@@ -1230,6 +1230,66 @@ _HIDDEN_RE = re.compile(
     r"hidden|in\s+the\s+background|silently)\b",
     re.IGNORECASE,
 )
+# « nouvelle fenêtre », « une autre », « encore un » : l'utilisateur veut bien
+# une fenêtre de plus, pas réutiliser celle déjà ouverte.
+_NEW_WINDOW_RE = re.compile(
+    r"\b(?:nouvelle|nouveau|nouvel|autre|encore|deuxi[èe]me|seconde?|"
+    r"troisi[èe]me|new|another)\b",
+    re.IGNORECASE,
+)
+
+# Au-delà, une fenêtre lancée par l'assistant n'est plus « celle de tout à
+# l'heure » : « tape claude » repart alors sur une ouverture normale.
+_REUSE_WINDOW_SECONDS = 600.0
+
+
+def _type_command_into(target_window: str, command: str,
+                       wait_ready: float = 3.5) -> str:
+    """Focalise la fenêtre et y tape la commande (validée par Entrée).
+    Renvoie le compte rendu de la saisie — vide si elle a échoué — pour
+    que l'assistant n'annonce jamais « c'est lancé » à l'aveugle."""
+    _window_ready(target_window, timeout=wait_ready)
+    _focus_window(target_window)
+    time.sleep(0.15)
+    cc_payload = {
+        "action": "type",
+        "text": command,
+        "window": target_window,
+        "press_enter": True,
+    }
+    try:
+        if computer_control is not None:
+            res = computer_control(cc_payload)
+        else:
+            from actions.computer_control import computer_control as _cc
+            res = _cc(cc_payload)
+    except Exception as e:
+        print(f"[open_app] Erreur lors de la saisie de la commande '{command}' : {e}")
+        return ""
+    res = str(res or "")
+    return res if res.startswith("Texte tapé") else ""
+
+
+def _reuse_recent_window(app_name: str, normalized: str,
+                         ws_num: Optional[int]) -> Optional[dict]:
+    """Fenêtre de cette app que l'assistant a lancée il y a peu et qui vit
+    encore. Si un bureau précis est demandé, elle doit s'y trouver."""
+    if not _HAS_TRACKER or _SYSTEM != "Linux":
+        return None
+    for needle in dict.fromkeys([app_name, normalized]):
+        if not needle:
+            continue
+        try:
+            entry = _tracker.last_launched(needle, max_age=_REUSE_WINDOW_SECONDS)
+        except Exception:
+            entry = None
+        if not entry or not entry.get("address"):
+            continue
+        if ws_num is not None and entry.get("workspace") not in (None, ws_num):
+            continue
+        return entry
+    return None
+
 
 @kit.action("open_app")
 def open_app(parameters=None, response=None, player=None, session_memory=None) -> str:
@@ -1359,6 +1419,32 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
                 return f"{target.name} est ouvert."
             return f"Impossible de confirmer l'ouverture de {target.name}."
 
+        # ── « tape la commande X » alors que l'app vient d'être ouverte ──
+        # Le modèle rappelle open_app avec la commande au lieu de taper dans
+        # la fenêtre qu'il a lui-même lancée à l'instant : on réutilise cette
+        # fenêtre plutôt que d'en empiler une deuxième, vide.
+        wants_new = bool(description and _NEW_WINDOW_RE.search(description))
+        if (command and not hidden and not instance_name
+                and (count or 1) == 1 and not wants_new):
+            entry = _reuse_recent_window(app_name, normalized, ws_num)
+            if entry:
+                addr = entry["address"]
+                target_window = f"address:{addr}"
+                win_ws = entry.get("workspace")
+                if win_ws is not None:
+                    _focus_workspace(win_ws)
+                print(f"[open_app] Fenêtre {app_name} déjà ouverte ({addr}) → saisie sans relancer.")
+                typed = _type_command_into(
+                    target_window, command,
+                    float(params.get("wait_functional") or params.get("wait_seconds") or 1.5))
+                where = f" sur le bureau {win_ws}" if win_ws is not None else ""
+                if typed:
+                    return (f"{app_name} était déjà ouvert{where} : '{command}' a été tapé "
+                            f"et validé dans cette fenêtre existante, sans en rouvrir une.")
+                return (f"{app_name} était déjà ouvert{where}, mais la saisie de "
+                        f"'{command}' a échoué (outil de clavier indisponible). "
+                        f"Dis-le à l'utilisateur, ne relance pas l'application.")
+
         # ── Lancement d'application(s), éventuellement en N exemplaires ──
         n = max(1, min(count or 1, 5))  # garde-fou : jamais plus de 5
         if count and count > 5:
@@ -1424,6 +1510,7 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
 
         # ── Saisie automatique de la commande demandée ──────────────────
         target_window = None
+        command_failed = False
         if command:
             target_window = params.get("target_window") or params.get("window")
             if not target_window:
@@ -1440,24 +1527,9 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
                     target_window = app_name or normalized
 
             wait_ready = float(params.get("wait_functional") or params.get("wait_seconds") or 3.5)
-            _window_ready(target_window, timeout=wait_ready)
-
-            _focus_window(target_window)
-
-            cc_payload = {
-                "action": "type",
-                "text": command,
-                "window": target_window,
-                "press_enter": True,
-            }
-            if computer_control is not None:
-                computer_control(cc_payload)
-            else:
-                try:
-                    from actions.computer_control import computer_control as _cc
-                    _cc(cc_payload)
-                except Exception as e:
-                    print(f"[open_app] Erreur lors de la saisie de la commande '{command}' : {e}")
+            typed = _type_command_into(target_window, command, wait_ready)
+            if not typed:
+                command_failed = True
 
         # ── Message de synthèse ──────────────────────────────────────────
         ws_note = ""
@@ -1492,7 +1564,10 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
                 name_note = f" (surnom '{instance_name}' demandé mais module de nommage indisponible)"
 
         cmd_note = ""
-        if command:
+        if command and command_failed:
+            cmd_note = (f" — mais la saisie de '{command}' a échoué (outil de "
+                        f"clavier indisponible) : dis-le à l'utilisateur")
+        elif command:
             if target_window:
                 cmd_note = f" avec exécution de '{command}' sur cette même fenêtre ({target_window})"
             else:

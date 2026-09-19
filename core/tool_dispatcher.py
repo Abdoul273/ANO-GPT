@@ -209,6 +209,9 @@ TOOL_DECLARATIONS = [
             "website, or program. Always call this tool — never just say you opened it. "
             "If the user wants to run a command or type something into the app (e.g. 'lance kitty et tape codex'), "
             "pass the command in the 'command' parameter. "
+            "If the app was ALREADY opened moments ago (e.g. 'ouvre kitty' then 'tape la commande claude'), "
+            "do NOT open it again: call computer_control with action='type', text='<command>', "
+            "window='<app>', press_enter=true — the existing window is reused. "
             "Set hidden=true when the user wants an app running without seeing its window "
             "(e.g. 'lance X en arrière-plan/caché/sans l'afficher') — it launches on Hyprland's "
             "invisible special workspace, verified for real, never just focused away."
@@ -1243,7 +1246,7 @@ TOOL_DECLARATIONS = [
                 "browser":     {"type": "STRING", "description": "Always use chrome, the user’s permanent browser choice."},
                 "url":         {"type": "STRING", "description": "URL for go_to / new_tab action"},
                 "query":       {"type": "STRING", "description": "Search query for search action"},
-                "engine":      {"type": "STRING", "description": "Search engine: google | bing | duckduckgo | yandex (default: google)"},
+                "engine":      {"type": "STRING", "description": "Search engine: google | bing | yandex (default: google)"},
                 "selector":    {"type": "STRING", "description": "CSS selector for click/type"},
                 "text":        {"type": "STRING", "description": "Text to click or type"},
                 "description": {"type": "STRING", "description": "Element description for smart_click/smart_type"},
@@ -2547,7 +2550,7 @@ class ToolDispatcher:
 
         try:
             prepared = self._action_runtime.prepare(name, raw_args)
-            verification = await self._verify_sensitive_voice_command(name)
+            verification = await self._verify_sensitive_voice_command(name, prepared)
             if verification:
                 response = types.FunctionResponse(
                     id=fc.id, name=name,
@@ -2709,10 +2712,12 @@ class ToolDispatcher:
             ))
         return response
 
-    async def _verify_sensitive_voice_command(self, tool_name: str) -> str:
+    async def _verify_sensitive_voice_command(
+        self, tool_name: str, args: dict | None = None,
+    ) -> str:
         """Fait confirmer les mots par un second ASR avant une action sensible."""
         if (not getattr(self, "_precision_stt_enabled", True)
-                or tool_name not in _DESTRUCTIVE_TOOLS):
+                or not _is_destructive(tool_name, args or {})):
             return ""
         clip = self._last_voice_clip
         main_text = str(self._live_user_text or "").strip()
@@ -3295,8 +3300,40 @@ class ToolDispatcher:
                     result = "Une simulation stratégique est déjà en cours."
 
             elif name == "open_app":
-                r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
-                result = r or f"Opened {args.get('app_name')}."
+                # ── Garde-fou anti-boucle ─────────────────────────────────
+                # Le modèle Live peut re-décider d'appeler open_app après
+                # avoir reçu le résultat (« kitty est ouvert »). Sans ce
+                # verrou, chaque résultat renvoyé au modèle déclenche un
+                # nouvel appel identique → fenêtres à l'infini.
+                import time as _t_mod
+                _now = _t_mod.monotonic()
+                _app_sig = (
+                    f"{str(args.get('app_name', '') or '').lower().strip()}"
+                    f"|{str(args.get('command', '') or '').lower().strip()}"
+                    f"|{str(args.get('workspace', '') or '').strip()}"
+                )
+                _OA_COOLDOWN = 10.0  # seconds — même app+cmd+ws dans ce délai = doublon
+                if (
+                    _app_sig == getattr(self, "_open_app_last_sig", "")
+                    and _app_sig  # ne bloque pas les appels vides
+                    and (_now - getattr(self, "_open_app_last_time", 0.0)) < _OA_COOLDOWN
+                ):
+                    _wait = _OA_COOLDOWN - (_now - self._open_app_last_time)
+                    print(f"[open_app] ⏳ Doublon bloqué ({_wait:.1f}s restantes) — même app+commande+workspace")
+                    result = (
+                        "DÉJÀ FAIT. L'application a été lancée et la commande "
+                        "tapée lors de l'appel précédent (il y a moins de 10 s). "
+                        "Ne rappelle PAS cet outil. Confirme simplement à "
+                        "l'utilisateur que c'est fait."
+                    )
+                else:
+                    self._open_app_last_sig = _app_sig
+                    self._open_app_last_time = _now
+                    r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
+                    result = r or f"Opened {args.get('app_name')}."
+                    # Ajouter une instruction anti-loop explicite dans le
+                    # résultat pour que le modèle ne re-tente pas.
+                    result += " Action terminée — ne rappelle PAS open_app."
 
             elif name == "close_app":
                 r = await loop.run_in_executor(None, lambda: close_app(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
