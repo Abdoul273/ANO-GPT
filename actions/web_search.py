@@ -25,6 +25,7 @@ from typing import Optional, Dict, Any, Tuple
 
 from core import action_kit as kit
 from core.live_model_policy import BALANCED_MODEL, FAST_MODEL
+from core.service_resilience import read_with_retry
 
 # Vérification sans charger requests sur le chemin vocal.
 _REQUESTS = importlib.util.find_spec("requests") is not None
@@ -329,20 +330,28 @@ def _call_serpapi(params: dict, timeout: Any = 8) -> dict:
         attempt = {k: v for k, v in params.items() if k != "location"}
         if location:
             attempt["location"] = location
-        call_timeout = _time_left(float(timeout))
+        if isinstance(timeout, (tuple, list)):
+            call_timeout = tuple(_time_left(float(part)) for part in timeout)
+        else:
+            call_timeout = _time_left(float(timeout))
         try:
-            r = kit.http().get("https://serpapi.com/search.json", params=attempt, timeout=call_timeout)
-            r.raise_for_status()
-            data = r.json()
-            if isinstance(data, dict) and data.get("error") and not any(
-                k.endswith("_results") for k in data
-            ):
-                # « Google hasn't returned any results » n'est pas une panne :
-                # on rend un résultat vide plutôt qu'une exception.
-                if "hasn't returned any results" in str(data["error"]):
-                    return {}
-                raise RuntimeError(str(data["error"]))
-            return data
+            def fetch(attempt=attempt, call_timeout=call_timeout) -> dict:
+                r = kit.http().get(
+                    "https://serpapi.com/search.json", params=attempt,
+                    timeout=(tuple(_time_left(float(part)) for part in call_timeout)
+                             if isinstance(call_timeout, tuple) else _time_left(call_timeout)),
+                )
+                r.raise_for_status()
+                data = r.json()
+                if isinstance(data, dict) and data.get("error") and not any(
+                    k.endswith("_results") for k in data
+                ):
+                    if "hasn't returned any results" in str(data["error"]):
+                        return {}
+                    raise RuntimeError(str(data["error"]))
+                return data
+
+            return read_with_retry("serpapi", fetch, transient=_serpapi_transient)
         except Exception as exc:
             last_exc = exc
             status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -351,6 +360,21 @@ def _call_serpapi(params: dict, timeout: Any = 8) -> dict:
                 continue
             break
     raise RuntimeError(_redact_serpapi_error(last_exc or Exception("SerpApi indisponible")))
+
+
+def _serpapi_transient(exc: Exception) -> bool:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is not None:
+        return status == 429 or 500 <= status < 600
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return True
+    import requests
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    text = str(exc).casefold()
+    return any(word in text for word in (
+        "429", "rate limit", "too many requests", "quota exceeded", "resource exhausted",
+    ))
 
 
 def _format_serpapi_results(data: dict) -> str:
@@ -762,6 +786,11 @@ def _fresh_search(subjects: list, mode: str, budget_s: float = 13.0) -> Tuple[st
     """Recherche parallèle par sujet. Rend (texte pour le modèle, Markdown carte)."""
     from datetime import datetime
     deadline = time.monotonic() + max(1.0, budget_s - 1.0)
+    gemini_ready = bool(_get_api_key())
+    primary_deadline = (
+        min(deadline, time.monotonic() + max(3.0, budget_s - 6.0))
+        if gemini_ready else deadline
+    )
     with_news = mode == "news" or any(_is_time_sensitive(s) for s in subjects)
     with_web = mode != "news" or len(subjects) == 1
     use_serp = bool(_get_serpapi_api_key())
@@ -775,10 +804,23 @@ def _fresh_search(subjects: list, mode: str, budget_s: float = 13.0) -> Tuple[st
                 jobs[("web", i)] = (lambda s=subject: _fetch_web(s))
         elif _DDGS_AVAILABLE:
             jobs[("ddgs", i)] = (lambda s=subject: _ddgs_fallback(s, with_news))
-    if not jobs:
+    if not jobs and not gemini_ready:
         raise RuntimeError("aucun moteur de recherche configuré (clé SerpApi absente)")
 
-    results, errors = _gather(jobs, deadline)
+    results, errors = _gather(jobs, primary_deadline) if jobs else ({}, {})
+
+    # Gemini utilise Google Search Grounding et conserve la réponse sourcée.
+    # Réserver son temps avant d'épuiser tout le tour sur un SerpApi en panne.
+    if not results and gemini_ready and deadline - time.monotonic() > 1.0:
+        try:
+            query = "\n".join(subjects)
+            grounded = _run_with_timeout(
+                _gemini_search_impl, query,
+                timeout=min(_GEMINI_TIMEOUT, deadline - time.monotonic()),
+            )
+            return grounded, ""
+        except Exception as exc:
+            errors[("gemini", 0)] = str(exc)
 
     # SerpApi entièrement en échec (quota, réseau) : second moteur, dans le
     # temps restant seulement.
@@ -955,7 +997,7 @@ def _serpapi_research(query: str) -> str:
 
 def _nearby_map_results(query: str, center: Tuple[float, float], *,
                         zoom: int = 14, language: str = "fr",
-                        timeout: float = 6.0) -> dict:
+                        timeout: float = 3.0) -> dict:
     """Même recherche Google Maps GPS pour web_search et find_nearby.
 
     Le point fourni reste l'autorité, notamment pour une recherche `near` :
@@ -1072,7 +1114,8 @@ def _gemini_search_impl(query: str) -> str:
 
 
 def _gemini_search(query: str) -> str:
-    return _run_with_timeout(_gemini_search_impl, query)
+    return _run_with_timeout(_gemini_search_impl, query,
+                             timeout=_time_left(_GEMINI_TIMEOUT))
 
 
 # ── Profils de réseaux sociaux ────────────────────────────────────────────
@@ -1566,9 +1609,32 @@ def _web_search(parameters: dict, player=None) -> str:
         _last_card_markdown = format_results_markdown(data)
         return _format_serpapi_results(data)
     except Exception as e:
-        # Ne pas lancer un deuxième modèle texte ici : un repli local ferait
-        # répondre un autre modèle que Gemini Live. La vraie panne est dite
-        # telle quelle, sans renvoyer vers un outil qui n'existe pas.
+        if mode == "nearby":
+            coords = _user_coords()
+            if coords:
+                try:
+                    from core.places import search_overpass
+                    found = sorted(
+                        (place for place in search_overpass(query, coords, radius_km=5.0)
+                         if place["dist_km"] <= 5.0),
+                        key=lambda place: place["dist_km"],
+                    )[:6]
+                    if found:
+                        return "Lieux OpenStreetMap à proximité :\n" + "\n".join(
+                            f"{i}. {place['name']} — {place['dist_km']} km "
+                            f"({place['lat']}, {place['lon']})"
+                            for i, place in enumerate(found, 1)
+                        )
+                except Exception as fallback_exc:
+                    print(f"[WebSearch] Repli OpenStreetMap indisponible : {fallback_exc}")
+        elif mode not in ("search", "news", "research") and _get_api_key():
+            try:
+                fallback_query = query or " ".join(str(item) for item in items)
+                return _gemini_search(fallback_query)
+            except Exception as fallback_exc:
+                print(f"[WebSearch] Repli Gemini indisponible : {fallback_exc}")
+        # Aucun fournisseur n'a rendu de faits vérifiables : signaler l'échec
+        # sans inventer de réponse ni renvoyer vers un outil inexistant.
         print(f"[WebSearch] ⚠️ Échec de la recherche ({e})")
         return (
             f"Échec: la recherche web n'a pas abouti ({_redact_serpapi_error(e)}). "

@@ -13,6 +13,7 @@ def test_daily_news_request_defaults_to_ai_and_cyber():
 
 def test_empty_news_query_uses_focused_grounded_prompt(monkeypatch):
     gemini_calls = []
+    monkeypatch.setattr(web_search, "_get_serpapi_api_key", lambda: None)
     monkeypatch.setattr(
         web_search, "_gemini_search",
         lambda query: gemini_calls.append(query) or ("Actualité IA vérifiée. " * 5),
@@ -27,6 +28,7 @@ def test_empty_news_query_uses_focused_grounded_prompt(monkeypatch):
 
 
 def test_daily_headlines_label_and_fallback_are_ai_cyber(monkeypatch):
+    monkeypatch.setattr(web_search, "_get_serpapi_api_key", lambda: None)
     monkeypatch.setattr(
         web_search, "_gemini_headlines",
         lambda count: (["Une avancée majeure en intelligence artificielle"], ""),

@@ -9,12 +9,14 @@ import re
 from core.browser_policy import open_chrome
 import urllib.request
 import urllib.parse
+import urllib.error
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 from urllib.parse import quote_plus
 
 from core import action_kit as kit
 from core.live_model_policy import FAST_MODEL
+from core.service_resilience import read_with_retry
 
 # ── Configuration ───────────────────────────────────────────────────────────
 def _base_dir() -> Path:
@@ -75,7 +77,22 @@ def _deg_to_cardinal(deg: Optional[float]) -> str:
 # ── Géocodage (Open‑Meteo, sans clé) ────────────────────────────────────────
 # Réseau : trois appels en cascade (géocodage, prévision, repli) doivent tenir
 # sous le plafond de 25 s du répartiteur, marge comprise.
-_HTTP_TIMEOUT = 6.0
+_HTTP_TIMEOUT = 3.0
+
+
+def _transient_weather_error(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code == 429 or 500 <= exc.code < 600
+    return isinstance(exc, (TimeoutError, OSError))
+
+
+def _weather_json(service: str, url: str) -> Dict:
+    def fetch() -> Dict:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    return read_with_retry(service, fetch, transient=_transient_weather_error)
 
 
 @kit.memo(6 * 3600, key=lambda city: city.casefold().strip())
@@ -85,9 +102,7 @@ def _geocode_city(city: str) -> Optional[Tuple[float, float, str, str]]:
     url = ("https://geocoding-api.open-meteo.com/v1/search"
            f"?name={quote_plus(city)}&count=1&language=fr&format=json")
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as r:
-            data = json.loads(r.read().decode("utf-8"))
+        data = _weather_json("open-meteo", url)
         results = data.get("results") or []
         if not results:
             return None
@@ -110,9 +125,7 @@ def _fetch_open_meteo(lat: float, lon: float) -> Optional[Dict]:
            "precipitation_probability_max,sunrise,sunset"
            "&forecast_days=7&timezone=auto")
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return _weather_json("open-meteo", url)
     except Exception as e:
         print(f"[Weather] Open‑Meteo échoué : {e}")
         return None
@@ -121,9 +134,7 @@ def _fetch_open_meteo(lat: float, lon: float) -> Optional[Dict]:
 def _fetch_wttr(city: str) -> Optional[Dict]:
     url = f"https://wttr.in/{quote_plus(city)}?format=j1&lang=fr"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return _weather_json("wttr", url)
     except Exception as e:
         print(f"[Weather] wttr.in échoué : {e}")
         return None

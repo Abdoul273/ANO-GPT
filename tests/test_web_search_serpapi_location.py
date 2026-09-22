@@ -100,4 +100,4 @@ def test_shared_nearby_request_uses_explicit_center_without_location(monkeypatch
     assert params["ll"] == "@10.056900,-12.865800,15z"
     assert params["nearby"] == "true"
     assert "location" not in params
-    assert kwargs["timeout"] == 6.0
+    assert kwargs["timeout"] == 3.0

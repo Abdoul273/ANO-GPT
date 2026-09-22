@@ -22,6 +22,8 @@ import time
 import urllib.request
 from typing import Any
 
+from core.service_resilience import read_with_retry
+
 _USER_AGENT = "ANO-GPT/2.0 (JARVIS Assistant)"
 
 _OVERPASS_SERVERS = (
@@ -119,7 +121,7 @@ def search_serpapi(
     *,
     zoom: int = 14,
     limit: int = 20,
-    timeout: float = 6.0,
+    timeout: float = 3.0,
     language: str = "fr",
 ) -> list[dict[str, Any]]:
     """Interroge le moteur Google Maps de SerpAPI autour d'un point.
@@ -281,14 +283,22 @@ def search_overpass(
     body = f"[out:json][timeout:{int(timeout)}];({clauses});out center {limit * 3};"
 
     elements: list[dict] = []
-    for server in _OVERPASS_SERVERS:
+    for attempt, server in enumerate(_OVERPASS_SERVERS):
+        if attempt:
+            time.sleep(0.25 * (2 ** (attempt - 1)))
         try:
             request = urllib.request.Request(
                 server, data=body.encode("utf-8"),
                 headers={"User-Agent": _USER_AGENT},
             )
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                elements = json.loads(response.read().decode("utf-8")).get("elements", [])
+            def fetch(request=request) -> list[dict]:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return json.loads(response.read().decode("utf-8")).get("elements", [])
+
+            elements = read_with_retry(
+                f"overpass:{server}", fetch, transient=lambda _exc: True,
+                attempts=1,
+            )
             # Une réponse vide est valide ; le miroir suivant n'apporterait
             # que le même rayon avec une attente supplémentaire.
             break
