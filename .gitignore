@@ -16,6 +16,7 @@ config/geocode_cache.json
 memory/long_term.json
 memory/long_term.json.bak
 memory/tool_usage.jsonl
+memory/learned_sites.json
 # Mémoire longue durée : contenu personnel, et les -wal/-shm sont volatils.
 memory/memory.db
 memory/memory.db-wal

@@ -1268,6 +1268,16 @@ def _parse_browser_command_locally(text: str) -> Optional[Dict[str, Any]]:
             return {"action": "close_tab", "url": m_tag.group(1).strip()}
         return {"action": "close_tab"}
 
+    # 5b. Nom de site en plusieurs mots (« ouvre google vids dans chrome ») :
+    # le résolveur de sites trouve la vraie adresse.
+    m = re.search(
+        r"^(?:va\s+sur|ouvre|ouvrir|affiche|lance|navigue\s+vers|go\s+to|open)\s+"
+        r"(?:moi\s+)?(?:le\s+site\s+(?:de\s+|d')?|la\s+page\s+(?:de\s+|d')?)?"
+        r"(.+?)(?:\s+(?:dans|sur|avec)\s+(?:google\s+)?chrome|\s+dans\s+le\s+navigateur)?$",
+        text)
+    if m and not re.search(r"\b(onglet|fen[êe]tre|navigateur)\b", m.group(1)):
+        return {"action": "go_to", "site": m.group(1).strip(" '\"")}
+
     if re.search(r"\b(capture\s+d'[ée]cran|screenshot)\b", text):
         return {"action": "screenshot"}
 
@@ -1390,6 +1400,12 @@ def browser_control(parameters: dict = None, response=None, player=None,
     if not action:
         return "Aucune action demandée."
 
+    # ── Adresse vérifiée pour go_to / new_tab ────────────────────────────
+    resolved = None
+    if action in ("go_to", "new_tab") and (params.get("url") or params.get("site")):
+        resolved = _resolve_site(params, player)
+        params["url"] = resolved.url
+
     browser_name = "chrome"  # Préférence permanente de l’utilisateur.
     headless = bool(params.get("headless", False))
 
@@ -1430,6 +1446,8 @@ def browser_control(parameters: dict = None, response=None, player=None,
             url = params.get("url", "")
         before = _snapshot_addrs() if ws_num is not None else set()
         result = _open_native(url, browser_name)
+        if resolved and result.startswith("Ouvert"):
+            result = _describe_open(resolved)
         if url:
             _manager.note_native_url(url)
         if ws_num is not None:
@@ -1521,6 +1539,27 @@ def browser_control(parameters: dict = None, response=None, player=None,
 
     _log(player, result)
     return result
+
+
+def _resolve_site(params: dict, player=None):
+    """URL demandée → adresse réelle (catalogue, vérification, site officiel)."""
+    from core.site_resolver import resolve
+    started = time.monotonic()
+    res = resolve(str(params.get("url") or ""), site=str(params.get("site") or ""))
+    logger.info("[Browser] site %r / %r → %s (%s, %.0f ms)", params.get("site"), params.get("url"),
+                res.url, res.how, (time.monotonic() - started) * 1000)
+    if player and res.how in ("lookup", "search"):
+        _log(player, f"🔎 {res.label} → {res.url}")
+    return res
+
+
+def _describe_open(res) -> str:
+    if res.how == "search":
+        return (f"Adresse officielle de « {res.label} » introuvable : recherche Google "
+                f"ouverte dans Chrome ({res.url}). Dis-le à l'utilisateur.")
+    host = urllib.parse.urlparse(res.url).netloc or res.url
+    note = " (adresse corrigée après vérification)" if res.how == "lookup" else ""
+    return f"Ouvert dans Chrome : {res.label or host} — {res.url}{note}"
 
 
 def _log(player, text: str):

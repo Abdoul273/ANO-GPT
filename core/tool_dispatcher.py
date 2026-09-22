@@ -1257,7 +1257,8 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "action":      {"type": "STRING", "description": "go_to | search | click | type | scroll | fill_form | smart_click | smart_type | get_text | get_url | press | new_tab | close_tab | screenshot | back | forward | reload | switch | list_browsers | close | close_all"},
                 "browser":     {"type": "STRING", "description": "Always use chrome, the user’s permanent browser choice."},
-                "url":         {"type": "STRING", "description": "URL for go_to / new_tab action"},
+                "url":         {"type": "STRING", "description": "URL for go_to / new_tab action (verified and corrected automatically if dead)"},
+                "site":        {"type": "STRING", "description": "Site or web service name EXACTLY as the user said it (e.g. 'Google Vids', 'TikTok Studio'). Always pass it with go_to/new_tab: the tool resolves the official URL itself, so pass it alone when unsure of the exact address."},
                 "query":       {"type": "STRING", "description": "Search query for search action"},
                 "engine":      {"type": "STRING", "description": "Search engine: google | bing | yandex (default: google)"},
                 "selector":    {"type": "STRING", "description": "CSS selector for click/type"},
