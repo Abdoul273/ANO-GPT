@@ -907,6 +907,8 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # et « corrige » les confie à un agent de code (core/auto_fix.py).
         from core import incident_log
         incident_log.bind(self._proactive.publish, lambda m: self.ui.write_log(m))
+        from core import incident_flow
+        incident_flow.bind(self.ui, self.speak)
         self._screen_mind      = get_screen_consciousness()
         self._habits           = HabitModel()
         self._timers           = TimerService()

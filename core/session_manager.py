@@ -1389,6 +1389,21 @@ class SessionManager:
                                 # source de vérité du tour.
                                 in_buf.append(txt)
                                 merged = " ".join(in_buf).strip()
+                                # « oui » / « non » à une réparation proposée :
+                                # décidé ici, par l'utilisateur, jamais par le
+                                # modèle — dont le tour est aussitôt coupé.
+                                from core import human_confirmation
+                                verdict = human_confirmation.voice_answer(merged)
+                                if verdict is not None:
+                                    pending_confirm = human_confirmation.current()
+                                    if pending_confirm is not None:
+                                        self.interrupt()
+                                        human_confirmation.resolve(
+                                            pending_confirm.token, verdict, source="voix")
+                                        in_buf = []
+                                        self._live_user_text = ""
+                                        self.ui.set_user_transcript(merged, final=True)
+                                        continue
                                 if self._try_switch_conversation_language(merged):
                                     # Le PCM a pu parvenir au modèle avant la
                                     # transcription : annuler son ancien tour

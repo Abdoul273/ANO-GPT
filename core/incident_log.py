@@ -148,10 +148,18 @@ def _flush_announce() -> None:
     if not pending:
         return
     latest = pending[-1]
-    if len(pending) == 1:
+    # Parcours complet (carte d'erreur + « je corrige ? ») quand l'interface
+    # est branchée ; sinon, l'annonce classique « dis corrige ».
+    text = None
+    try:
+        from core import incident_flow
+        text = incident_flow.propose(pending)
+    except Exception:
+        text = None
+    if not text and len(pending) == 1:
         text = (f"Une erreur vient de se produire dans {latest.spoken()}. "
                 "Dis « corrige » et je m'en occupe.")
-    else:
+    elif not text:
         text = (f"{len(pending)} erreurs viennent de se produire, la dernière dans {latest.spoken()}. "
                 "Dis « corrige » et je répare la dernière, ou « répare tout ».")
     if _LOGGER:

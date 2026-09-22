@@ -7,6 +7,7 @@ aléatoire associé à la demande visible par l'utilisateur.
 from __future__ import annotations
 
 import logging
+import re
 
 import secrets
 import threading
@@ -29,6 +30,13 @@ class PendingConfirmation:
     detail: str
     callback: Callable[[], str | None]
     created_at: float
+    # Appelé au refus, à la place du simple « opération annulée » : sa phrase
+    # est lue à l'utilisateur (ex. rapport d'erreur quand il refuse la réparation).
+    on_decline: Callable[[], str | None] | None = None
+    # Un « oui »/« non » prononcé suffit. Réservé aux décisions sans effet
+    # extérieur (réparer le code d'ANO-GPT) : un SMS ou une commande shell
+    # exigent toujours un clic ou un texte tapé.
+    voice_ok: bool = False
 
 
 _pending: PendingConfirmation | None = None
@@ -69,7 +77,9 @@ def _fingerprint(pending: PendingConfirmation) -> tuple[str, str, str]:
 
 
 def request(key: str, title: str, detail: str,
-            callback: Callable[[], str | None]) -> str:
+            callback: Callable[[], str | None], *,
+            on_decline: Callable[[], str | None] | None = None,
+            voice_ok: bool = False) -> str:
     """Affiche une demande et gare l'action jusqu'au clic humain."""
     global _pending
     if not callable(callback):
@@ -84,6 +94,8 @@ def request(key: str, title: str, detail: str,
         detail=str(detail)[:500],
         callback=callback,
         created_at=time.monotonic(),
+        on_decline=on_decline,
+        voice_ok=voice_ok,
     )
     superseded: str | None = None
     with _lock:
@@ -159,6 +171,18 @@ def resolve(token: str, accepted: bool, *, source: str = "interface") -> bool:
         return False
     if not accepted:
         _write_log(f"SYS : action annulée depuis {source} — {pending.title}")
+        if pending.on_decline is not None:
+            def _declined() -> None:
+                try:
+                    message = pending.on_decline()
+                except Exception as exc:
+                    _write_log(f"ERR : suite du refus impossible — {pending.title} : {exc}")
+                    message = None
+                if message:
+                    _send_notify(message)
+            threading.Thread(target=_declined, daemon=True,
+                             name=f"ano-decline-{pending.key}").start()
+            return True
         from core.personality_modes import user_address
         _send_notify(f"Très bien {user_address()}, l'opération a été annulée.")
         return True
@@ -181,6 +205,30 @@ def resolve(token: str, accepted: bool, *, source: str = "interface") -> bool:
     threading.Thread(target=_run, daemon=True,
                      name=f"ano-confirm-{pending.key}").start()
     return True
+
+
+_VOICE_YES = re.compile(
+    r"^(?:oui|ouais|ok|okay|d'accord|vas[- ]y|go|corrige(?:[- ]la)?|répare(?:[- ]la)?|repare|"
+    r"confirme|valide|c'est bon|fais[- ]le|lance)\b", re.I)
+_VOICE_NO = re.compile(
+    r"^(?:non|nan|annule|laisse(?: tomber)?|pas maintenant|ne (?:fais|touche) (?:pas|rien)|"
+    r"stop|refuse|je (?:vais|préfère) (?:le faire|corriger) moi)", re.I)
+
+
+def voice_answer(text: str) -> bool | None:
+    """« oui » → True, « non » → False, sinon None — seulement pour une demande
+    qui l'autorise et une réponse courte (une phrase longue parle d'autre chose)."""
+    pending = current()
+    if pending is None or not pending.voice_ok:
+        return None
+    clean = " ".join(str(text or "").strip().lower().replace("’", "'").split()).strip(" .!?,")
+    if not clean or len(clean.split()) > 6:
+        return None
+    if _VOICE_NO.search(clean):
+        return False
+    if _VOICE_YES.search(clean):
+        return True
+    return None
 
 
 def current() -> PendingConfirmation | None:
