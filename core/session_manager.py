@@ -345,6 +345,24 @@ class SessionManager:
             self._loop.call_soon_threadsafe(event.set)
         return True
 
+    def _screen_foreign_transcript(self, text: str) -> bool:
+        """Vrai si ce tour est une phrase étrangère à ignorer (session française)."""
+        from core.ai_stt_corrector import foreign_phrase_reason
+
+        language = str(getattr(self, "_conversation_language", "fr-FR") or "fr-FR")
+        reason = foreign_phrase_reason(text) if language.casefold().startswith("fr") else ""
+        if not reason:
+            if getattr(self, "_foreign_noise_turn", False):
+                self._foreign_noise_turn = False
+                self._noise_turn = False
+            return False
+        if not getattr(self, "_foreign_noise_turn", False):
+            self.ui.write_log(f"SYS : phrase ignorée ({reason}) — « {text[:80]} ».")
+        self._foreign_noise_turn = True
+        self._noise_turn = True
+        self._live_user_text = ""
+        return True
+
     def _extend_toolkit(self, text: str, *, origin: str = "demande") -> bool:
         """Ouvre les paquets que cette phrase réclame et relance la session.
 
@@ -1395,6 +1413,13 @@ class SessionManager:
                                 # source de vérité du tour.
                                 in_buf.append(txt)
                                 merged = " ".join(in_buf).strip()
+                                # Paroles d'une musique en fond, transcrites
+                                # comme une demande : ce tour ne doit ni ouvrir
+                                # d'outils, ni agir, ni être renvoyé après une
+                                # reconnexion. Réévalué à chaque fragment : un
+                                # mot français qui suit rend la main.
+                                if self._screen_foreign_transcript(merged):
+                                    continue
                                 # « oui » / « non » à une réparation proposée :
                                 # décidé ici, par l'utilisateur, jamais par le
                                 # modèle — dont le tour est aussitôt coupé.
@@ -1528,6 +1553,7 @@ class SessionManager:
                             # Le tour est clos : plus rien n'attend de réponse.
                             self._live_user_text = ""
                             self._noise_turn = False
+                            self._foreign_noise_turn = False
 
                             full_out = " ".join(out_buf).strip()
                             # Mémoire : le tour est complet, on peut le
@@ -1673,7 +1699,10 @@ class SessionManager:
             "[Cette demande a été reprise après reconnexion. Si elle exige une "
             "action (ouvrir, lancer, fermer, aller sur un bureau, chercher…), "
             "appelle l'outil correspondant MAINTENANT et n'annonce le résultat "
-            "qu'après son retour. Jamais « c'est fait » sans appel d'outil.]\n"
+            "qu'après son retour. Jamais « c'est fait » sans appel d'outil. "
+            "Seule la dernière ligne est la demande à traiter : les actions du "
+            "contexte sont déjà terminées, réussies ou échouées — ne les relance "
+            "jamais.]\n"
         )
         text = note + action_rule + local_context + "\n".join(pending)
         try:

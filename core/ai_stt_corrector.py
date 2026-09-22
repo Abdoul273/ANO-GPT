@@ -118,6 +118,66 @@ _FRENCH_ANCHORS = frozenset({
     "aujourd", "hui", "cest",
 })
 
+# Musique ou vidéo en fond : le micro capte des paroles étrangères que Live
+# transcrit comme des demandes (« invecchiando », « ¿Y qué más queda? »,
+# « music only » a ouvert le paquet musique et lancé une écoute de 50 s).
+# Listes volontairement limitées aux mots absents du français courant.
+_SPANISH_ONLY = frozenset({
+    "queda", "mas", "pero", "porque", "esta", "esto", "eso", "muy", "nada",
+    "todo", "vamos", "tengo", "hay", "yo", "quien", "ahora", "nunca", "corazon",
+    "amor", "vida", "contigo", "mi", "tu", "te", "bien",
+}) | _SPANISH_TOKENS
+_ITALIAN_ONLY = frozenset({
+    "che", "non", "sono", "questo", "questa", "perche", "anche", "ancora",
+    "piu", "molto", "della", "nella", "gli", "cosa", "voglio", "ciao",
+    "grazie", "amore", "cuore", "tutto", "niente", "sempre", "sei", "invecchiando",
+})
+_ENGLISH_FUNCTION = frozenset({
+    "only", "just", "the", "you", "your", "me", "my", "i", "we", "it", "is",
+    "are", "and", "of", "to", "in", "for", "with", "all", "so", "now", "im",
+    "don", "t", "be", "been", "this", "that", "what", "no", "not", "oh",
+})
+_ENGLISH_LYRICS = _ENGLISH_FUNCTION | frozenset({
+    "music", "love", "baby", "song", "night", "time", "feel", "know", "want",
+    "need", "never", "ever", "yeah", "like", "can", "go", "get", "got", "one",
+    "more", "up", "down", "back", "heart", "life", "way", "say", "tonight",
+    "girl", "boy", "world", "dance", "yes", "hey", "hold", "tell",
+})
+# Français en cours : les petits mots qui n'existent que chez nous. Les
+# pronoms « tu » / « te » / « mi » sont communs à l'espagnol, donc absents.
+_FRENCH_ONLY = _FRENCH_ANCHORS - {"tu", "on", "est"} | frozenset({
+    "le", "la", "et", "de", "du", "un", "ce", "ca", "moi", "mon", "ma",
+    "efface", "ecris", "tape", "mais", "oui", "non", "salut", "quoi",
+})
+
+
+def foreign_phrase_reason(text: str) -> str:
+    """Motif si la phrase est manifestement étrangère à une session française.
+
+    Conservateur : un seul mot français suffit à accepter, et les noms
+    techniques anglais isolés (« Firefox », « play ») ne déclenchent rien.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    folded = _fold(raw)
+    tokens = folded.split()
+    if not tokens or any(token in _FRENCH_ONLY for token in tokens):
+        return ""
+    if any(c in raw for c in "¿¡ñÑ"):
+        return "langue étrangère (espagnol)"
+    if any(token in _ITALIAN_ONLY for token in tokens) or (
+        len(tokens) == 1 and len(tokens[0]) >= 7 and tokens[0].endswith(("ando", "endo"))
+    ):
+        return "langue étrangère (italien)"
+    if sum(token in _SPANISH_ONLY for token in tokens) >= 2:
+        return "langue étrangère (espagnol)"
+    if (len(tokens) >= 2 and all(token in _ENGLISH_LYRICS for token in tokens)
+            and any(token in _ENGLISH_FUNCTION for token in tokens)):
+        return "langue étrangère (anglais)"
+    return ""
+
+
 _ENGLISH_NOISE = frozenset({
     "start", "hello", "hey", "yeah", "yep", "please", "thanks", "thank",
     "the", "this", "that", "what", "how", "yes", "okay", "okey", "hi",
@@ -171,6 +231,10 @@ class TranscriptGuard:
         french_hits = sum(1 for token in tokens if token in _FRENCH_ANCHORS)
         if spanish_hits >= 2 or (spanish_hits >= 1 and french_hits == 0 and len(tokens) >= 2):
             return TranscriptAssessment(False, "langue étrangère (espagnol)")
+
+        foreign = foreign_phrase_reason(text)
+        if foreign:
+            return TranscriptAssessment(False, foreign)
 
         if tokens and all(token.isdigit() or token in _DIGIT_WORDS for token in tokens):
             if any(token.isdigit() for token in tokens) or len(tokens) >= 3:
