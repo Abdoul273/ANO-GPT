@@ -120,3 +120,18 @@ def test_elevenlabs_proposals_are_distinct_when_catalogue_le_permet():
         "coquin": "VoiceCoquin",
         "majeur": "VoiceMajeur",
     }
+
+
+def test_une_mention_d_alias_ailleurs_dans_la_phrase_ne_bascule_pas_en_astro():
+    # Le nom du mode doit suivre « mode » : un alias d'Astro cité plus loin
+    # (vannes, taquin, pote) ne doit jamais renverser le mode demandé.
+    assert detect_mode_command("passe en mode majordome, arrête tes vannes") is PersonalityMode.MAJEUR
+    assert detect_mode_command("reviens en mode normal, t'es trop taquin") is PersonalityMode.NORMAL
+    assert detect_mode_command("mets le mode coquin plutôt que le pote") is PersonalityMode.COQUIN
+    # Phrase de l'assistant réentendue par le micro, ou question : pas une commande.
+    assert detect_mode_command("vous voulez que je passe en mode sérieux, sans vanne ?") is None
+    assert detect_mode_command("mets le mode avion, potentiellement") is None
+    # Les formulations explicites restent reconnues.
+    assert detect_mode_command("passe en mode le pote") is PersonalityMode.ASTRO
+    assert detect_mode_command("active le mode sans filtre") is PersonalityMode.COQUIN
+    assert detect_mode_command("mets-toi en mode majeur d'homme") is PersonalityMode.MAJEUR

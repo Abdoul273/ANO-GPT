@@ -380,15 +380,35 @@ def identity_address_line(spec: PersonalitySpec | None = None) -> str:
     )
 
 
+# Mots vides tolérés entre « mode » et le nom du mode (« passe en mode le pote »).
+_MODE_FILLERS = frozenset({"le", "la", "du", "de", "des", "d", "en", "au", "un", "une"})
+
+
 def detect_mode_command(text: str) -> PersonalityMode | None:
-    """Reconnaît exclusivement une demande explicite de changement de mode."""
+    """Reconnaît exclusivement une demande explicite de changement de mode.
+
+    Le nom du mode doit suivre immédiatement le mot « mode » (à un mot vide
+    près) : « passe en mode majeur, arrête tes vannes » vise Majeur, pas Astro.
+    Une simple mention d'un alias ailleurs dans la phrase (« t'es trop
+    taquin », « je passe en mode pote ? » répété par le micro) ne bascule rien.
+    """
     folded = _fold(text)
-    if "mode" not in folded or not any(verb in folded.split() for verb in _COMMAND_VERBS):
+    words = folded.split()
+    if "mode" not in words or not any(verb in words for verb in _COMMAND_VERBS):
         return None
-    for mode, spec in MODE_SPECS.items():
-        candidates = (mode.value, *spec.aliases)
-        if any(_fold(alias) in folded for alias in candidates):
-            return mode
+    for index, word in enumerate(words):
+        if word != "mode":
+            continue
+        following = words[index + 1:index + 5]
+        while following and following[0] in _MODE_FILLERS:
+            following = following[1:]
+        if not following:
+            continue
+        for mode, spec in MODE_SPECS.items():
+            for alias in (mode.value, *spec.aliases):
+                alias_words = _fold(alias).split()
+                if alias_words and following[:len(alias_words)] == alias_words:
+                    return mode
     return None
 
 
