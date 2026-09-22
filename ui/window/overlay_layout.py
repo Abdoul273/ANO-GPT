@@ -203,6 +203,13 @@ class HudOverlayLayout(QLayout):
             clipboard.setGeometry((W - pw) // 2, H - ph - 6, pw, ph)
             clipboard.raise_()
 
+        # L'écran de bienvenue doit couvrir le HUD au démarrage, mais ne doit
+        # jamais reprendre le dessus sur un panneau explicitement ouvert.
+        welcome = self._widget("welcome")
+        if welcome is not None and welcome.isVisible():
+            welcome.setGeometry(full)
+            welcome.raise_()
+
         drawer = self._widget("drawer")
         if drawer is not None and drawer.isVisible():
             dw = min(340, W - 32)
@@ -237,8 +244,3 @@ class HudOverlayLayout(QLayout):
                 scrim.raise_()
             overlay.setGeometry((W - ow) // 2, (H - oh) // 2, ow, oh)
             overlay.raise_()
-
-        welcome = self._widget("welcome")
-        if welcome is not None and welcome.isVisible():
-            welcome.setGeometry(full)
-            welcome.raise_()

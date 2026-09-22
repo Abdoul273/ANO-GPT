@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-
+import math
 
 from PyQt6.QtCore import (
     QPointF, QRectF, Qt,
@@ -8,7 +8,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QFont, QLinearGradient, QPainter,
-    QPen, QPixmap,
+    QPen, QPixmap, QPolygonF,
 )
 from PyQt6.QtWidgets import (
     QWidget,
@@ -20,8 +20,10 @@ class InterfaceFrame(QWidget):
 
     Elle donne de la profondeur aux zones vides (rails, repères, grille et
     télémétrie décorative) sans dessiner dans la zone centrale ni modifier
-    ``HudCanvas``. Le coût reste faible : huit images par seconde et uniquement
-    quelques primitives QPainter.
+    ``HudCanvas``. Les informations décoratives sont regroupées sur les bords
+    comme une vraie console, afin que l'orbe reste le point focal. Le coût
+    reste faible : deux images par seconde et une image mise en cache entre
+    deux battements.
     """
 
     def __init__(self, parent=None):
@@ -36,15 +38,18 @@ class InterfaceFrame(QWidget):
         self._phase = 0.0
         # Ce calque translucide recouvre l'orbe : Qt le repeint à chaque image
         # de celui-ci (25-30 fois/s), pas seulement à son propre tick. Le
-        # dessin complet (centaines d'ellipses) est donc rendu une fois dans
-        # un pixmap, et paintEvent se contente de le recopier.
+        # dessin complet est donc rendu une fois dans un pixmap, et paintEvent
+        # se contente de le recopier entre deux battements de 500 ms.
         self._cache: QPixmap | None = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(500)
 
     def _tick(self):
-        self._phase = (self._phase + 0.018) % 1.0
+        # Une variation lente suffit à faire vivre les moniteurs latéraux. La
+        # couche est derrière l'orbe, donc une cadence supérieure ne serait
+        # qu'une charge prise au thread audio.
+        self._phase = (self._phase + 0.028) % 1.0
         self._cache = None
         if self.isVisible():
             self.update()
@@ -80,7 +85,8 @@ class InterfaceFrame(QWidget):
         right_glow.setColorAt(1.0, QColor(0, 20, 35, 0))
         p.fillRect(QRectF(max(0, W - 360), 0, min(360, W * 0.32), H), QBrush(right_glow))
 
-        # Matrice de points périphérique. La large zone centrale reste vierge.
+        # Matrice de points périphérique. La large zone centrale reste vierge :
+        # il ne faut jamais transformer l'orbe en fond décoratif.
         p.setPen(Qt.PenStyle.NoPen)
         for x0, x1 in ((226, min(350, W // 3)), (max(W - 350, W * 2 // 3), W - 24)):
             for x in range(int(x0), int(x1), 22):
@@ -101,6 +107,49 @@ class InterfaceFrame(QWidget):
         p.drawLine(QPointF(W - 210, 78), QPointF(W - 146, 78))
         p.drawLine(QPointF(238, H - 96), QPointF(292, H - 96))
 
+        # Deux rails verticaux découpés en segments. Ils donnent une lecture
+        # "instrumentation" aux bords sans créer de second panneau flottant.
+        side_x = (240.0, W - 240.0)
+        rail_top, rail_bottom = 108.0, H - 128.0
+        p.setPen(QPen(QColor(0, 212, 255, 48), 1.0))
+        for x in side_x:
+            p.drawLine(QPointF(x, rail_top), QPointF(x, rail_bottom))
+            for y in range(int(rail_top + 12), int(rail_bottom), 18):
+                direction = 1 if x < W / 2 else -1
+                length = 8 if (y // 18) % 4 == 0 else 4
+                p.drawLine(QPointF(x, y), QPointF(x + direction * length, y))
+
+        # Traces de signal : très peu de segments, lisibles comme de la
+        # télémétrie mais intentionnellement décoratifs. Les données système
+        # réelles restent dans le panneau "Système" à gauche.
+        for origin_x, direction, tint in (
+            (254.0, 1.0, QColor(0, 212, 255, 92)),
+            (W - 254.0, -1.0, QColor(255, 43, 214, 76)),
+        ):
+            path = QPolygonF()
+            for step in range(15):
+                x = origin_x + direction * step * 6.2
+                wave = math.sin((step * 0.82) + self._phase * math.tau)
+                envelope = 3.5 + (step % 5) * 1.1
+                y = H * 0.50 + wave * envelope
+                path.append(QPointF(x, y))
+            p.setPen(QPen(tint, 1.0))
+            p.drawPolyline(path)
+
+        # Marques de calibration aux quatre coins : double niveau et point
+        # d'index magenta. Le langage visuel devient plus précis sans épaissir
+        # les cadres déjà portés par les panneaux.
+        p.setPen(QPen(QColor(0, 212, 255, 52), 1.0))
+        inset, inner_arm = 26.0, 24.0
+        for x, y, sx, sy in ((inset, inset, 1, 1), (W-inset, inset, -1, 1),
+                             (inset, H-inset, 1, -1), (W-inset, H-inset, -1, -1)):
+            p.drawLine(QPointF(x, y), QPointF(x + sx * inner_arm, y))
+            p.drawLine(QPointF(x, y), QPointF(x, y + sy * inner_arm))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 43, 214, 125))
+        p.drawRect(QRectF(W - 88, 15, 22, 2))
+        p.drawRect(QRectF(66, H - 17, 16, 2))
+
         # Crochets de cadre et micro-graduations dans les coins.
         p.setPen(QPen(QColor(0, 212, 255, 100), 1.2))
         margin, arm = 16.0, 42.0
@@ -120,5 +169,9 @@ class InterfaceFrame(QWidget):
         p.drawText(QRectF(228, 82, 180, 14), "CORE LINK // XLIX")
         p.drawText(QRectF(W - 250, H - 91, 220, 14),
                    Qt.AlignmentFlag.AlignRight, "NEURAL INTERFACE // ONLINE")
+        p.setPen(QColor(74, 147, 167, 130))
+        p.drawText(QRectF(252, H * 0.50 - 24, 115, 13), "SIGNAL // 8.4")
+        p.drawText(QRectF(W - 367, H * 0.50 + 12, 115, 13),
+                   Qt.AlignmentFlag.AlignRight, "SYNC // STABLE")
         p.end()
         return pix

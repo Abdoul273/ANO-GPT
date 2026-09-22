@@ -5,7 +5,7 @@ import time
 
 from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt
 from PyQt6.QtGui import (
-    QBrush, QColor, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient,
+    QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient,
 )
 
 
@@ -67,6 +67,56 @@ class _HudPaintMixin:
             p.setPen(QPen(_rgba(color, alpha * (0.55 + 0.45 * activity)), 1.0))
             p.drawArc(rect, int(start * 16), int(span * 16))
             p.drawArc(rect, int((start + 180.0) * 16), int(span * 16))
+
+    def _draw_orb_readouts(self, p: QPainter, cx: float, cy: float, Rs: float,
+                           wire: QColor, hot: QColor, activity: float) -> None:
+        """Balises de ciblage autour de l'orbe, façon console de commandement.
+
+        Elles sont dessinées avec quelques traits et quatre libellés seulement.
+        Cela apporte une lecture très nette à l'orbe sans lancer de widgets,
+        de blur ou de minuteries supplémentaires pendant la voix.
+        """
+        if Rs < 70.0:
+            return
+        radius = Rs * 1.18
+        glow = int(90 + 95 * activity)
+        p.save()
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_rgba(wire, glow), 1.0))
+
+        # Quatre bras incomplets : ils cadrent l'arc-reacteur sans former une
+        # cage circulaire de plus autour de lui.
+        arm, notch = Rs * 0.15, Rs * 0.045
+        for x, y, sx, sy in (
+            (cx - radius, cy - radius, 1, 1),
+            (cx + radius, cy - radius, -1, 1),
+            (cx - radius, cy + radius, 1, -1),
+            (cx + radius, cy + radius, -1, -1),
+        ):
+            p.drawLine(QPointF(x, y), QPointF(x + sx * arm, y))
+            p.drawLine(QPointF(x, y), QPointF(x, y + sy * arm))
+            p.drawLine(QPointF(x + sx * notch, y + sy * notch),
+                       QPointF(x + sx * (notch + Rs * 0.075), y + sy * (notch + Rs * 0.075)))
+
+        font = QFont("JetBrains Mono", max(6, min(8, int(Rs * 0.030))), QFont.Weight.DemiBold)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.05)
+        p.setFont(font)
+        p.setPen(QPen(_rgba(hot, 145 + int(75 * activity)), 1.0))
+        top = QRectF(cx - Rs * 0.47, cy - radius - Rs * 0.09, Rs * 0.94, Rs * 0.10)
+        p.drawText(top, Qt.AlignmentFlag.AlignCenter, "A.N.O // NEURAL CORE")
+
+        p.setPen(QPen(_rgba(wire, 120 + int(70 * activity)), 1.0))
+        bottom = QRectF(cx - Rs * 0.50, cy + radius + Rs * 0.01, Rs, Rs * 0.10)
+        p.drawText(bottom, Qt.AlignmentFlag.AlignCenter, f"{self._ws.upper()} // LINK")
+        # Les deux marqueurs de côté sont des traits courts : les textes ne
+        # se battent pas avec les panneaux de télémétrie voisins.
+        marker_y = cy
+        p.drawLine(QPointF(cx - radius - Rs * 0.13, marker_y), QPointF(cx - radius - Rs * 0.025, marker_y))
+        p.drawLine(QPointF(cx + radius + Rs * 0.025, marker_y), QPointF(cx + radius + Rs * 0.13, marker_y))
+        p.setBrush(QBrush(_rgba(hot, 200)))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRect(QRectF(cx - Rs * 0.055, cy - radius - 3, Rs * 0.11, 2))
+        p.restore()
 
     # ══ Spectre radial : 48 barres pilotées par les 8 bandes FFT ══════════════
     def _draw_spectrum(self, p: QPainter, cx: float, cy: float, Rs: float,
@@ -363,6 +413,7 @@ class _HudPaintMixin:
             self._blit(p, "glow", cx, cy, Rs * 1.15, min(0.90, breath_glow))
         # 2. Réticule et spectre : le cadre HUD.
         self._draw_reticle(p, cx, cy, Rs, t, wire, hot, activity)
+        self._draw_orb_readouts(p, cx, cy, Rs, wire, hot, activity)
         self._draw_spectrum(p, cx, cy, Rs, core, hot)
         # 3. Le volume de photons. Les fils elliptiques orbitaux ont été
         # retirés : les anneaux circulaires du noyau et le réticule restent.

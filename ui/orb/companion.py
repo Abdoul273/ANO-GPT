@@ -7,6 +7,7 @@ import time
 from PyQt6.QtCore import QRect, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QRegion
 from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6 import sip
 
 from ui.orb.mini_orb import paint_reactor
 from ui.styles.theme import C
@@ -114,9 +115,18 @@ class CompanionOrb(QWidget):
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         p.fillRect(event.rect(), Qt.GlobalColor.transparent)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-        if self._source is not None and self._direct_vol > 0.0:
-            self._source._direct_vol = self._direct_vol
-        paint_reactor(p, QRectF(self._orb_rect), self._source, time.monotonic() - self._started)
+        source = self._source
+        # La fenêtre compagnon peut vivre quelques événements Qt après la
+        # fermeture du HUD. Ne jamais peindre avec le wrapper Python d'un
+        # QObject déjà détruit : cela laisse un QPainter actif et abîme ensuite
+        # toute la surface Qt.
+        if source is not None and sip.isdeleted(source):
+            source = None
+            self._source = None
+        if source is not None and self._direct_vol > 0.0:
+            source._direct_vol = self._direct_vol
+        if source is not None:
+            paint_reactor(p, QRectF(self._orb_rect), source, time.monotonic() - self._started)
         if self._bubble_on:
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             p.setPen(QPen(QColor(0, 212, 255, 110), 1))

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QBrush, QColor, QPainter, QPixmap, QRadialGradient
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import (
+    QBrush, QColor, QLinearGradient, QPainter, QPen, QPixmap, QRadialGradient,
+)
 
 
 class _HudSpritesMixin:
@@ -76,6 +78,31 @@ class _HudSpritesMixin:
             q.fillRect(0, 0, W, H, QColor(2, 5, 11, 150))
         else:
             q.fillRect(0, 0, W, H, QColor(2, 5, 11))
+
+        # Plan holographique très discret, cuit avec le décor. Le point de
+        # fuite derrière le noyau donne une profondeur de salle de commande,
+        # sans transformer l'animation de l'orbe en travail de plein écran.
+        horizon = H * 0.64
+        floor = QLinearGradient(0, horizon, 0, H)
+        floor.setColorAt(0.0, QColor(0, 24, 40, 0))
+        floor.setColorAt(1.0, QColor(0, 80, 115, 34))
+        q.fillRect(QRectF(0, horizon, W, H - horizon), QBrush(floor))
+        q.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        q.setPen(QPen(QColor(*c, 20), 1.0))
+        vanishing = QPointF(W / 2.0, horizon)
+        for index in range(-8, 9):
+            q.drawLine(vanishing, QPointF(W / 2.0 + index * W * 0.115, H))
+        for index in range(1, 8):
+            progress = index / 8.0
+            y = horizon + (H - horizon) * progress * progress
+            q.setPen(QPen(QColor(*c, 10 + index * 3), 1.0))
+            q.drawLine(QPointF(0, y), QPointF(W, y))
+
+        # Un unique trait d'horizon magenta signe la scène sans rivaliser
+        # avec les couleurs sémantiques (écoute, réflexion, erreur) de l'orbe.
+        q.setPen(QPen(QColor(255, 43, 214, 44), 1.0))
+        q.drawLine(QPointF(W * 0.36, horizon), QPointF(W * 0.64, horizon))
+        q.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         aura = min(W, H) * self._ORB_SCALE * 2.35
         q.setOpacity(0.55)
         q.drawPixmap(QRectF(W / 2.0 - aura, H / 2.0 - aura, aura * 2, aura * 2), glow,
