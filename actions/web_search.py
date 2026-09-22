@@ -928,6 +928,22 @@ def _serpapi_research(query: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _nearby_map_results(query: str, center: Tuple[float, float], *,
+                        zoom: int = 14, language: str = "fr",
+                        timeout: float = 6.0) -> dict:
+    """Même recherche Google Maps GPS pour web_search et find_nearby.
+
+    Le point fourni reste l'autorité, notamment pour une recherche `near` :
+    aucun nom de ville déduit de l'IP n'est envoyé à SerpApi.
+    """
+    geo = _geo_params(query)
+    return _call_serpapi({
+        "q": query, "engine": "google_maps", "type": "search",
+        "ll": f"@{center[0]:.6f},{center[1]:.6f},{zoom}z",
+        "nearby": "true", "hl": language, "gl": geo["gl"],
+    }, timeout=timeout)
+
+
 def _serpapi_nearby(query: str) -> str:
     """Lieux à proximité (pharmacie, hôpital, restaurant…) — recherche
     locale (Google Local) plutôt que web classique, seule capable de
@@ -940,10 +956,7 @@ def _serpapi_nearby(query: str) -> str:
         # Position GPS connue : Google Maps centré sur les coordonnées exactes,
         # sans dépendre d'un nom de lieu que SerpApi connaîtrait ou non.
         try:
-            data = _call_serpapi({
-                "q": query, "engine": "google_maps", "type": "search",
-                "ll": f"@{coords[0]:.6f},{coords[1]:.6f},14z", "hl": geo["hl"],
-            })
+            data = _nearby_map_results(query, coords, language=geo["hl"])
             places = data.get("local_results", []) or []
         except Exception as exc:
             print(f"[WebSearch] ⚠️ google_maps indisponible ({exc}), repli google_local")
@@ -1524,4 +1537,3 @@ def web_search(
             "Dis-le simplement à l'utilisateur et propose de réessayer ; "
             "ne donne aucun fait non vérifié."
         )
-

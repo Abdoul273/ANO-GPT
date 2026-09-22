@@ -70,7 +70,7 @@ def test_error_never_leaks_api_key(monkeypatch):
 def test_nearby_uses_gps_coordinates_first(monkeypatch):
     calls = []
 
-    def fake_call(params):
+    def fake_call(params, **kwargs):
         calls.append(params)
         return {"local_results": [{"title": "Station Total", "address": "Bailobaya",
                                    "gps_coordinates": {"latitude": 9.79, "longitude": -13.31}}]}
@@ -87,3 +87,17 @@ def test_nearby_uses_gps_coordinates_first(monkeypatch):
     assert "location" not in calls[0]
     assert "Station Total" in result
     assert "9.79, -13.31" in result
+
+
+def test_shared_nearby_request_uses_explicit_center_without_location(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ws, "_geo_params", lambda _query: {"gl": "gn", "hl": "fr", "location": "Conakry"})
+    monkeypatch.setattr(ws, "_call_serpapi", lambda params, **kw: calls.append((params, kw)) or {})
+
+    ws._nearby_map_results("hôtel", (10.0569, -12.8658), zoom=15)
+
+    params, kwargs = calls[0]
+    assert params["ll"] == "@10.056900,-12.865800,15z"
+    assert params["nearby"] == "true"
+    assert "location" not in params
+    assert kwargs["timeout"] == 6.0

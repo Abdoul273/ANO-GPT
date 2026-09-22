@@ -1,7 +1,5 @@
 """Moteur de recherche de lieux : SerpAPI, repli OSM, fusion et distances."""
 
-import json
-
 import pytest
 
 from core import places
@@ -43,29 +41,12 @@ def _serpapi_payload():
 
 def test_serpapi_results_are_normalised(monkeypatch):
     monkeypatch.setattr(places, "serpapi_key", lambda: "cle-de-test")
-    monkeypatch.setattr(places, "_fetch_json", lambda url, timeout: _serpapi_payload(),
-                        raising=False)
-
+    from actions import web_search
     captured = {}
-
-    class _Response:
-        def __init__(self, payload):
-            self._payload = json.dumps(payload).encode()
-
-        def read(self):
-            return self._payload
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-    def fake_urlopen(request, timeout=0):
-        captured["url"] = request.full_url
-        return _Response(_serpapi_payload())
-
-    monkeypatch.setattr(places.urllib.request, "urlopen", fake_urlopen)
+    def fake_nearby(query, center, **kwargs):
+        captured.update(query=query, center=center, **kwargs)
+        return _serpapi_payload()
+    monkeypatch.setattr(web_search, "_nearby_map_results", fake_nearby)
 
     found = places.search_serpapi("pharmacie", CONAKRY)
 
@@ -78,9 +59,8 @@ def test_serpapi_results_are_normalised(monkeypatch):
     assert entry["dist_km"] > 0
     assert entry["directions_url"].startswith("https://www.google.com/maps/dir/")
     # Le zoom doit voyager avec la position, sinon Google élargit à la région.
-    assert "%2Cz" not in captured["url"]
-    assert "engine=google_maps" in captured["url"]
-    assert "nearby=true" in captured["url"]
+    assert captured["center"] == CONAKRY
+    assert captured["zoom"] == 14
 
 
 def test_no_serpapi_key_means_no_serpapi_call(monkeypatch):
@@ -116,6 +96,29 @@ def test_plain_words_map_to_osm_tags(query, expected):
 
 def test_unknown_words_fall_back_to_a_broad_sweep():
     assert places.osm_tags_for("machin truc") == ('["shop"]', '["amenity"]')
+
+
+def test_empty_overpass_response_does_not_wait_for_second_server(monkeypatch):
+    calls = []
+
+    class _Response:
+        def read(self):
+            return b'{"elements": []}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def fake_urlopen(request, timeout=0):
+        calls.append((request.full_url, timeout))
+        return _Response()
+
+    monkeypatch.setattr(places.urllib.request, "urlopen", fake_urlopen)
+    assert places.search_overpass("pharmacie", CONAKRY) == []
+    assert len(calls) == 1
+    assert calls[0][1] == 4.0
 
 
 def test_duplicates_between_sources_are_merged():
@@ -154,6 +157,24 @@ def test_search_sorts_by_distance_and_names_its_sources(monkeypatch):
 
     assert [p["name"] for p in found] == ["Proche", "Loin"]
     assert sources == ["osm"]
+
+
+def test_google_result_returns_without_waiting_for_overpass(monkeypatch):
+    close = places._place(
+        name="Pharmacie proche", lat=9.645, lon=-13.58,
+        center=CONAKRY, source="serpapi",
+    )
+    monkeypatch.setattr(places, "has_serpapi", lambda: True)
+    monkeypatch.setattr(places, "search_serpapi", lambda *a, **k: [close])
+    monkeypatch.setattr(
+        places, "search_overpass",
+        lambda *a, **k: pytest.fail("Overpass ne doit pas retarder Google Maps"),
+    )
+
+    found, sources = places.search_places("pharmacie", CONAKRY)
+
+    assert found == [close]
+    assert sources == ["serpapi"]
 
 
 def test_description_leads_with_the_nearest_place():

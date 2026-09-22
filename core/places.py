@@ -2,11 +2,11 @@
 
 Trois sources, par ordre de richesse :
 
-1. **SerpAPI, moteur Google Maps** — note, nombre d'avis, adresse postale,
-   téléphone, horaires, type d'établissement. C'est la seule source qui
+1. **SerpAPI, moteur Google Maps** — même appel GPS que `web_search` : note,
+   nombre d'avis, adresse postale, téléphone, horaires, type d'établissement. C'est la seule source qui
    couvre correctement les villes où OpenStreetMap est clairsemé, Conakry
    la première.
-2. **Overpass (OpenStreetMap)** — gratuit, sans clé, utile en repli.
+2. **Overpass (OpenStreetMap)** — gratuit, sans clé, utilisé en repli.
 3. **Nominatim** — pour situer une zone citée en toutes lettres
    (« près de la gare »), pas pour lister des commerces.
 
@@ -19,13 +19,8 @@ from __future__ import annotations
 import json
 import math
 import time
-import urllib.parse
 import urllib.request
-from pathlib import Path
 from typing import Any
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 _USER_AGENT = "ANO-GPT/2.0 (JARVIS Assistant)"
 
@@ -46,15 +41,10 @@ class PlaceSearchError(RuntimeError):
 
 # ── configuration ─────────────────────────────────────────────────────────
 
-def _config() -> dict:
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
 def serpapi_key() -> str:
-    return str(_config().get("serpapi_api_key") or "").strip()
+    # Même configuration que web_search, y compris SERPAPI_API_KEY.
+    from actions.web_search import _get_serpapi_api_key
+    return _get_serpapi_api_key() or ""
 
 
 def has_serpapi() -> bool:
@@ -129,7 +119,7 @@ def search_serpapi(
     *,
     zoom: int = 14,
     limit: int = 20,
-    timeout: float = 12.0,
+    timeout: float = 6.0,
     language: str = "fr",
 ) -> list[dict[str, Any]]:
     """Interroge le moteur Google Maps de SerpAPI autour d'un point.
@@ -137,26 +127,13 @@ def search_serpapi(
     Le paramètre `ll` porte la position ET le zoom : sans le zoom, Google
     élargit à la région entière et renvoie des adresses à des kilomètres.
     """
-    key = serpapi_key()
-    if not key:
+    if not has_serpapi():
         return []
 
-    params = {
-        "engine": "google_maps",
-        "q": query,
-        "ll": f"@{center[0]},{center[1]},{zoom}z",
-        # Cette fonction ne sert qu'aux recherches « autour de moi ». SerpAPI
-        # précise que Google peut ignorer `ll` et choisir sa localisation par
-        # défaut si ce biais n'est pas explicitement activé.
-        "nearby": "true",
-        "type": "search",
-        "hl": language,
-        "api_key": key,
-    }
-    url = "https://serpapi.com/search.json?" + urllib.parse.urlencode(params)
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    from actions.web_search import _nearby_map_results
+    payload = _nearby_map_results(
+        query, center, zoom=zoom, language=language, timeout=timeout,
+    )
 
     if payload.get("error"):
         raise PlaceSearchError(str(payload["error"]))
@@ -292,7 +269,7 @@ def search_overpass(
     *,
     radius_km: float = 5.0,
     limit: int = 25,
-    timeout: float = 8.0,
+    timeout: float = 4.0,
 ) -> list[dict[str, Any]]:
     tags = osm_tags_for(query)
     radius_m = int(radius_km * 1000)
@@ -312,8 +289,9 @@ def search_overpass(
             )
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 elements = json.loads(response.read().decode("utf-8")).get("elements", [])
-            if elements:
-                break
+            # Une réponse vide est valide ; le miroir suivant n'apporterait
+            # que le même rayon avec une attente supplémentaire.
+            break
         except Exception:
             continue
 
@@ -431,16 +409,18 @@ def search_places(
         except Exception as exc:
             print(f"[Places] SerpAPI indisponible : {exc}")
 
-    # OpenStreetMap complète systématiquement : il connaît des commerces de
-    # quartier absents de Google, et l'inverse est vrai aussi.
-    try:
-        found = search_overpass(query, center, radius_km=radius_km)
-        found = [p for p in found if p["dist_km"] <= radius_km]
-        if found:
-            collected.extend(found)
-            sources.append("osm")
-    except Exception as exc:
-        print(f"[Places] Overpass indisponible : {exc}")
+    # Un résultat cartographiable de Google suffit à répondre immédiatement.
+    # Overpass peut prendre plusieurs secondes par miroir : on le réserve aux
+    # recherches sans résultat Google ou sans clé SerpApi.
+    if not collected:
+        try:
+            found = search_overpass(query, center, radius_km=radius_km)
+            found = [p for p in found if p["dist_km"] <= radius_km]
+            if found:
+                collected.extend(found)
+                sources.append("osm")
+        except Exception as exc:
+            print(f"[Places] Overpass indisponible : {exc}")
 
     if not collected:
         return [], sources
