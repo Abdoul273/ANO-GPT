@@ -1,12 +1,15 @@
 """
 web_search.py — Recherche web ultra-réaliste
-Parsing local avancé, modes automatiques, fallback IA, parallélisme optimisé.
-Utilise Gemini grounding + DuckDuckGo en secours + SerpApi si clé présente.
+Parsing local avancé et résultat SerpApi vérifiable.
+
+La recherche conversationnelle courante est exécutée directement par Gemini
+Live avec Google Search grounding. Cette action est conservée pour les usages
+structurés SerpApi (cartes, comparaisons, prix) ; elle ne lance jamais un
+moteur secondaire en arrière-plan.
 """
 
 import json
 import os
-import random
 import re
 import sys
 import threading
@@ -53,18 +56,16 @@ def _run_with_timeout(fn, *args, timeout: float = _GEMINI_TIMEOUT, **kwargs):
 
 
 # Une même question posée deux fois dans la conversation (« et donc ? »,
-# reformulation par le modèle) ne repaie ni Gemini ni DuckDuckGo.
+# reformulation par le modèle) ne repaie pas SerpApi.
 _RESULT_TTL = 90.0
 _HEDGE_DELAY = 2.5  # Gemini répond en général sous 2 s ; au-delà on couvre.
 
 
 def _hedged(primary, fallback, *, timeout: float, hedge_after: float = _HEDGE_DELAY):
-    """Requête couverte : `fallback` démarre si `primary` traîne.
+    """Compatibilité interne pour deux opérations bornées.
 
-    Avant, l'assistant attendait l'échec complet de Gemini (jusqu'à 8 s) avant
-    de seulement *commencer* DuckDuckGo. Ici le repli part dès que Gemini
-    dépasse `hedge_after`, et le premier résultat exploitable gagne — Gemini
-    reste prioritaire s'il arrive dans la fenêtre.
+    Aucun appel de recherche ne l'utilise : il ne doit jamais démarrer un
+    fournisseur web secondaire après le retour vocal d'une action.
     """
     p_future = _executor.submit(primary)
     try:
@@ -255,6 +256,41 @@ def _geo_params(query: str) -> Dict[str, str]:
     return params
 
 
+def _user_coords() -> Optional[Tuple[float, float]]:
+    """Position GPS réelle (téléphone/IP) ou None si non vérifiée."""
+    try:
+        from core.geolocation import get_user_location
+        loc = get_user_location()
+        lat, lon = loc.get("lat"), loc.get("lon")
+        if lat is None or lon is None:
+            return None
+        return float(lat), float(lon)
+    except Exception:
+        return None
+
+
+def _redact_serpapi_error(exc: Exception) -> str:
+    """Message d'erreur sans URL ni clé : ce texte remonte au modèle vocal."""
+    text = re.sub(r"api_key=[^&\s]+", "api_key=***", str(exc))
+    text = re.sub(r"https?://serpapi\.com/\S+", "serpapi.com", text)
+    return text.strip()
+
+
+def _location_fallbacks(location: Optional[str]) -> list:
+    """SerpApi n'accepte dans `location` que les lieux de sa base canonique :
+    un village inconnu (« Bailobaya Centre, Guinea ») renvoie un 400. On
+    dégrade « Ville, Pays » -> « Pays » -> sans location plutôt que d'échouer."""
+    chain = []
+    if location:
+        chain.append(location)
+        if "," in location:
+            country = location.rsplit(",", 1)[-1].strip()
+            if country and country != location:
+                chain.append(country)
+    chain.append(None)
+    return chain
+
+
 def _call_serpapi(params: dict) -> dict:
     if not _REQUESTS:
         raise RuntimeError("requests non installé. Exécutez : pip install requests")
@@ -264,9 +300,23 @@ def _call_serpapi(params: dict) -> dict:
     params["api_key"] = key
     if "hl" not in params or "gl" not in params:
         params.update({k: v for k, v in _geo_params("").items() if k not in params})
-    r = kit.http().get("https://serpapi.com/search.json", params=params, timeout=8)
-    r.raise_for_status()
-    return r.json()
+    last_exc: Optional[Exception] = None
+    for location in _location_fallbacks(params.get("location")):
+        attempt = {k: v for k, v in params.items() if k != "location"}
+        if location:
+            attempt["location"] = location
+        try:
+            r = kit.http().get("https://serpapi.com/search.json", params=attempt, timeout=8)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:
+            last_exc = exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status == 400 and location is not None:
+                print(f"[WebSearch] ⚠️ location SerpApi refusée ({location}), repli plus large")
+                continue
+            break
+    raise RuntimeError(_redact_serpapi_error(last_exc or Exception("SerpApi indisponible")))
 
 
 def _format_serpapi_results(data: dict) -> str:
@@ -462,10 +512,24 @@ def _serpapi_nearby(query: str) -> str:
     remonter de vrais établissements géolocalisés au lieu de pages
     génériques les mieux référencées globalement."""
     geo = _geo_params(query)
-    data = _call_serpapi({"q": query, "engine": "google_local", **geo})
-    places = data.get("local_results", [])
-    if isinstance(places, dict):
-        places = places.get("places", [])
+    places = []
+    coords = None if _detect_country_geo(query) else _user_coords()
+    if coords:
+        # Position GPS connue : Google Maps centré sur les coordonnées exactes,
+        # sans dépendre d'un nom de lieu que SerpApi connaîtrait ou non.
+        try:
+            data = _call_serpapi({
+                "q": query, "engine": "google_maps", "type": "search",
+                "ll": f"@{coords[0]:.6f},{coords[1]:.6f},14z", "hl": geo["hl"],
+            })
+            places = data.get("local_results", []) or []
+        except Exception as exc:
+            print(f"[WebSearch] ⚠️ google_maps indisponible ({exc}), repli google_local")
+    if not places:
+        data = _call_serpapi({"q": query, "engine": "google_local", **geo})
+        places = data.get("local_results", [])
+        if isinstance(places, dict):
+            places = places.get("places", [])
     if not places:
         data = _call_serpapi({"q": f"{query} près de moi", "engine": "google", **geo})
         result = _format_serpapi_results(data)
@@ -506,7 +570,7 @@ def _serpapi_compare(items: list, aspect: str) -> str:
     return f"⚖️ Comparaison {aspect} : {' vs '.join(items)}\n\n" + _format_serpapi_results(data)
 
 
-# ── Backends Gemini & DuckDuckGo ────────────────────────────────────────────
+# ── Gemini Live / SerpApi ───────────────────────────────────────────────────
 _gemini_client_cache: Dict[str, Any] = {}
 _gemini_client_lock = threading.Lock()
 
@@ -549,86 +613,6 @@ def _gemini_search_impl(query: str) -> str:
 
 def _gemini_search(query: str) -> str:
     return _run_with_timeout(_gemini_search_impl, query)
-
-
-def _ddgs_client():
-    try:
-        from ddgs import DDGS
-    except ImportError:
-        try:
-            import warnings as _w
-            with _w.catch_warnings():
-                _w.simplefilter("ignore")
-                from duckduckgo_search import DDGS
-        except ImportError:
-            raise ImportError("Installez ddgs: pip install ddgs")
-    try:
-        return DDGS(timeout=6)
-    except TypeError:
-        return DDGS()
-
-
-def _ddg_with_retry(fn, *args, retries: int = 1, base_delay: float = 0.5, **kwargs):
-    import time as _time
-    last_exc = None
-    for attempt in range(retries + 1):
-        try:
-            return fn(*args, **kwargs)
-        except Exception as e:
-            last_exc = e
-            is_ratelimit = "ratelimit" in str(e).lower() or "403" in str(e)
-            if not is_ratelimit or attempt == retries:
-                raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
-            print(f"[WebSearch] ⏳ DDG rate-limité, nouvelle tentative dans {delay:.1f}s "
-                  f"({attempt + 1}/{retries})...")
-            _time.sleep(delay)
-    raise last_exc
-
-
-def _ddg_search(query: str, max_results: int = 6) -> list:
-    def _do():
-        results = []
-        with _ddgs_client() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
-                results.append({
-                    "title":   r.get("title", ""),
-                    "snippet": r.get("body", ""),
-                    "url":     r.get("href", ""),
-                })
-        return results
-    return _ddg_with_retry(_do)
-
-
-def _ddg_news(query: str, max_results: int = 8) -> list:
-    def _do():
-        results = []
-        with _ddgs_client() as ddgs:
-            for r in ddgs.news(query, max_results=max_results):
-                results.append({
-                    "title":   r.get("title", ""),
-                    "snippet": r.get("body", ""),
-                    "url":     r.get("url", ""),
-                    "source":  r.get("source", ""),
-                })
-        return results
-    try:
-        return _ddg_with_retry(_do)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ DDG news() échoué ({e}) — repli sur recherche texte")
-        return _ddg_search(query, max_results=max_results)
-
-
-def _format_ddg(query: str, results: list) -> str:
-    if not results:
-        return f"Aucun résultat pour : {query}"
-    lines = [f"Résultats pour : {query}\n"]
-    for i, r in enumerate(results, 1):
-        if r.get("title"):   lines.append(f"{i}. {r['title']}")
-        if r.get("snippet"): lines.append(f"   {r['snippet']}")
-        if r.get("url"):     lines.append(f"   Source : {r['url']}")
-        lines.append("")
-    return "\n".join(lines).strip()
 
 
 # ── Profils de réseaux sociaux ────────────────────────────────────────────
@@ -743,17 +727,16 @@ def _format_social_profiles(handle: str, platform: str, results: list[dict]) -> 
 
 
 def _social_profiles(handle: str, platform: str, player=None) -> str:
-    """Cherche un pseudo sur un réseau, avec SerpApi puis DDG en repli."""
+    """Cherche un pseudo avec SerpApi, sans moteur secondaire non confirmé."""
     platform = platform if platform in _SOCIAL_PLATFORMS else "tiktok"
     query = _social_search_query(handle, platform)
     if player:
         player.write_log(f"[Search:Social:{platform}] @{handle}")
     try:
-        if _get_serpapi_api_key():
-            data = _call_serpapi({"q": query, "engine": "google", **_geo_params("")})
-            results = data.get("organic_results", [])
-        else:
-            results = _ddg_search(query, max_results=8)
+        if not _get_serpapi_api_key():
+            return "SerpApi n'est pas configuré : recherche de profil non confirmée."
+        data = _call_serpapi({"q": query, "engine": "google", **_geo_params("")})
+        results = data.get("organic_results", [])
         return _format_social_profiles(handle, platform, results)
     except Exception as exc:
         print(f"[WebSearch] ⚠️ Recherche profil social échouée ({exc})")
@@ -830,68 +813,24 @@ def _gemini_headlines(n: int = 5) -> tuple:
 # ── Modes ───────────────────────────────────────────────────────────────────
 @kit.memo(_RESULT_TTL, key=lambda query, player=None, budget_s=15.0: query.casefold().strip())
 def _search(query: str, player=None, budget_s: float = 15.0) -> str:
-    print("[WebSearch] 🤖 Recherche standard avec Gemini Grounding (couverte DDG)...")
+    print("[WebSearch] 🤖 Recherche standard avec Gemini Grounding...")
     if player:
         player.write_log("[Search:Gemini] Recherche standard...")
 
-    def _ddg() -> str:
-        if player:
-            player.write_log("[Search:DuckDuckGo] Couverture DuckDuckGo...")
-        return _format_ddg(query, _ddg_search(query))
-
-    # Appel direct de l'implémentation : `_hedged` borne déjà le temps, et un
-    # `submit` imbriqué dans le même pool pourrait l'épuiser.
-    return _hedged(lambda: _gemini_search_impl(query), _ddg,
-                   timeout=min(_GEMINI_TIMEOUT + 4.0, max(1.0, budget_s)))
+    return _gemini_search(query)
 
 
 def _news(query: str, player=None) -> str:
-    print("[WebSearch] 📰 Recherche d'actualités avec Gemini Grounding & DuckDuckGo...")
+    print("[WebSearch] 📰 Recherche d'actualités avec Gemini Grounding...")
     if player:
-        player.write_log("[Search:Gemini&DDG] Recherche d'actualités...")
+        player.write_log("[Search:Gemini] Recherche d'actualités...")
     gemini_query = (
         f"dernières actualités : {query}" if query else
         "Actualités des dernières 24 heures sur l'intelligence artificielle, "
         "la cybersécurité, les cyberattaques, la robotique et les technologies "
         "émergentes. Sources fiables, faits récents et vérifiables uniquement."
     )
-    ddg_query = query if query else DAILY_AI_CYBER_NEWS_QUERY
-    result_box  = [None]
-    lock        = threading.Lock()
-    done_evt    = threading.Event()
-    failures    = [0]
-
-    def _store(r: str) -> None:
-        if r and len(r) > 60:
-            with lock:
-                if result_box[0] is None:
-                    result_box[0] = r
-            done_evt.set()
-        else:
-            with lock:
-                failures[0] += 1
-                if failures[0] >= 2:
-                    done_evt.set()
-
-    def _try_gemini():
-        try:
-            _store(_gemini_search(gemini_query))
-        except Exception as e:
-            print(f"[WebSearch] ⚠️ Gemini news échoué ({e})")
-            _store("")
-
-    def _try_ddg():
-        try:
-            results = _ddg_news(ddg_query, max_results=8)
-            _store(_format_news(ddg_query, results))
-        except Exception as e:
-            print(f"[WebSearch] ⚠️ DDG news échoué ({e})")
-            _store("")
-
-    threading.Thread(target=_try_gemini, daemon=True).start()
-    threading.Thread(target=_try_ddg,    daemon=True).start()
-    done_evt.wait(timeout=10.0)
-    return result_box[0] or f"Aucune actualité trouvée pour : {query}"
+    return _gemini_search(gemini_query)
 
 
 _news = kit.memo(_RESULT_TTL, key=lambda query, player=None: ("news", query.casefold().strip()))(_news)
@@ -909,16 +848,12 @@ def _headlines(count: int = 5, player=None) -> str:
             )
         return raw or "Aucun titre trouvé."
     except Exception as e:
-        print(f"[WebSearch] ⚠️ Titres Gemini échoué ({e}) — repli DDG")
-        if player:
-            player.write_log("[Search:DuckDuckGo] Repli sur DuckDuckGo...")
-        results = _ddg_news(DAILY_AI_CYBER_NEWS_QUERY, max_results=count)
-        return _format_news("IA & cybersécurité — titres du jour", results)
+        return f"Titres Gemini indisponibles : {e}"
 
 
 @kit.memo(_RESULT_TTL, key=lambda query, player=None, budget_s=15.0: ("research", query.casefold().strip()))
 def _research(query: str, player=None, budget_s: float = 15.0) -> str:
-    print("[WebSearch] 🔬 Recherche approfondie avec Gemini Grounding (couverte DDG)...")
+    print("[WebSearch] 🔬 Recherche approfondie avec Gemini Grounding...")
     if player:
         player.write_log("[Search:Gemini] Recherche approfondie...")
     research_query = (
@@ -926,14 +861,7 @@ def _research(query: str, player=None, budget_s: float = 15.0) -> str:
         "Inclus le contexte, les faits clés, l'état actuel et les nuances importantes."
     )
 
-    def _ddg() -> str:
-        if player:
-            player.write_log("[Search:DuckDuckGo] Couverture DuckDuckGo...")
-        return _format_ddg(query, _ddg_search(query, max_results=10))
-
-    # Une recherche approfondie mérite un peu plus de patience côté Gemini.
-    return _hedged(lambda: _gemini_search_impl(research_query), _ddg,
-                   timeout=min(_GEMINI_TIMEOUT + 8.0, max(1.0, budget_s)), hedge_after=4.0)
+    return _gemini_search(research_query)
 
 
 def _price(query: str, player=None) -> str:
@@ -941,14 +869,7 @@ def _price(query: str, player=None) -> str:
     if player:
         player.write_log("[Search:Gemini] Recherche de prix...")
     price_query = f"prix actuel de {query} — combien ça coûte aujourd'hui"
-    try:
-        return _gemini_search(price_query)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ Gemini price échoué ({e}) — DuckDuckGo...")
-        if player:
-            player.write_log("[Search:DuckDuckGo] Repli sur DuckDuckGo...")
-        results = _ddg_search(f"{query} prix achat", max_results=6)
-        return _format_ddg(query, results)
+    return _gemini_search(price_query)
 
 
 def _compare(items: list, aspect: str, player=None) -> str:
@@ -959,27 +880,7 @@ def _compare(items: list, aspect: str, player=None) -> str:
         f"Compare {', '.join(items)} en termes de {aspect}. "
         "Donne des faits précis et des données."
     )
-    try:
-        return _gemini_search(query)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ Gemini compare échoué : {e} — repli DDG")
-        if player:
-            player.write_log("[Search:DuckDuckGo] Repli sur DuckDuckGo...")
-        all_results: dict = {}
-        for item in items:
-            try:
-                all_results[item] = _ddg_search(f"{item} {aspect}", max_results=3)
-            except Exception:
-                all_results[item] = []
-        lines = [f"Comparaison — {aspect.upper()}", "─" * 40]
-        for item in items:
-            lines.append(f"\n▸ {item}")
-            for r in all_results.get(item, [])[:2]:
-                if r.get("snippet"):
-                    lines.append(f"  • {r['snippet']}")
-                if r.get("url"):
-                    lines.append(f"    {r['url']}")
-        return "\n".join(lines)
+    return _gemini_search(query)
 
 
 # ── Parsing local intelligent ──────────────────────────────────────────────
@@ -1097,10 +998,6 @@ def web_search(
     Modes : search, social, news, research, price, nearby, compare, headlines.
     """
     params = parameters or {}
-    try:
-        budget_s = max(1.0, float(params.get("_budget_s", 15.0)))
-    except (TypeError, ValueError):
-        budget_s = 15.0
     description = params.get("description", "").strip()
     query  = params.get("query", "").strip()
     mode   = params.get("mode", "search").lower().strip()
@@ -1173,26 +1070,21 @@ def web_search(
             _last_card_markdown = format_results_markdown(data)
             return _format_serpapi_results(data)
         except Exception as e:
-            print(f"[WebSearch] ⚠️ Échec de l'appel SerpApi ({e}) — repli sur les backends standards...")
+            # Ne pas lancer un deuxième modèle texte ici : le tour audio porte
+            # déjà Google Search intégré. Un repli local ferait répondre un
+            # autre modèle que Gemini Live et masquerait la vraie panne
+            # SerpApi, exactement ce qui provoquait les réponses incohérentes.
+            print(f"[WebSearch] ⚠️ Échec de l'appel SerpApi ({e})")
+            return (
+                f"SerpApi n'a pas confirmé cette recherche : {e}. "
+                "Utilise maintenant Google Search intégré à Gemini Live pour répondre ; "
+                "n'invente aucun résultat."
+            )
 
-    if player:
-        player.write_log(f"[Search:{mode}] {query or ', '.join(items)}")
-    print(f"[WebSearch] 🔍 mode={mode!r}  query={query!r}")
-
-    try:
-        if mode == "social":
-            return _social_profiles(query, platform, player=player)
-        if mode == "compare" and items:
-            return _compare(items, aspect, player=player)
-        if mode == "news":
-            return _news(query, player=player)
-        if mode == "research":
-            return _research(query, player=player, budget_s=budget_s)
-        if mode == "price":
-            return _price(query, player=player)
-        if mode == "headlines":
-            return _headlines(count, player=player)
-        return _search(query, player=player, budget_s=budget_s)
-    except Exception as e:
-        print(f"[WebSearch] ❌ Tous les backends ont échoué : {e}")
-        return f"Échec de la recherche : {e}"
+    # Sans clé SerpApi, les recherches factuelles appartiennent à Gemini Live
+    # (outil google_search de la session). Cette action synchrone ne doit pas
+    # créer une seconde requête avec un modèle texte.
+    return (
+        "SerpApi n'est pas configuré. Utilise Google Search intégré à Gemini Live "
+        "pour cette recherche et ne donne aucun fait non vérifié."
+    )
