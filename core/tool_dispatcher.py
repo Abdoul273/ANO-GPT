@@ -2375,6 +2375,20 @@ def _vision_is_deferred(args: dict) -> bool:
     return action in _DEFERRED_VISION_ACTIONS
 
 
+# Le coach TikTok n'est long que lorsqu'il fait analyser des vidéos ;
+# l'export, la liste et le meilleur horaire lisent des données locales.
+_DEFERRED_TIKTOK_ACTIONS = frozenset({
+    "diagnose", "why", "pourquoi", "analyse", "analyze", "video",
+    "review", "account", "bilan", "compte", "plan",
+    "draft", "before_post", "pre_post", "file", "fichier", "avant",
+})
+
+
+def _tiktok_is_deferred(args: dict) -> bool:
+    action = str(args.get("action") or "diagnose").strip().lower()
+    return action in _DEFERRED_TIKTOK_ACTIONS
+
+
 # Outils qui font attendre : leur description commence par la consigne
 # d'annoncer avant d'appeler. Une seule source pour tous, alignée sur la règle
 # « annonce avant d'agir » du prompt.
@@ -2974,6 +2988,11 @@ class ToolDispatcher:
                     visual_recognition, parameters=args, player=self.ui,
                     session_memory=self._tool_session_memory, speak=self.speak,
                     grab_frame=self._grab_camera_still, save_photo=self._save_capture,
+                )
+            elif name == "tiktok_coach":
+                from actions.tiktok_coach import tiktok_coach
+                result = await asyncio.to_thread(
+                    tiktok_coach, parameters=args, player=self.ui, speak=self.speak,
                 )
             else:
                 return
@@ -3926,6 +3945,16 @@ class ToolDispatcher:
                        if launched else
                        "Une vidéo est déjà en cours de génération : dis-le, la nouvelle attendra.")
                 )
+
+            elif name == "tiktok_coach" and _tiktok_is_deferred(args):
+                # Analyse Gemini d'une ou plusieurs vidéos : de 10 s à plus
+                # d'une minute. Le verdict arrive dans un nouveau tour.
+                if self._start_deferred_tool(name, args):
+                    result = ("J'analyse. Dis-le immédiatement en une phrase ; le verdict "
+                              "sera annoncé dès qu'il sera prêt. Ne rappelle pas cet outil.")
+                else:
+                    result = ("Une analyse TikTok est déjà en cours ; dis-le brièvement "
+                              "et ne rappelle pas cet outil.")
 
             elif name == "tiktok_coach":
                 result = await loop.run_in_executor(
