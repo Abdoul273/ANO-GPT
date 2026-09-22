@@ -2365,6 +2365,12 @@ def _task_card_summary(name: str, args: Any) -> str:
     return ""
 
 
+# « Montre ma position » : âge maximal d'un relevé réutilisé tel quel, et
+# attente maximale d'un nouveau relevé demandé au téléphone.
+_MAP_FIX_FRESH_S = 30.0
+_MAP_FIX_WAIT_S = 4.0
+
+
 # Seules les identifications (photo + modèle de vision) sont longues ; lister
 # les visages connus ou en oublier un reste une réponse immédiate.
 _DEFERRED_VISION_ACTIONS = frozenset({"identify", "who", "what", "look", "regarde"})
@@ -3725,10 +3731,11 @@ class ToolDispatcher:
                     "leaflet" if _view_arg else None
                 )
 
-                # « Ma position » exige une mesure actuelle : demander le GPS
-                # au téléphone connecté avant de lire le fichier partagé.
+                # « Ma position » : relevé récent, sinon GPS redemandé (borné).
                 if not query and lat_arg is None and lon_arg is None and self._dashboard:
-                    await self._dashboard.request_fresh_location(timeout=10.0)
+                    from core.geolocation import get_precise_user_coords
+                    if get_precise_user_coords(max_age_s=_MAP_FIX_FRESH_S) is None:
+                        await self._dashboard.request_fresh_location(timeout=_MAP_FIX_WAIT_S)
 
                 def _do_show_map():
                     if lat_arg is not None and lon_arg is not None:

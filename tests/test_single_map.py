@@ -283,3 +283,12 @@ def test_show_map_interdit_le_repli_web_search_pour_le_quartier():
     start = DISPATCHER.index('"name": "show_map"')
     block = DISPATCHER[start:start + 2000]
     assert "never call web_search" in block.casefold()
+
+
+def test_ma_position_ne_fait_pas_attendre_le_micro():
+    """Un téléphone connecté sans localisation gardait le micro 10 s fermé."""
+    from core import tool_dispatcher as td
+    assert td._MAP_FIX_WAIT_S <= 4.0
+    start = MAIN.index('elif name == "show_map"')
+    block = MAIN[start:start + 1200]
+    assert "_MAP_FIX_FRESH_S" in block and "timeout=_MAP_FIX_WAIT_S" in block
