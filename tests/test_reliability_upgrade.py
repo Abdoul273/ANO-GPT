@@ -165,9 +165,13 @@ def test_dispatcher_respects_explicit_failure(monkeypatch):
     jarvis = main.JarvisLive.__new__(main.JarvisLive)
     jarvis._action_runtime = runtime_with({"type": "STRING"})
     jarvis._tool_session_memory = {}
+    jarvis.ui = SimpleNamespace(muted=False, write_log=lambda *_a: None, set_state=lambda *_a: None)
+    jarvis._interrupted = False
+    jarvis._noise_turn = False
+    jarvis._event_bus = None
     recorded = []
     monkeypatch.setattr(main.tool_stats, "record", lambda *a, **kw: recorded.append(kw))
-    async def verify(name):
+    async def verify(_name, _args):
         return ""
     async def execute(fc, args):
         return SimpleNamespace(response={"ok": False, "result": "Confirmation requise"})
