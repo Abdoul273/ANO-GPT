@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any, Optional, Protocol
 
 from core.background_task import spawn_logged
-from core.ai_stt_corrector import STTCorrector, TranscriptAssembler, TranscriptGuard
 from core.audio_engine import (
     CHANNELS,
     RECEIVE_SAMPLE_RATE,
@@ -55,7 +54,6 @@ from core.personality_modes import (
     user_address,
     voice_settings_for_mode,
 )
-from core.stt import AudioPreprocessor
 from core.tool_dispatcher import CONSULT_BRAIN_DECLARATION, TOOL_DECLARATIONS
 from memory.memory_manager import format_memory_for_prompt, load_memory
 from core import context_probe, memory_store, tool_packs
@@ -1231,8 +1229,6 @@ class SessionManager:
         from core.elevenlabs_voice import speak_live_turn
         voice_settings = voice_settings_for_mode(_voice_engine_settings())
         use_elevenlabs = voice_settings.get("voice_provider", "gemini") == "elevenlabs"
-        transcript_guard = TranscriptGuard()
-        transcript_assembler = TranscriptAssembler()
 
         try:
             while True:
@@ -1431,140 +1427,6 @@ class SessionManager:
                                     self.ui.write_log(f"[INLINE_START]Vous: {merged}")
                                     _user_started = True
 
-                        # Ancien pipeline de filtrage local, conservé seulement
-                        # temporairement comme référence de migration ; il ne
-                        # peut plus s'exécuter sur le chemin Mark-LII.
-                        if False and sc.input_transcription and sc.input_transcription.text:
-                            txt = _clean_transcript(sc.input_transcription.text)
-                            if txt:
-                                try:
-                                    txt = STTCorrector().correct(txt)
-                                except Exception:
-                                    logging.getLogger(__name__).warning("Échec auxiliaire dans _receive_audio")
-                                # Mémoriser aussi les fragments différés. Le
-                                # serveur peut envoyer soit une révision
-                                # cumulative (« ouvre » → « ouvre Firefox »),
-                                # soit de vrais morceaux (« cherche » puis
-                                # « demain »). Les jeter couperait des mots.
-                                previous = in_buf[0] if in_buf else ""
-                                candidate = transcript_assembler.add(txt)
-                                evidence_ms = (
-                                    self._voice_evidence_ms if self._activity_open
-                                    else self._last_voice_evidence_ms
-                                )
-                                audio_ms = (
-                                    max(
-                                        0.0,
-                                        (time.monotonic() - self._activity_since) * 1000.0
-                                        + AudioPreprocessor._ATTACK_MS,
-                                    )
-                                    if self._activity_open else self._last_voice_audio_ms
-                                )
-                                assessment = transcript_guard.assess(
-                                    candidate,
-                                    acoustic_voice_ms=evidence_ms,
-                                    audio_duration_ms=audio_ms,
-                                    # Gemini livre des révisions incrémentales.
-                                    # Tant que le micro parle encore, « de »
-                                    # peut devenir « demain » au fragment suivant :
-                                    # on attend au lieu d'annuler un vrai tour.
-                                    partial=self._activity_open,
-                                )
-                                if assessment.deferred:
-                                    print(
-                                        f"[STT] … Fragment différé "
-                                        f"({assessment.reason}): {candidate!r}"
-                                    )
-                                elif not assessment.accepted:
-                                    print(
-                                        f"[STT] 🛡️ Transcription rejetée "
-                                        f"({assessment.reason}): {candidate!r}"
-                                    )
-                                    # Hallucinations et langues étrangères : on
-                                    # coupe le tour pour qu'aucun outil ne parte.
-                                    if any(k in assessment.reason for k in (
-                                        "hallucination", "alphabet inattendu",
-                                        "répétition sans contenu", "répétition artificielle",
-                                        "langue étrangère", "chiffres", "anglais isolé",
-                                    )):
-                                        self._noise_turn = True
-                                        transcript_assembler.reset()
-                                        in_buf = []
-                                        self.interrupt()
-                                    else:
-                                        # Pour une hésitation isolée ou voix fatiguée, on réinitialise sans couper brutalement
-                                        transcript_assembler.reset()
-                                        in_buf = []
-                                else:
-                                    if self._try_switch_personality_mode(candidate):
-                                        # Le modèle vient de recevoir le PCM, mais ne doit pas
-                                        # répondre avec l'ancien prompt/ancienne voix.
-                                        self.interrupt()
-                                        transcript_assembler.reset()
-                                        in_buf = []
-                                        self.ui.set_user_transcript(candidate, final=True)
-                                        continue
-                                    from core.barge_in import InterruptPhraseDetector
-                                    # Même règle que le détecteur local : durant
-                                    # la sortie, seul « Ano stop/écoute » est
-                                    # une interruption. Un mot nu reçu en retard
-                                    # peut être l'écho du TTS ou la fin du tour
-                                    # précédent ; il ne doit jamais couper ANO.
-                                    kind = InterruptPhraseDetector.classify_strict_interrupt(candidate)
-                                    busy = (
-                                        self._model_turn_active
-                                        or getattr(self, "_is_thinking", False)
-                                        or getattr(self, "_is_speaking", False)
-                                    )
-                                    if busy and kind == "stop":
-                                        self.interrupt()
-                                        transcript_assembler.reset()
-                                        in_buf = []
-                                        self.ui.set_user_transcript(candidate, final=True)
-                                        continue
-                                    if busy and kind == "redirect":
-                                        self.interrupt()
-                                    # Une vraie phrase annule le soupçon : la
-                                    # réponse qui suit est légitime.
-                                    self._noise_turn = False
-                                    merged = candidate
-                                    in_buf = [merged] if merged else []
-                                    self._observe_habit_reply(merged or txt)
-                                    # Retenu tant que le modèle n'a pas
-                                    # répondu : si la connexion tombe ici, la
-                                    # phrase sera reposée à la reprise.
-                                    self._live_user_text = merged or txt
-                                    self._last_user_speech = time.monotonic()
-                                    if hasattr(self, "_continuous"):
-                                        self._continuous.on_user_transcript(merged or txt)
-                                    screen = getattr(self, "_screen_mind", None)
-                                    if screen is not None:
-                                        try:
-                                            if screen.wants_context(merged or txt):
-                                                spawn_logged(
-                                                    screen.inject_into_live(
-                                                        self, merged or txt
-                                                    ),
-                                                    name="screen-context-inject", ui=self.ui,
-                                                )
-                                        except Exception:
-                                            logging.getLogger(__name__).warning("Échec auxiliaire dans _receive_audio")
-                                    try:
-                                        from core.prosody import get_prosody_manager
-                                        get_prosody_manager().record_user_query(merged or txt)
-                                    except Exception:
-                                        logging.getLogger(__name__).warning("Échec auxiliaire dans _receive_audio")
-                                    # Retour visuel immédiat : la phrase s'écrit dans
-                                    # le panneau de gauche pendant qu'elle est dite.
-                                    self.ui.set_user_transcript(merged)
-                                    if not _user_started:
-                                        self.ui.write_log(f"[INLINE_START]Vous: {merged}")
-                                        _user_started = True
-                                    elif merged.startswith(previous):
-                                        delta = merged[len(previous):].strip()
-                                        if delta:
-                                            self.ui.write_log(f"[INLINE]{delta}")
-
                         if sc.turn_complete:
                             if use_elevenlabs and out_buf and not self._interrupted:
                                 await speak_live_turn(self, "".join(out_buf), voice_settings)
@@ -1642,7 +1504,6 @@ class SessionManager:
                                     "ts": datetime.now().isoformat(),
                                 }), name="dashboard-log")
                             in_buf = []
-                            transcript_assembler.reset()
                             # Le tour est clos : plus rien n'attend de réponse.
                             self._live_user_text = ""
                             self._noise_turn = False

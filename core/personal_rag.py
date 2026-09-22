@@ -1522,7 +1522,9 @@ class PersonalRAG:
         logger.info("Début indexation de %s...", root)
         for dirpath, dirnames, filenames in os.walk(root):
             # Élagage en place des dossiers à ignorer pour éviter de les parcourir
-            dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS and not d.startswith(".")]
+            dirnames[:] = [] if not recursive else [
+                d for d in dirnames if d not in IGNORED_DIRS and not d.startswith(".")
+            ]
 
             for fname in filenames:
                 file_path = Path(dirpath) / fname
