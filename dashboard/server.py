@@ -87,6 +87,7 @@ def _get_gemini_key() -> str | None:
     except Exception:
         return None
 
+_MAX_PAIR_FAILURES = 10
 _KEY_CHARS = [c for c in (string.ascii_uppercase + string.digits)
               if c not in ('O', 'I', 'L', '0', '1')]
 
@@ -716,6 +717,9 @@ class DashboardServer:
         self._wake_callback               = None
         self._connect_callback            = None
         self._pending_keys: dict[str, float] = {}
+        # Échecs d'appairage depuis la dernière clé valide : au-delà du seuil,
+        # toutes les clés en attente tombent (voir `_pair_device`).
+        self._pair_failures = 0
         self.firewall_fixes: list[str]    = []   # commandes restant à lancer
         # device_token → {session_key} ; relu du disque pour survivre au
         # redémarrage de l'assistant.
@@ -763,7 +767,16 @@ class DashboardServer:
         entered = (key or "").strip().upper()
         now = time.time()
         if not entered or self._pending_keys.get(entered, 0) <= now:
+            # Une clé de 6 caractères se devine en insistant depuis le réseau
+            # local : après quelques échecs, on annule toutes les clés en
+            # attente et il faut en afficher une nouvelle.
+            self._pair_failures += 1
+            if self._pair_failures >= _MAX_PAIR_FAILURES and self._pending_keys:
+                self._pending_keys.clear()
+                self._pair_failures = 0
+                print("[Dashboard] Trop de clés erronées : clés d'appairage annulées.")
             return None
+        self._pair_failures = 0
         del self._pending_keys[entered]
         token = secrets.token_urlsafe(32)
         device_token = secrets.token_urlsafe(32)
@@ -1236,8 +1249,8 @@ class DashboardServer:
         @app.get("/auto-login")
         async def auto_login(key: str = ""):
             """QR code target — validates one-time key, creates session, redirects phone."""
-            now = time.time()
-            if not key or key not in self._pending_keys or self._pending_keys[key] <= now:
+            pairing = self._pair_device(key)
+            if not pairing:
                 return HTMLResponse("""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width">
 <style>
@@ -1247,11 +1260,9 @@ class DashboardServer:
 </style></head>
 <body><div><h2>Lien expiré</h2>
 <p>Cliquez sur <strong style="color:#dde3ed">Contrôle à distance</strong> dans ANO-GPT pour obtenir un nouveau QR code.</p>
-</div></body></html>""")
+</div></body></html>""", status_code=401)
 
-            pairing = self._pair_device(key)
-            if not pairing:
-                return HTMLResponse("Clé invalide ou expirée", status_code=401)
+            key = pairing["key"]
             tok = pairing["token"]
             dev_tok = pairing["device_token"]
 
