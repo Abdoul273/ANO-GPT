@@ -812,6 +812,29 @@ TOOL_DECLARATIONS = [
         "parameters": {"type": "OBJECT", "properties": {}, "required": []}
     },
     {
+        "name": "interface_control",
+        "description": (
+            "ANO-GPT pilote SA PROPRE interface. Toujours cet outil — jamais « je ne peux pas » — "
+            "pour : « coupe le micro / mets-toi en veille / arrête d'écouter » (mute_mic), "
+            "« réactive le micro » (unmute_mic, reçu par texte ou téléphone), « le micro est "
+            "coupé ? » (mic_status), « ferme les cartes / enlève ces notifications » (close_cards), "
+            "« nettoie l'écran / ferme tout » (clear_screen : carte, galerie, vidéo, cartes, "
+            "pointeurs), « montre-toi / reviens au premier plan » (show_window). Après mute_mic, "
+            "dis en une phrase que le micro sera coupé et qu'on le rallume avec le bouton micro, "
+            "le raccourci clavier ou une commande tapée."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "mute_mic | unmute_mic | mic_status | close_cards | clear_screen | show_window",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "calendar_control",
         "description": (
             "Lit et modifie l'agenda Google Calendar ou CalDAV de façon sûre. Utiliser list pour le "
@@ -3048,6 +3071,50 @@ class ToolDispatcher:
         if not delivered:
             self._defer_turn(prompt)
 
+    def _interface_control(self, action: str) -> str:
+        """ANO agit sur sa propre fenêtre : micro, cartes, écran."""
+        ui = self.ui
+        if action in ("mute_mic", "mute", "sleep", "coupe_micro"):
+            if ui.muted:
+                return "Le micro est déjà coupé."
+
+            async def _mute_after_reply() -> None:
+                # Couper tout de suite avalerait la confirmation parlée qui
+                # explique comment rallumer le micro : on attend qu'elle passe.
+                await self._wait_voice_silence(start_s=1.5, max_s=10.0)
+                self._sleep("demande vocale")
+
+            spawn_logged(_mute_after_reply(), name="interface-mute", ui=ui)
+            return ("Micro coupé dès la fin de ta phrase. Dis-le en une phrase et précise "
+                    "qu'on le rallume avec le bouton micro, le raccourci clavier ou une commande tapée.")
+        if action in ("unmute_mic", "unmute", "wake", "active_micro"):
+            if not ui.muted:
+                return "Le micro est déjà actif."
+            state = self._wake_up("demande")
+            if state == "locked":
+                return ("Le micro a été coupé à la main avec le bouton : seul ce bouton peut le "
+                        "rallumer. Dis-le à l'utilisateur.")
+            return "Micro réactivé : j'écoute."
+        if action in ("mic_status", "status"):
+            return "Le micro est coupé." if ui.muted else "Le micro est actif : j'écoute."
+        if action in ("close_cards", "dismiss_cards"):
+            ui.dismiss_cards()
+            return "Cartes fermées."
+        if action in ("clear_screen", "close_all"):
+            for step in ("close_map", "close_image_gallery", "close_video",
+                         "clear_visual_pointers", "hide_thought"):
+                try:
+                    getattr(ui, step)()
+                except Exception as exc:
+                    print(f"[Interface] {step} ignoré : {exc}")
+            ui.dismiss_cards()
+            return "Écran nettoyé : carte, galerie, vidéo, cartes et pointeurs fermés."
+        if action in ("show_window", "show", "raise"):
+            ui.show_window()
+            return "Fenêtre ANO-GPT au premier plan."
+        return ("Action d'interface inconnue. Choix : mute_mic, unmute_mic, mic_status, "
+                "close_cards, clear_screen, show_window.")
+
     async def _wait_voice_silence(self, *, start_s: float = 1.2, max_s: float = 8.0) -> None:
         """Laisse l'accusé vocal démarrer puis finir avant d'écouter la pièce."""
         await asyncio.sleep(start_s)
@@ -3955,6 +4022,9 @@ class ToolDispatcher:
             elif name == "close_map":
                 self.ui.close_map()
                 result = "Carte fermée."
+
+            elif name == "interface_control":
+                result = self._interface_control(str(args.get("action") or "").strip().lower())
 
             elif name == "email_control":
                 if self._start_deferred_tool(name, args):
