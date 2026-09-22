@@ -240,6 +240,7 @@ from core.event_bus import (
 from core.memory_episode import EpisodeRecorder
 from core.plugin_registry import PluginRegistry
 from core.thread_pool import exit_process_bounded, get_thread_pool, shutdown_all
+from core.background_task import spawn_logged
 
 # `google.genai` prend ~7-8s à importer sur cette machine (pydantic + son
 # fichier types.py géant) — un import direct ici retarderait d'autant
@@ -673,16 +674,15 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
     def _notify_human_confirmation(self, message: str) -> None:
         if hasattr(self, "ui") and self.ui:
             self.ui.write_log(f"VOX : {message}")
-        if hasattr(self, "say") and callable(self.say):
-            try:
-                self.say(message)
-            except Exception:
-                pass
-        elif hasattr(self, "speak") and callable(self.speak):
-            try:
-                self.speak(message)
-            except Exception:
-                pass
+        # `speak` soumet un tour au modèle : sans consigne, il répondait au
+        # message au lieu de le lire.
+        try:
+            self.speak(
+                "[CONFIRMATION] Dis exactement ceci, sans rien ajouter et sans "
+                f"appeler le moindre outil : {message}"
+            )
+        except Exception:
+            logging.getLogger(__name__).debug("Annonce vocale de confirmation impossible", exc_info=True)
 
     def __init__(self, ui: JarvisUI):
         self.ui             = ui
@@ -1473,7 +1473,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 )
                 # Une fin de build est aussi un bon événement pour revérifier
                 # l'espace disque, sans instaurer un minuteur de sondage.
-                asyncio.create_task(asyncio.to_thread(self._proactive.evaluate_disk))
+                spawn_logged(asyncio.to_thread(self._proactive.evaluate_disk), name="disk-check", ui=self.ui)
                 matched = self._background_tasks.handle_event(topic, {
                     **data,
                     "command": data.get("command") or payload.get("command") or "",
@@ -1596,7 +1596,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # enfant qui n'obéit pas à l'annulation retenait la reconnexion pour
         # toujours (boucle au repos, plus de voix, plus de texte).
         self._session_tg = None
-        asyncio.create_task(self._session_teardown_watchdog(), name="session-teardown-watchdog")
+        spawn_logged(self._session_teardown_watchdog(), name="session-teardown-watchdog", ui=self.ui)
 
         # Initialisation paresseuse des fonctionnalités vision/RAG terminées.
         # Elles tournent hors de la boucle audio et restent dormantes tant que
@@ -1750,8 +1750,8 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # Control socket — lives for the whole process, not per-session, so the
         # global hotkey keeps working across reconnects.
         await self._start_control_server()
-        asyncio.create_task(
-            self._background_tasks.run(), name="persistent-background-tasks"
+        spawn_logged(
+            self._background_tasks.run(), name="persistent-background-tasks", ui=self.ui
         )
         # Une capture Grim peut tenir le GIL plus d'une seconde sur cette
         # machine. La conscience d'écran reste pleinement disponible quand
@@ -1760,8 +1760,8 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         if _os_early.environ.get("ANOGPT_CONTINUOUS_SCREEN", "").strip().lower() in {
             "1", "true", "yes", "on",
         }:
-            asyncio.create_task(
-                self._screen_mind.run(self), name="screen-consciousness"
+            spawn_logged(
+                self._screen_mind.run(self), name="screen-consciousness", ui=self.ui
             )
         else:
             self.ui.write_log(
