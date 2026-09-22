@@ -81,3 +81,8 @@ background/*
 *.wav
 docs/archive/*.bak
 docs/archive/*.bak.old
+
+# ── Sauvegardes et état local ────────────────────────────────────────────────
+# Une copie des clés reste une clé.
+config/api_keys.json.backup*
+config/prayer_state.json
