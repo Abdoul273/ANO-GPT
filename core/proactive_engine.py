@@ -32,6 +32,25 @@ from actions.proactive import desktop_blocks_proactivity, in_quiet_hours
 logger = logging.getLogger("anogpt.proactive")
 
 
+def startup_greeting(now: datetime | None = None) -> str:
+    """Salutation courte, locale et cohérente avec le mode actif.
+
+    Elle ne passe pas par le modèle : ANO parle immédiatement après la
+    connexion, sans lancer un briefing, une recherche ou une liste d'alertes.
+    """
+    from core.personality_modes import PersonalityMode, active_mode
+
+    now = now or datetime.now()
+    mode = active_mode()
+    if mode is PersonalityMode.MAJEUR:
+        return "Bonjour, Monsieur." if 5 <= now.hour < 18 else "Bon retour, Monsieur."
+    if mode is PersonalityMode.ASTRO:
+        return "Salut gros."
+    if mode is PersonalityMode.COQUIN:
+        return "Salut toi."
+    return "Bonjour, Anonymous." if 5 <= now.hour < 18 else "Bon retour, Anonymous."
+
+
 class ProactiveHost(Protocol):
     ui: Any
     session: Any
@@ -108,7 +127,8 @@ class ProactiveEngine:
         3. E-mails importants (comptés, pas lus).
         4. Rappels du jour.
         5. Deux titres d'actualité tech/cyber.
-        6. État rapide de la machine (batterie, RAM, CPU).
+        6. Veille IA : nouveaux modèles, Google/Gemini, OpenAI/ChatGPT, Anthropic/Claude.
+        7. État rapide de la machine (batterie, RAM, CPU).
         """
         if not self.session:
             return
@@ -150,8 +170,19 @@ class ProactiveEngine:
             self.ui.dismiss_cards("info", card_title)
 
     async def _send_startup_briefing(self) -> None:
-        """Briefing au démarrage de l'application si activé."""
-        await self._send_daily_briefing("démarrage")
+        """Accueille brièvement au démarrage ; le briefing reste sur demande."""
+        if not self.session:
+            return
+        greeting = startup_greeting()
+        try:
+            await self._submit_text_turn(
+                "[SALUTATION DE DÉMARRAGE] Prononce exactement cette phrase, "
+                "sans préambule, sans ajout et sans appeler d'outil :\n"
+                + greeting
+            )
+            self.ui.write_log(f"SYS : salutation de démarrage — {greeting}")
+        except Exception as exc:
+            print(f"[Démarrage] Salutation impossible : {exc}")
 
     # ── Rappels persistants ─────────────────────────────────────────────────────
 
@@ -395,7 +426,8 @@ class ProactiveEngine:
                 continue
             try:
                 cur, prev, state = await asyncio.to_thread(tt.poll_once, self.ui, state)
-                for key, message, priority in tt.notable_events(prev, cur):
+                events = tt.summarize_notable_events(tt.notable_events(prev, cur))
+                for key, message, priority in events:
                     self._proactive.publish(
                         "tiktok", message, dedupe_key=key, priority=priority,
                         data={"handle": cur.get("handle"), "followers": cur.get("followers")},

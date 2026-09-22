@@ -7,7 +7,8 @@ briefing vocal condensé et percutant en ~30 secondes :
 3. E-mails importants (comptés, pas lus).
 4. Agenda, rappels et tâches du jour.
 5. Deux titres d'actualité marquants ciblés tech/cyber.
-6. État rapide de la machine (batterie, RAM, CPU).
+6. Veille IA : nouveaux modèles, Google/Gemini, OpenAI/ChatGPT, Anthropic/Claude.
+7. État rapide de la machine (batterie, RAM, CPU).
 
 Tous les sous-modules sont interrogés en parallèle pour un temps de réponse
 quasi-instantané (< 1.5 s).
@@ -22,9 +23,19 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("anogpt.briefing")
+
+# Veille IA : quatre axes annoncés à chaque briefing, dans cet ordre.
+AI_WATCH_AXES: Tuple[Tuple[str, str], ...] = (
+    ("modeles", "Nouveaux modèles IA"),
+    ("google", "Google / Gemini"),
+    ("openai", "OpenAI / ChatGPT"),
+    ("anthropic", "Anthropic / Claude"),
+)
+AI_WATCH_NOTHING_NEW = "Rien de neuf vérifié."
+AI_WATCH_WINDOW_DAYS = 7
 
 STATE_FILE = Path(__file__).resolve().parent.parent / "config" / "daily_briefing_state.json"
 
@@ -39,11 +50,18 @@ class BriefingData:
     calendar: str = "Aucun événement prévu aujourd'hui."
     reminders: str = "Aucun rappel prévu pour aujourd'hui."
     news: List[str] = None
+    ai_watch: Dict[str, str] = None
     system: str = "Système optimal."
 
     def __post_init__(self):
         if self.news is None:
             self.news = []
+        if self.ai_watch is None:
+            self.ai_watch = empty_ai_watch()
+
+
+def empty_ai_watch() -> Dict[str, str]:
+    return {key: AI_WATCH_NOTHING_NEW for key, _label in AI_WATCH_AXES}
 
 
 def _load_state() -> dict:
@@ -250,6 +268,79 @@ async def _fetch_news() -> List[str]:
     ]
 
 
+def build_ai_watch_query(today: Optional[date] = None) -> str:
+    """Requête groundée : une ligne factuelle par axe, JSON strict."""
+    current = today or date.today()
+    since = current - timedelta(days=AI_WATCH_WINDOW_DAYS)
+    return (
+        f"Nous sommes le {current.isoformat()}. Fais une veille factuelle de "
+        f"l'écosystème IA sur les {AI_WATCH_WINDOW_DAYS} derniers jours "
+        f"(depuis le {since.isoformat()}), en t'appuyant sur des sources fiables "
+        "(annonces officielles, blogs des éditeurs, presse tech reconnue).\n"
+        "Réponds UNIQUEMENT par un objet JSON avec exactement ces quatre clés :\n"
+        '- "modeles" : nouveau modèle d\'IA sorti (tout éditeur : Google, OpenAI, '
+        "Anthropic, Meta, Mistral, xAI, DeepSeek, Qwen...) — nom, éditeur, date, "
+        "ce qu'il apporte ;\n"
+        '- "google" : mises à jour de l\'écosystème IA de Google (Gemini, app '
+        "Gemini, Gemini API, AI Studio, Vertex, Android/Pixel, Workspace) ;\n"
+        '- "openai" : mises à jour d\'OpenAI et de ChatGPT (modèles, fonctions, '
+        "API, tarifs) ;\n"
+        '- "anthropic" : mises à jour d\'Anthropic et de Claude (modèles, '
+        "Claude Code, API, fonctions).\n"
+        "Chaque valeur : une seule phrase en français, concrète, avec la date, "
+        "maximum 30 mots. Si rien de vérifiable n'est sorti sur un axe dans la "
+        f'période, mets exactement "{AI_WATCH_NOTHING_NEW}". N\'invente rien.'
+    )
+
+
+def parse_ai_watch(raw: str) -> Dict[str, str]:
+    """Extrait les quatre axes d'une réponse Gemini (JSON, éventuellement bavarde)."""
+    result = empty_ai_watch()
+    if not raw:
+        return result
+    text = raw.strip()
+    payload = None
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        try:
+            payload = json.loads(match.group(0))
+        except ValueError:
+            payload = None
+    if isinstance(payload, dict):
+        lowered = {str(k).strip().lower(): v for k, v in payload.items()}
+        for key, _label in AI_WATCH_AXES:
+            value = lowered.get(key)
+            if isinstance(value, (list, tuple)):
+                value = " ".join(str(v) for v in value if v)
+            value = str(value or "").strip()
+            if value:
+                result[key] = value
+        return result
+    # Repli : lignes « clé : valeur » en texte libre.
+    for key, _label in AI_WATCH_AXES:
+        found = re.search(rf"{key}\s*[:=\-]\s*(.+)", text, re.IGNORECASE)
+        if found:
+            value = found.group(1).strip().strip('",')
+            if value:
+                result[key] = value
+    return result
+
+
+def ai_watch_has_news(ai_watch: Dict[str, str]) -> bool:
+    return any(v and v != AI_WATCH_NOTHING_NEW for v in ai_watch.values())
+
+
+async def _fetch_ai_watch() -> Dict[str, str]:
+    """Veille IA du jour : modèles, Google, OpenAI/ChatGPT, Anthropic/Claude."""
+    try:
+        from actions.web_search import _gemini_search
+        raw = await asyncio.to_thread(_gemini_search, build_ai_watch_query())
+        return parse_ai_watch(raw)
+    except Exception as exc:
+        logger.debug("Briefing: veille IA indisponible: %s", exc)
+    return empty_ai_watch()
+
+
 async def _fetch_system_status() -> str:
     """Récupère l'état concis de la machine (batterie, RAM, CPU)."""
     try:
@@ -287,10 +378,12 @@ async def collect_briefing_data(user_name: str = "Anonymous") -> BriefingData:
     reminder_task = asyncio.create_task(_fetch_reminders())
     calendar_task = asyncio.create_task(_fetch_calendar())
     news_task = asyncio.create_task(_fetch_news())
+    ai_watch_task = asyncio.create_task(_fetch_ai_watch())
     system_task = asyncio.create_task(_fetch_system_status())
 
-    weather, emails, reminders, calendar, news, system = await asyncio.gather(
-        weather_task, email_task, reminder_task, calendar_task, news_task, system_task,
+    weather, emails, reminders, calendar, news, ai_watch, system = await asyncio.gather(
+        weather_task, email_task, reminder_task, calendar_task, news_task,
+        ai_watch_task, system_task,
         return_exceptions=False
     )
 
@@ -309,7 +402,15 @@ async def collect_briefing_data(user_name: str = "Anonymous") -> BriefingData:
         calendar=calendar,
         reminders=reminders,
         news=news or [],
+        ai_watch=ai_watch or empty_ai_watch(),
         system=system,
+    )
+
+
+def format_ai_watch_lines(ai_watch: Dict[str, str], bullet: str = "-") -> str:
+    return "\n".join(
+        f"{bullet} {label} : {ai_watch.get(key) or AI_WATCH_NOTHING_NEW}"
+        for key, label in AI_WATCH_AXES
     )
 
 
@@ -317,7 +418,15 @@ def format_briefing_prompt(data: BriefingData, language: str = "fr-FR") -> str:
     """Génère le prompt d'instruction pour la restitution vocale par Gemini Live."""
     time_str = data.timestamp.strftime("%Hh%M")
     news_bullets = "\n".join(f"- {title}" for title in data.news)
-    
+    ai_watch_bullets = format_ai_watch_lines(data.ai_watch)
+    ai_watch_rule = (
+        "Pour la veille IA, annonce concrètement ce qui est nouveau (nom du modèle, "
+        "éditeur, ce que ça apporte) ; pour un axe sans nouveauté, dis-le en deux mots."
+        if ai_watch_has_news(data.ai_watch)
+        else "Pour la veille IA, dis simplement qu'aucune sortie de modèle ni mise à "
+        "jour Google, ChatGPT ou Claude n'a été vérifiée cette semaine."
+    )
+
     try:
         from core.personality_modes import active_mode, PersonalityMode
         mode = active_mode()
@@ -347,17 +456,21 @@ Données vérifiées en temps réel :
 - Rappels du jour : {data.reminders}
 - Actualités ciblées :
 {news_bullets}
+- Veille IA ({AI_WATCH_WINDOW_DAYS} derniers jours) :
+{ai_watch_bullets}
 - État machine : {data.system}
 
 INSTRUCTIONS DE RESTITUTION VOCALE :
-Prononce un briefing matinal en 30 SECONDES CHRONO (environ 5 courtes phrases bien enchaînées), {deliveries}.
+Prononce un briefing matinal en 30 SECONDES CHRONO (environ 6 courtes phrases bien enchaînées), {deliveries}.
 1. Salue {data.user_name}, mentionne l'heure et annonce la météo.
 2. Indique l'état des e-mails, les rendez-vous et les rappels du jour.
 3. Résume les deux titres d'actualité en une phrase vivante.
-4. Conclus par l'état rapide de la machine et demande comment démarrer.
+4. Fais le point de la veille IA : nouveaux modèles sortis, puis Google/Gemini, OpenAI/ChatGPT et Anthropic/Claude.
+5. Conclus par l'état rapide de la machine et demande comment démarrer.
 
 Règles impératives :
 - {styles}
+- {ai_watch_rule} Ne cite que les faits listés ci-dessus, jamais de nouveauté inventée.
 - Langue : réponds uniquement en {'français' if str(language).startswith('fr') else str(language)}. Aucune phrase en anglais.
 - N'appelle AUCUN outil.
 - Ne répète pas ces consignes, délivre directement la parole.
@@ -370,6 +483,7 @@ def format_briefing_card(data: BriefingData) -> Tuple[str, str]:
     date_str = data.timestamp.strftime("%A %d %B %Y").capitalize()
     
     news_md = "\n".join(f"• {title}" for title in data.news) if data.news else "• Pas de nouvelles majeures."
+    ai_watch_md = format_ai_watch_lines(data.ai_watch, bullet="•")
     
     body = f"""### 📅 {date_str} — {time_str}
 
@@ -387,6 +501,9 @@ def format_briefing_card(data: BriefingData) -> Tuple[str, str]:
 
 **🌐 Actualités Clés**
 {news_md}
+
+**🤖 Veille IA**
+{ai_watch_md}
 
 **💻 État Machine**
 {data.system}
