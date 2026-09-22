@@ -88,5 +88,5 @@ Arrête et donne-moi mon analyse d'élocution.
 - `actions/sparring_partner.py`
 - `main.py`
 - `tests/test_sparring_partner.py`
-- `JARVIS_FEATURES_ROADMAP.html`
+- `docs/roadmap/JARVIS_FEATURES_ROADMAP.html`
 

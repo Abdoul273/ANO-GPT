@@ -109,5 +109,5 @@ ANO, arrête complètement le bouclier anti-distraction.
 - `core/distraction_guard.py`
 - `main.py`
 - `tests/test_distraction_guard.py`
-- `JARVIS_FEATURES_ROADMAP.html`
+- `docs/roadmap/JARVIS_FEATURES_ROADMAP.html`
 

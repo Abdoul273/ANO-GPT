@@ -1,6 +1,6 @@
 # Preuves et validation — audit ANO-GPT du 13 septembre 2026
 
-[Roadmap principale](../../ROADMAP_ANO_GPT_ULTIME_2026-09-13.md) · [Inventaire](INVENTAIRE.md)
+[Roadmap principale](../roadmap/ROADMAP_ANO_GPT_ULTIME_2026-09-13.md) · [Inventaire](INVENTAIRE.md)
 
 ## Conditions
 

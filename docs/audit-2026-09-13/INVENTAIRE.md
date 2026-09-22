@@ -1,6 +1,6 @@
 # Inventaire du périmètre audité — 13 septembre 2026
 
-Référence : `30a094f`. [Roadmap principale](../../ROADMAP_ANO_GPT_ULTIME_2026-09-13.md).
+Référence : `30a094f`. [Roadmap principale](../roadmap/ROADMAP_ANO_GPT_ULTIME_2026-09-13.md).
 
 L'inventaire initial comporte 578 fichiers suivis, 442 fichiers Python dont 250 modules applicatifs (126 339 lignes). Tous les Python suivis ont été parsés avec AST. Les tests Python et Flutter et le lint sont décrits dans [l'annexe de validation](PREUVES_ET_VALIDATION.md).
 

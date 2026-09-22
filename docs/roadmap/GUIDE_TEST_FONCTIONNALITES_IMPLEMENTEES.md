@@ -531,7 +531,7 @@ Ne teste jamais Voice ID avec une suppression de fichiers importants, une extinc
 ## 10. Sparring Partner et simulateur d'entraînement
 
 Le protocole détaillé, les variantes et les résultats attendus sont dans
-[`docs/SPARRING_PARTNER.md`](docs/SPARRING_PARTNER.md).
+[`docs/SPARRING_PARTNER.md`](../SPARRING_PARTNER.md).
 
 ### Test principal
 
@@ -562,7 +562,7 @@ hésitations (« euh », « en fait »), puis demander :
 ## 11. Bouclier Anti-Distraction et gardien de dopamine
 
 Le protocole complet et les règles précises sont dans
-[`docs/BOUCLIER_ANTI_DISTRACTION.md`](docs/BOUCLIER_ANTI_DISTRACTION.md).
+[`docs/BOUCLIER_ANTI_DISTRACTION.md`](../BOUCLIER_ANTI_DISTRACTION.md).
 
 ### Test principal
 

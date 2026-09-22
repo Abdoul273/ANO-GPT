@@ -27,9 +27,9 @@ Avant cette implémentation :
 
 ### 🏗️ 2. Architecture & Composants créés
 
-#### 📁 A. Module Master DevSecOps ([`actions/devsecops.py`](actions/devsecops.py))
+#### 📁 A. Module Master DevSecOps ([`actions/devsecops.py`](../../actions/devsecops.py))
 
-Le module [`actions/devsecops.py`](actions/devsecops.py) implémente l'ensemble des contrôleurs système et sécurité :
+Le module [`actions/devsecops.py`](../../actions/devsecops.py) implémente l'ensemble des contrôleurs système et sécurité :
 
 1. **Orchestrateur Docker & Compose (`DockerManager`)** :
    - `restart_stack(project_dir, service)` : Localise automatiquement les fichiers `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml` dans le répertoire courant ou les dossiers de projets standards, et relance la stack ou un service précis avec vérification de l'état d'exécution.
@@ -67,9 +67,9 @@ Le module [`actions/devsecops.py`](actions/devsecops.py) implémente l'ensemble 
 
 ---
 
-#### 📁 B. Orchestrateur Dynamique Hyprland ([`actions/hypr_orchestrator.py`](actions/hypr_orchestrator.py))
+#### 📁 B. Orchestrateur Dynamique Hyprland ([`actions/hypr_orchestrator.py`](../../actions/hypr_orchestrator.py))
 
-Le module [`actions/hypr_orchestrator.py`](actions/hypr_orchestrator.py) gère le positionnement dynamique et ergonomique des fenêtres :
+Le module [`actions/hypr_orchestrator.py`](../../actions/hypr_orchestrator.py) gère le positionnement dynamique et ergonomique des fenêtres :
 
 1. **Classification Automatique des Applications par Rôles** :
    - **Workspace 1 [💻 Dev & IDE]** : `code`, `codium`, `neovim`, `nvim`, `zed`, `sublime_text`, `kate`, `clion`, `pycharm`, `intellij`, `android-studio`, `cursor`...
@@ -100,19 +100,19 @@ Le module [`actions/hypr_orchestrator.py`](actions/hypr_orchestrator.py) gère l
 
 ### 🔌 3. Intégrations & Câblages dans l'écosystème ANO-GPT
 
-1. **Routage Local & Sécurité ([`actions/shell_exec.py`](actions/shell_exec.py))** :
+1. **Routage Local & Sécurité ([`actions/shell_exec.py`](../../actions/shell_exec.py))** :
    - Intégration en amont de `parse_hypr_orchestrator_intent` et `parse_devsecops_intent` pour intercepter les requêtes vocales locales sans latence.
-2. **Action Runtime & Circuit Breaker ([`core/action_runtime.py`](core/action_runtime.py))** :
+2. **Action Runtime & Circuit Breaker ([`core/action_runtime.py`](../../core/action_runtime.py))** :
    - Enregistrement des politiques d'exécution : `devsecops` (timeout 90s), `hypr_orchestrator` (timeout 25s).
    - Définition des alias d'arguments (`service`, `container`, `package`, `branch` -> `target`).
-3. **Cœur Applicatif ([`main.py`](main.py))** :
+3. **Cœur Applicatif ([`main.py`](../../main.py))** :
    - Déclarations d'outils complètes dans `TOOL_DECLARATIONS` pour Gemini Live API.
    - Enregistrement des étiquettes UI dans `_TOOL_LABELS`.
    - Dispatch asynchrone dans `execute_action`.
    - Enregistrement des handlers dans `_agent_tools()`.
-4. **Serveur MCP ([`anogpt_mcp.py`](anogpt_mcp.py))** :
+4. **Serveur MCP ([`anogpt_mcp.py`](../../anogpt_mcp.py))** :
    - Exposition de `@mcp.tool() devsecops` et `@mcp.tool() hypr_orchestrator` avec replis hors-ligne automatiques pour Antigravity CLI, Claude Code et Codex.
-5. **Directives Système ([`core/prompt.txt`](core/prompt.txt))** :
+5. **Directives Système ([`core/prompt.txt`](../../core/prompt.txt))** :
    - Documentation contextuelle guidant le LLM sur l'utilisation prioritaire de `devsecops` et `hypr_orchestrator`.
 
 ---
@@ -120,21 +120,21 @@ Le module [`actions/hypr_orchestrator.py`](actions/hypr_orchestrator.py) gère l
 ### 🧪 4. Validation & Couverture de Tests
 
 * **Nouveaux fichiers de tests créés** :
-  - [`tests/test_devsecops.py`](tests/test_devsecops.py) (12 tests unitaires et d'intégration) :
+  - [`tests/test_devsecops.py`](../../tests/test_devsecops.py) (12 tests unitaires et d'intégration) :
     - Validation du parsing exact des phrases de la roadmap (Docker, Systemd, Paquets, Git, Sécurité).
     - Validation du scanner de secrets (blocage des clés Gemini, OpenAI, SSH, AWS).
     - Formatage Conventional Commits.
     - Filtrage des logs d'accès HTTP et d'erreurs.
     - Diagnostic causal Systemd via journalctl.
     - Dispatch unifié et tolérance aux arguments vides.
-  - [`tests/test_hypr_orchestrator.py`](tests/test_hypr_orchestrator.py) (5 tests unitaires et d'intégration) :
+  - [`tests/test_hypr_orchestrator.py`](../../tests/test_hypr_orchestrator.py) (5 tests unitaires et d'intégration) :
     - Validation du parsing d'orchestration et des presets.
     - Classification précise des 6 workspaces par rôle d'application.
     - Réorganisation dynamique silencieuse.
     - Presets de productivité et robustesse d'appel.
 * **Vérification de Non-Régression & MCP** :
-  - [`tests/test_shell_exec_safety.py`](tests/test_shell_exec_safety.py) : 100% Validé.
-  - [`tests/test_mcp_tools.py`](tests/test_mcp_tools.py) : 100% Validé.
+  - [`tests/test_shell_exec_safety.py`](../../tests/test_shell_exec_safety.py) : 100% Validé.
+  - [`tests/test_mcp_tools.py`](../../tests/test_mcp_tools.py) : 100% Validé.
 * **Résultat Global de la Suite de Tests** :
   - **634 tests passés avec succès** (0 erreur, 0 échec).
 
