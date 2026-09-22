@@ -81,6 +81,31 @@ def test_lappelant_remonte_lerreur_au_lieu_de_chercher_a_paris(monkeypatch):
     assert "position" in out.lower()
 
 
+def test_un_geocodage_inverse_lent_ne_retient_pas_la_recherche(monkeypatch):
+    """Avec un GPS précis, le nom de ville n'est qu'un libellé : il ne doit
+    pas coûter cinq secondes de silence avant même de chercher."""
+    import threading
+    import time
+
+    release = threading.Event()
+
+    def _slow_location():
+        release.wait(5)
+        return {"city": "Kaloum"}
+
+    monkeypatch.setattr(fn, "_CITY_WAIT_S", 0.05)
+    monkeypatch.setattr(fn, "get_precise_user_coords", lambda: (9.6001, -13.6002))
+    monkeypatch.setattr(fn, "get_user_location", _slow_location)
+
+    start = time.monotonic()
+    loc = fn.get_location()
+    release.set()
+
+    assert time.monotonic() - start < 1.0
+    assert loc["latitude"] == pytest.approx(9.6001)
+    assert loc["city"] == "votre position"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
 

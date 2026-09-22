@@ -9,6 +9,8 @@ chercher, épingle les résultats dans la grande carte et rend un texte lisible.
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from core.geolocation import (
@@ -20,6 +22,26 @@ from core.geolocation import (
 from core.places import describe_places, has_serpapi, search_places
 
 from core import action_kit as kit
+
+# Avec un relevé GPS précis, le nom de la ville n'est qu'un libellé : on ne
+# retient pas la recherche plus longtemps que ça pour un géocodage inverse
+# réseau. La requête continue en fond et remplit le cache pour la suivante.
+_CITY_WAIT_S = 1.5
+# Politique `find_nearby` : 20 s. Une recherche complète coûte au pire
+# Google 6 s + Overpass 2 × 4 s ; l'élargissement n'est tenté que s'il peut
+# encore finir dans ce budget, sinon le répartiteur coupe l'outil et
+# l'utilisateur n'entend rien du tout.
+_WIDEN_DEADLINE_S = 5.0
+
+
+def _location_info(timeout: float | None) -> dict[str, Any]:
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(get_user_location)
+    pool.shutdown(wait=False)
+    try:
+        return future.result(timeout=timeout) or {}
+    except Exception:
+        return {}
 
 
 def get_location(*, require_precise_gps: bool = False, max_location_age_s: float | None = None) -> dict[str, Any]:
@@ -34,13 +56,13 @@ def get_location(*, require_precise_gps: bool = False, max_location_age_s: float
     commerces à des milliers de kilomètres, ce qui est pire qu'une erreur
     franche.
     """
-    info = get_user_location()
     coords = None
     try:
         coords = (get_precise_user_coords(max_age_s=max_location_age_s)
                   if max_location_age_s is not None else get_precise_user_coords())
     except Exception:
         coords = None
+    precise = bool(coords)
     if require_precise_gps and not coords:
         raise RuntimeError(
             "aucun relevé GPS précis reçu d'ANO Remote. Connecte l'application "
@@ -53,6 +75,7 @@ def get_location(*, require_precise_gps: bool = False, max_location_age_s: float
             "Position introuvable : renseigne 'user_city' et 'user_country' "
             "dans config/api_keys.json, ou vérifie la connexion réseau."
         )
+    info = _location_info(_CITY_WAIT_S if precise else None)
     lat, lon = coords
     city = (info.get("city") or "").strip() or info.get("country_name", "") or "votre position"
     return {"latitude": lat, "longitude": lon, "city": city}
@@ -61,6 +84,7 @@ def get_location(*, require_precise_gps: bool = False, max_location_age_s: float
 @kit.action("find_nearby")
 def find_nearby(parameters: dict | None = None, session_memory=None, ui=None) -> str:
     """Outil `find_nearby` : cherche des lieux et les montre sur la carte."""
+    started = time.monotonic()
     params = parameters or {}
     query = str(params.get("query") or "").strip()
     category = str(params.get("category") or "").strip()
@@ -105,7 +129,8 @@ def find_nearby(parameters: dict | None = None, session_memory=None, ui=None) ->
         return f"La recherche de lieux a échoué : {exc}"
 
     widened = 0.0
-    if not places and radius_km < 30.0:
+    if (not places and radius_km < 30.0
+            and time.monotonic() - started < _WIDEN_DEADLINE_S):
         # Rien dans le rayon demandé : on élargit une fois avant de renoncer,
         # en le disant — « la pharmacie la plus proche est à 12 km » vaut
         # mieux qu'un « aucun résultat » sec.

@@ -132,3 +132,18 @@ def test_category_still_works_for_older_calls(monkeypatch, ui):
     _found(monkeypatch, [_place()])
     text = module.find_nearby({"category": "pharmacy"}, ui=ui)
     assert "Pharmacie Camayenne" in text
+
+
+def test_no_widening_when_the_budget_is_spent(monkeypatch, ui):
+    """Élargir après une première recherche lente ferait dépasser les 20 s du
+    répartiteur : l'outil serait coupé sans rien dire."""
+    calls = []
+    monkeypatch.setattr(module, "search_places",
+                        lambda *a, **k: calls.append(k) or ([], ["osm"]))
+    monkeypatch.setattr(module, "has_serpapi", lambda: True)
+    monkeypatch.setattr(module, "_WIDEN_DEADLINE_S", -1.0)
+
+    text = module.find_nearby({"query": "licorne"}, ui=ui)
+
+    assert len(calls) == 1
+    assert "Aucun résultat" in text
