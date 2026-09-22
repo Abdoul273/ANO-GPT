@@ -180,7 +180,9 @@ class ProactiveEngine:
                 "sans préambule, sans ajout et sans appeler d'outil :\n"
                 + greeting
             )
-            self.ui.write_log(f"SYS : salutation de démarrage — {greeting}")
+            # Pas dans le journal visible : ANO la prononce déjà, et cette
+            # ligne tombait au milieu de sa phrase affichée en direct.
+            print(f"[Démarrage] Salutation envoyée : {greeting}")
         except Exception as exc:
             print(f"[Démarrage] Salutation impossible : {exc}")
 
