@@ -27,6 +27,20 @@
       "specification": "",
       "report": "",
       "preview": ""
+    },
+    {
+      "id": "bc87ab0e7815",
+      "fingerprint": "changer fond écran",
+      "samples": [
+        "Changer le fond d'écran [Je n'ai pas l'outil desktop_control ou de commande spécifique pour changer le fond d'écran.]"
+      ],
+      "created_at": "2026-09-16T12:50:14.102172+00:00",
+      "updated_at": "2026-09-16T12:50:14.102199+00:00",
+      "status": "observed",
+      "extension_name": "",
+      "specification": "",
+      "report": "",
+      "preview": ""
     }
   ]
 }

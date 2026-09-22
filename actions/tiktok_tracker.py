@@ -415,6 +415,38 @@ def notable_events(prev: Optional[dict], cur: dict) -> list[tuple[str, str, int]
     return events
 
 
+def summarize_notable_events(events: list[tuple[str, str, int]]) -> list[tuple[str, str, int]]:
+    """Condense un relevé TikTok en une annonce parlée, jamais une rafale.
+
+    Les détails restent dans la carte TikTok. À voix haute, cinq titres et
+    leurs compteurs successifs coupent la conversation et donnent l'impression
+    d'une panne ; un bilan unique est utile et immédiatement compréhensible.
+    """
+    if len(events) <= 1:
+        return events
+    follower = next((message for key, message, _ in events
+                     if key.startswith(("tiktok:followers:", "tiktok:milestone:"))), "")
+    new_count = sum(key.startswith("tiktok:new:") for key, _, _ in events)
+    surge_count = sum(key.startswith("tiktok:surge:") for key, _, _ in events)
+    parts = [follower] if follower else []
+    if new_count:
+        parts.append(f"{new_count} nouvelle{'s' if new_count > 1 else ''} vidéo{'s' if new_count > 1 else ''}")
+    if surge_count:
+        parts.append(f"{surge_count} vidéo{'s' if surge_count > 1 else ''} décollent")
+    # Un type d'événement futur garde au moins une information plutôt que
+    # d'être silencieusement masqué par le regroupement.
+    if not parts:
+        parts.append(events[0][1])
+    if len(parts) == 1:
+        message = parts[0]
+    elif follower:
+        message = f"{parts[0]} {' et '.join(parts[1:])}."
+    else:
+        message = "TikTok : " + " et ".join(parts) + "."
+    key = "tiktok:summary:" + "|".join(item[0] for item in events)
+    return [(key, message, max(priority for _, _, priority in events))]
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Cycle d'une lecture (utilisé par la veille et par l'outil)
 # ════════════════════════════════════════════════════════════════════════════

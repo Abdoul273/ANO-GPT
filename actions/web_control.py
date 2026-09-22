@@ -207,8 +207,6 @@ def _has_any_browser() -> bool:
 _SEARCH_ENGINES: Dict[str, str] = {
     "google": "https://www.google.com/search?q=",
     "bing": "https://www.bing.com/search?q=",
-    "duckduckgo": "https://duckduckgo.com/?q=",
-    "ddg": "https://duckduckgo.com/?q=",
     "ecosia": "https://www.ecosia.org/search?q=",
     "yahoo": "https://search.yahoo.com/search?p=",
     "qwant": "https://www.qwant.com/?q=",
@@ -297,7 +295,7 @@ def open_url(url: str, browser: Optional[str] = None, workspace=None) -> str:
 @tracked_tool
 def web_search(query: str, engine: str = "google",
                browser: Optional[str] = None, workspace=None) -> str:
-    """Recherche sur le moteur choisi (google, bing, duckduckgo, ecosia…)."""
+    """Recherche sur le moteur choisi (google, bing, ecosia…)."""
     query = (query or "").strip()
     if not query:
         return "❌ Veuillez spécifier une requête"
@@ -385,7 +383,7 @@ def _parse_web_command_locally(text: str) -> Optional[Dict[str, Any]]:
     # 3. Recherche (avec moteur optionnel)
     m = re.search(
         r"(?:cherche|recherche|rechercher|search|google|trouve)\s+(?:pour\s+)?"
-        r"(?:sur\s+(google|bing|duckduckgo|ddg|ecosia|yahoo|qwant|startpage)\s+)?(.+)",
+        r"(?:sur\s+(google|bing|ecosia|yahoo|qwant|startpage)\s+)?(.+)",
         text,
     )
     if m:

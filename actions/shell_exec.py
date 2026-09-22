@@ -609,6 +609,22 @@ def run_shell(parameters=None, player=None, **_kwargs) -> str:
         # potentiellement correct mais appliqué au mauvais projet.
         return f"Dossier de travail introuvable : {cwd}"
 
+    # Traiter le préfixe séparément : la syntaxe historique n'est plus
+    # acceptée par Hyprland Lua. Garder le reste du shell intact et ne le
+    # lancer que lorsque le bureau a réellement été confirmé.
+    workspace_chain = re.fullmatch(
+        r"hyprctl\s+dispatch\s+workspace\s+([0-9]+)\s*&&\s*(.+)",
+        command, re.DOTALL,
+    )
+    if workspace_chain:
+        navigation = hypr_control(
+            {"action": "workspace", "value": workspace_chain.group(1)}, player=player,
+        )
+        if not navigation.startswith("Navigation confirmée"):
+            return f"Commande suivante non exécutée : {navigation}"
+        following = dict(params, command=workspace_chain.group(2), cwd=resolved_cwd)
+        return navigation + "\n" + run_shell(following, player=player)
+
     # Une commande qui attend sudo ou une confirmation de paquet doit posséder
     # un vrai TTY. Après confirmation de sécurité, elle vit indépendamment de
     # la carte « Commande en cours » et de la session vocale.
@@ -646,9 +662,9 @@ def run_shell(parameters=None, player=None, **_kwargs) -> str:
             pass  # smart_search absent/HS → on exécute le find original
 
     if detached:
-        if not command.rstrip().endswith("&"):
-            command = f"nohup {command} >/dev/null 2>&1 &"
-        return _run_detached(command, resolved_cwd)
+        # Popen fournit déjà la session détachée. Un « & » supplémentaire
+        # masquerait l'échec du programme derrière le succès du shell parent.
+        return _run_detached(command.rstrip().removesuffix("&").rstrip(), resolved_cwd)
 
     return _run_normal(command, resolved_cwd, timeout)
 

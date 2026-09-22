@@ -56,3 +56,31 @@ def test_move_to_workspace_needs_an_identifiable_active_window(monkeypatch):
     result = shell_exec.hypr_control({"action": "move_to_workspace", "value": "1"})
 
     assert "Déplacement annulé" in result
+
+
+def test_compound_workspace_launch_is_verified_then_detached(monkeypatch):
+    calls = []
+    monkeypatch.setattr(shell_exec, "hypr_control", lambda parameters, player=None:
+                        calls.append(parameters) or "Navigation confirmée : bureau 1.")
+    monkeypatch.setattr(shell_exec, "_run_detached", lambda command, cwd:
+                        calls.append(command) or "Lancé en arrière-plan")
+    result = shell_exec.run_shell({"command": "hyprctl dispatch workspace 1 && kitty -e codex"})
+    assert calls == [{"action": "workspace", "value": "1"}, "kitty -e codex"]
+    assert "Lancé en arrière-plan" in result
+
+
+def test_compound_workspace_failure_does_not_launch(monkeypatch):
+    monkeypatch.setattr(shell_exec, "hypr_control", lambda *args, **kwargs:
+                        "Navigation envoyée, mais non confirmée")
+    monkeypatch.setattr(shell_exec, "_run_detached", lambda *args:
+                        (_ for _ in ()).throw(AssertionError("must not launch")))
+    result = shell_exec.run_shell({"command": "hyprctl dispatch workspace 1 && kitty -e codex"})
+    assert "non exécutée" in result
+
+
+def test_compound_launch_keeps_shell_quoting(monkeypatch):
+    calls = []
+    monkeypatch.setattr(shell_exec, "hypr_control", lambda *args, **kwargs: "Navigation confirmée")
+    monkeypatch.setattr(shell_exec, "_run_detached", lambda command, cwd: calls.append(command) or "ok")
+    shell_exec.run_shell({"command": "hyprctl dispatch workspace 1 && kitty -e sh -c 'echo a && echo b'"})
+    assert calls == ["kitty -e sh -c 'echo a && echo b'"]

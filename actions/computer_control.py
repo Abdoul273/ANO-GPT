@@ -465,7 +465,9 @@ def _type_text(text: str, interval: float = 0.03) -> str:
         # Repli presse-papiers sous Wayland
         try:
             if _clipboard_copy(text):
-                _clipboard_paste()
+                pasted = _clipboard_paste()
+                if not pasted.startswith("Collé"):
+                    return f"Échec de saisie : {pasted}"
                 return f"Texte tapé : «{text[:60]}{'…' if len(text) > 60 else ''}»"
         except Exception:
             pass
@@ -1429,14 +1431,20 @@ def computer_control(parameters: dict, **kwargs) -> str:
                 return "Aucun texte à taper."
             target_win = params.get("window") or params.get("title")
             if target_win:
-                _focus_window(str(target_win))
+                focused = _focus_window(str(target_win))
+                if not (focused.startswith("Fenêtre") and "focalisée" in focused):
+                    return f"Saisie annulée : {focused}"
                 time.sleep(0.15)
             res = _type_text(text)
+            if not res.startswith("Texte tapé"):
+                return res
             press_enter_val = params.get("press_enter")
             if press_enter_val is None:
                 press_enter_val = params.get("enter")
             if press_enter_val is True or str(press_enter_val).lower() in ("true", "1", "yes"):
-                _press_key("enter")
+                pressed = _press_key("enter")
+                if not pressed.startswith("Touche pressée"):
+                    return f"Commande non validée : {pressed}. Le texte a été saisi, sans confirmation d'Entrée."
                 res = f"{res} (validé par Entrée)"
             return res
         elif action == "paste":

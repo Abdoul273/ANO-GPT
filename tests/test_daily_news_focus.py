@@ -13,14 +13,9 @@ def test_daily_news_request_defaults_to_ai_and_cyber():
 
 def test_empty_news_query_uses_focused_grounded_prompt(monkeypatch):
     gemini_calls = []
-    ddg_calls = []
     monkeypatch.setattr(
         web_search, "_gemini_search",
         lambda query: gemini_calls.append(query) or ("Actualité IA vérifiée. " * 5),
-    )
-    monkeypatch.setattr(
-        web_search, "_ddg_news",
-        lambda query, max_results=8: ddg_calls.append(query) or [],
     )
 
     response = web_search._news("")

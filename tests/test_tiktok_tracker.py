@@ -79,6 +79,22 @@ def test_no_events_without_previous_snapshot_or_change():
     assert tt.notable_events(_snap(), _snap(ts=2000.0)) == []
 
 
+def test_un_releve_tiktok_est_resume_en_une_seule_annonce():
+    prev = _snap(followers=41)
+    items = [dict(v) for v in prev["items"]]
+    items[0]["plays"] = 260
+    items.extend([
+        {"id": "3", "desc": "nouvelle 1", "created": 99, "plays": 7, "likes": 0, "comments": 0, "shares": 0},
+        {"id": "4", "desc": "nouvelle 2", "created": 100, "plays": 8, "likes": 0, "comments": 0, "shares": 0},
+    ])
+    events = tt.notable_events(prev, _snap(followers=53, items=items, ts=1100.0))
+    summary = tt.summarize_notable_events(events)
+    assert len(summary) == 1
+    assert "Palier TikTok franchi : 50 abonnés" in summary[0][1]
+    assert "2 nouvelles vidéos" in summary[0][1]
+    assert "vidéo décolle" in summary[0][1]
+
+
 def test_day_baseline_rolls_over_at_midnight():
     state = tt._default_state()
     first = _snap(followers=40, ts=1_700_000_000.0)          # un jour

@@ -943,11 +943,52 @@ def viral_video_brief(query: str = "", seconds: int = 12) -> dict:
             break
         result = {}
     if not result:
-        raise RuntimeError("Aucun modèle n'a pu concevoir la vidéo pour le moment.")
+        # La conception ne doit pas rendre la génération impossible quand un
+        # modèle de rédaction est temporairement saturé. Les données du compte
+        # suffisent à produire un brief sobre et explicitement perfectible ;
+        # Sora reçoit ensuite ce prompt comme dans le chemin normal.
+        return _local_viral_brief(query, seconds, summary)
     return {
         "concept": str(result.get("concept") or "").strip(),
         "caption": str(result.get("caption") or "").strip(),
         "prompt": str(result["prompt"]).strip(),
+        "seconds": seconds,
+    }
+
+
+def _local_viral_brief(query: str, seconds: int, summary: dict) -> dict:
+    """Brief déterministe de secours : jamais une promesse de viralité.
+
+    Il évite qu'une panne ponctuelle Gemini/Azure-text bloque le vrai service
+    demandé (la génération Sora). Le concept reprend une contrainte exprimée
+    par l'utilisateur quand elle existe, sans prétendre avoir analysé une
+    vidéo que les données ne décrivent pas.
+    """
+    subject = "une idée surprenante autour de ton univers"
+    if query.strip():
+        subject = query.strip()[:220]
+    median = int(summary.get("median_plays") or 0)
+    concept = f"Micro-histoire à chute sur {subject}"
+    prompt = (
+        f"FORMAT : Vertical 9:16, {seconds} secondes, vidéo TikTok.\n"
+        f"PERSONNAGE : un créateur francophone naturel, expressif, face caméra.\n"
+        f"DÉCOR : décor simple et lumineux lié à {subject}.\n"
+        "ANGLE CAMÉRA : plan rapproché stable, regard caméra dès la première image.\n"
+        f"DÉCOUPAGE : 0-1 s — HOOK : montrer immédiatement l'élément le plus surprenant de {subject}. "
+        f"1-{max(2, seconds - 3)} s — démonstration très visuelle en une seule idée, sans introduction. "
+        f"{max(2, seconds - 3)}-{max(3, seconds - 1)} s — TWIST : révélation qui inverse l'attente. "
+        f"{max(3, seconds - 1)}-{seconds} s — CHUTE/BOUCLE : une question courte qui donne envie de revoir ou commenter.\n"
+        "AUDIO : voix française claire, une phrase courte à la fois ; son original propre, sans musique qui couvre les mots.\n"
+        "STYLE VISUEL : authentique, montage nerveux, pas de texte généré à l'écran, pas de logos, pas de morphing.\n"
+        "HOOK COMMENTAIRE : « Tu l'aurais fait autrement ? »"
+    )
+    return {
+        "concept": concept,
+        "caption": (
+            f"Je teste ça sur un petit compte (médiane actuelle : {median} vues). "
+            "Tu valides la chute ?"
+        ),
+        "prompt": prompt,
         "seconds": seconds,
     }
 

@@ -123,28 +123,6 @@ def _search_serpapi(query: str, count: int) -> list[dict[str, Any]]:
             if (candidate := _normalise_candidate(raw)) is not None]
 
 
-def _search_ddg(query: str, count: int) -> list[dict[str, Any]]:
-    from actions.web_search import _ddgs_client
-
-    client = _ddgs_client()
-    try:
-        results = list(client.images(
-            query,
-            region="wt-wt",
-            safesearch="moderate",
-            size=None,
-            type_image=None,
-            layout=None,
-            license_image=None,
-            max_results=count,
-        ))
-    except TypeError:
-        # Compatibilité avec les anciennes versions de duckduckgo_search.
-        results = list(client.images(query, max_results=count))
-    return [candidate for raw in results
-            if (candidate := _normalise_candidate(raw)) is not None]
-
-
 def _public_http_url(url: str) -> bool:
     """Refuse les URL capables d'atteindre le réseau local ou les métadonnées."""
     try:
@@ -275,16 +253,7 @@ def search_images(query: str, limit: int = 6) -> list[dict[str, Any]]:
     try:
         candidates = _search_serpapi(query, candidate_count)
     except Exception as serp_error:
-        print(f"[ImageSearch] SerpApi indisponible ({serp_error}) — repli DDG")
-    if len(candidates) < limit:
-        try:
-            known = {item["image_url"] for item in candidates}
-            candidates.extend(
-                item for item in _search_ddg(query, candidate_count)
-                if item["image_url"] not in known
-            )
-        except Exception as ddg_error:
-            print(f"[ImageSearch] DuckDuckGo indisponible : {ddg_error}")
+        print(f"[ImageSearch] SerpApi indisponible : {serp_error}")
 
     for position, candidate in enumerate(candidates):
         candidate["_score"] = _candidate_score(candidate, query, position)

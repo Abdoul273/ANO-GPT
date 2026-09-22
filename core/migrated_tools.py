@@ -127,6 +127,9 @@ async def get_system_status(
         "Opens any application on the computer. "
         "Use this whenever the user asks to open, launch, or start any app, "
         "website, or program. Always call this tool — never just say you opened it. "
+        "For terminal commands pass command (e.g. codex) and workspace together. "
+        "Never use browser typing to control a terminal. "
+        "Only report success supported by the tool result. "
         "Set hidden=true when the user wants an app running without seeing its window."
     ),
     destructive=False,
@@ -139,6 +142,7 @@ async def open_app_tool(
     app_name: str,
     workspace: int | None = None,
     hidden: bool = False,
+    command: str = "",
     context: ExecutionContext | None = None,
 ) -> str:
     """Ouvre une application ou un programme sur le poste de travail.
@@ -147,6 +151,7 @@ async def open_app_tool(
         app_name: Nom exact ou usuel de l'application (ex: 'Chrome', 'Kitty', 'Spotify').
         workspace: Numéro de bureau Hyprland (1-10) dans lequel positionner la fenêtre.
         hidden: Si True, lance l'application sur le bureau spécial invisible en arrière-plan.
+        command: Commande à saisir et valider dans l'application (ex: codex).
 
     Returns:
         Message de confirmation de lancement.
@@ -158,6 +163,7 @@ async def open_app_tool(
         "app_name": app_name,
         "workspace": workspace,
         "hidden": hidden,
+        "command": command,
     }
 
     result = await asyncio.to_thread(
@@ -167,7 +173,7 @@ async def open_app_tool(
         player=ctx.ui,
         session_memory=ctx.session_memory,
     )
-    return result or f"Application '{app_name}' lancée avec succès."
+    return result or f"Lancement de '{app_name}' non confirmé : aucun résultat de l'outil."
 
 
 # ══════════════════════════════════════════════════════════════════════════════

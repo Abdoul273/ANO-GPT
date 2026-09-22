@@ -53,6 +53,19 @@ def test_account_summary_cadence_and_best_hours():
     assert len(summary["best_hours"]) <= 3
 
 
+def test_viral_brief_keeps_video_generation_available_when_models_fail(monkeypatch):
+    cur = {"handle": "anogpt", "nickname": "Ano-GPT", "items": _items()}
+    monkeypatch.setattr(tc, "dataset", lambda state=None: (cur, _items()))
+    monkeypatch.setattr(tc, "_generate_json", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("quota")))
+    monkeypatch.setattr(tc, "_prompts_json_fallback", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("indisponible")))
+
+    brief = tc.viral_video_brief("un sketch IA", seconds=12)
+
+    assert brief["seconds"] == 12
+    assert "un sketch IA" in brief["prompt"]
+    assert "HOOK" in brief["prompt"]
+
+
 def test_file_findings_flag_horizontal_and_silent():
     findings = " ".join(tc.file_findings({"width": 1280, "height": 720, "duration": 4.0, "audio": False, "size_mb": 3}))
     assert "vertical 9:16" in findings and "Pas de piste audio" in findings and "très court" in findings

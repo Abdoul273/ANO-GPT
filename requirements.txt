@@ -23,7 +23,6 @@ pillow
 requests
 keyring
 beautifulsoup4
-ddgs
 playwright
 pyautogui
 pyperclip

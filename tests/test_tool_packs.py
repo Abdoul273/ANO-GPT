@@ -121,3 +121,7 @@ def test_le_cerveau_externe_garde_tous_les_outils():
     session = (ROOT / "core" / "session_manager.py").read_text(encoding="utf-8")
     relay = session.split("def _relay_declarations")[1].split("def ")[0]
     assert "tool_packs" not in relay
+
+
+def test_terminal_typing_is_available_without_pack_reconnection():
+    assert "computer_control" in tp.CORE

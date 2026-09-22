@@ -485,7 +485,6 @@ def _find_binary(browser: str) -> Optional[str]:
 _SEARCH_ENGINES: Dict[str, str] = {
     "google": "https://www.google.com/search?q=",
     "bing": "https://www.bing.com/search?q=",
-    "duckduckgo": "https://duckduckgo.com/?q=",
     "yandex": "https://yandex.com/search/?text=",
     "yahoo": "https://search.yahoo.com/search?p=",
     "ecosia": "https://www.ecosia.org/search?q=",
@@ -583,7 +582,9 @@ class BrowserSession:
         """Purge un contexte mort puis redémarre Playwright, une seule fois."""
         logger.info("Chrome fermé manuellement : réinitialisation Playwright.")
         try:
-            if self._context is not None:
+            # Une connexion CDP emprunte le navigateur de l'utilisateur :
+            # le reconnecter ne doit pas fermer ses onglets.
+            if self._context is not None and not getattr(self, "_is_cdp", False):
                 await self._context.close()
         except Exception:
             logger.debug("Fermeture du contexte Playwright déjà indisponible", exc_info=True)
@@ -651,22 +652,18 @@ class BrowserSession:
             return await self._ensure_context(relaunch_attempted=True)
         if self._context is None:
             await self._launch(retry=RETRY_COUNT)
-        if self._page is None or self._page.is_closed():
-            pages = self._context.pages
-            self._page = pages[0] if pages else await self._context.new_page()
         try:
-            await self._page.evaluate("1", timeout=3000)
-        except Exception:
-            try:
-                if getattr(self, "_is_cdp", False):
-                    pages = self._context.pages
-                    if pages:
-                        self._page = pages[-1]
-                        return
-                await self._page.close()
-            except Exception:
-                pass
-            self._page = await self._context.new_page()
+            if self._page is None or self._page.is_closed():
+                pages = [page for page in self._context.pages if not page.is_closed()]
+                self._page = pages[-1] if pages else await self._context.new_page()
+            # Page.evaluate ne possède pas de paramètre timeout : borner
+            # l'attente asyncio sans fermer une page saine par erreur.
+            await asyncio.wait_for(self._page.evaluate("1"), timeout=3.0)
+        except Exception as exc:
+            if relaunch_attempted:
+                raise RuntimeError("Chrome inaccessible après une tentative de récupération.") from exc
+            await self._relaunch_disconnected_browser()
+            return await self._ensure_context(relaunch_attempted=True)
 
     async def _launch(self, retry: int = 0):
         engine = self._resolve_engine()
@@ -1224,7 +1221,7 @@ def _parse_browser_command_locally(text: str) -> Optional[Dict[str, Any]]:
     if m:
         query = m.group(1).strip()
         engine = "google"
-        eng = re.search(r"(?:sur|avec|using)\s+(google|bing|duckduckgo|yahoo|ecosia|yandex)", text)
+        eng = re.search(r"(?:sur|avec|using)\s+(google|bing|yahoo|ecosia|yandex)", text)
         if eng:
             engine = eng.group(1).lower()
             query = re.sub(rf"\s*(?:sur|avec|using)\s+{engine}\s*$", "", query).strip()

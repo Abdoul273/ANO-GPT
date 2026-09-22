@@ -44,7 +44,6 @@ def test_la_recherche_classe_dedoublonne_et_borne_les_resultats(monkeypatch):
         _candidate("Chat noir portrait copie", "https://img.example/chat-noir-2.jpg"),
     ]
     monkeypatch.setattr(search, "_search_serpapi", lambda query, count: candidates)
-    monkeypatch.setattr(search, "_search_ddg", lambda query, count: [])
 
     def download(item):
         result = dict(item)
@@ -78,4 +77,3 @@ def test_loutil_affiche_la_galerie_et_pas_un_navigateur(monkeypatch):
 
     assert ui.gallery == ("chat", images)
     assert "1 image" in result
-

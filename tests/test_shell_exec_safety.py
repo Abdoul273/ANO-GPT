@@ -148,3 +148,8 @@ def test_run_shell_adapts_debian_command_before_confirmation():
     assert shown
     assert "sudo pacman -S --needed nmap" in shown[0].detail
     assert "sudo apt install -y nmap" not in shown[0].detail
+
+
+def test_detached_failure_is_not_hidden_by_background_shell():
+    result = run_shell({"command": "sh -c 'exit 23' &"})
+    assert "échoué" in result and "23" in result

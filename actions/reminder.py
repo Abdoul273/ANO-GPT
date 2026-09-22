@@ -754,8 +754,9 @@ def _cancel_reminder(identifier: str) -> str:
     entry = None
     if str(identifier).isdigit():
         idx = int(identifier) - 1
-        if 0 <= idx < len(data):
-            entry = data[idx]
+        upcoming = active_reminders()
+        if 0 <= idx < len(upcoming):
+            entry = upcoming[idx]
     else:
         low = (identifier or "").lower()
         for e in data:
@@ -781,13 +782,28 @@ def _cancel_reminder(identifier: str) -> str:
         ok = True
     else:
         if sched == "systemd":
-            kit.run(["systemctl", "--user", "stop", f"{job}.service"], timeout=15)
-            kit.run(["systemctl", "--user", "reset-failed", f"{job}.service"], timeout=15)
-            ok = True
+            kit.run(
+                ["systemctl", "--user", "stop", f"{job}.timer", f"{job}.service"],
+                timeout=15,
+            )
+            # Le service d'un timer futur peut ne pas être chargé : stop
+            # renvoie alors une erreur même si le timer a bien été arrêté.
+            # Relire chaque unité, sans confondre un bus indisponible avec
+            # une unité inactive ou absente.
+            states = [kit.run(["systemctl", "--user", "is-active", f"{job}.{kind}"], timeout=15)
+                      for kind in ("timer", "service")]
+            ok = all(state.returncode in (3, 4)
+                     and state.stdout.strip() in {"inactive", "failed", "unknown"}
+                     for state in states)
+            if ok:
+                kit.run(["systemctl", "--user", "reset-failed", f"{job}.service"], timeout=15)
         elif sched == "at":
             ok = _run_quiet(["atrm", job])
         else:
             ok = True
+
+    if not ok:
+        return f"⚠️ Annulation non confirmée pour {job}. Le rappel est conservé pour réessayer."
 
     script = _scripts_dir() / f"{entry.get('task_name')}.py"
     try:

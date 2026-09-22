@@ -46,7 +46,7 @@ CORE: frozenset[str] = frozenset({
     # Temps
     "reminder", "timer", "weather_report",
     # Machine
-    "system_status", "open_app", "close_app", "shell_exec", "undo_action",
+    "system_status", "open_app", "close_app", "shell_exec", "computer_control", "undo_action",
     # Cadre de session
     "report_capability_gap", "shutdown_jarvis", "voice_style",
     "capability_guide",
@@ -151,7 +151,7 @@ PACKS: Mapping[str, ToolPack] = {
         label="développement et système avancé",
         tools=frozenset({
             "devsecops", "github_control", "live_auto_debug", "self_repair",
-            "hypr_orchestrator", "computer_control", "computer_settings",
+            "hypr_orchestrator", "computer_settings",
         }),
         triggers=_triggers(
             r"\b(git|github|commit|branche|pull request|depot|repo)\b",
