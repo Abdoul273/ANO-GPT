@@ -181,12 +181,12 @@ def summary(path: Path | None = None) -> list[dict]:
 def declared_tools() -> list[str]:
     """Noms des outils réellement envoyés au modèle (déclarés moins retirés).
 
-    Lu par analyse syntaxique de tool_dispatcher.py plutôt que par import : importer main
+    Lu par analyse syntaxique de tool_declarations.py plutôt que par import : importer main
     démarre toute l'UI et l'audio, ce qui n'a pas sa place dans un rapport.
     """
     import ast
 
-    main_py = Path(__file__).resolve().parent / "tool_dispatcher.py"
+    main_py = Path(__file__).resolve().parent / "tool_declarations.py"
     try:
         tree = ast.parse(main_py.read_text(encoding="utf-8"))
     except (OSError, SyntaxError):
