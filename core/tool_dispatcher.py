@@ -2365,6 +2365,16 @@ def _task_card_summary(name: str, args: Any) -> str:
     return ""
 
 
+# Seules les identifications (photo + modèle de vision) sont longues ; lister
+# les visages connus ou en oublier un reste une réponse immédiate.
+_DEFERRED_VISION_ACTIONS = frozenset({"identify", "who", "what", "look", "regarde"})
+
+
+def _vision_is_deferred(args: dict) -> bool:
+    action = str(args.get("action") or "identify").strip().lower()
+    return action in _DEFERRED_VISION_ACTIONS
+
+
 # Outils qui font attendre : leur description commence par la consigne
 # d'annoncer avant d'appeler. Une seule source pour tous, alignée sur la règle
 # « annonce avant d'agir » du prompt.
@@ -2957,6 +2967,13 @@ class ToolDispatcher:
                 # aussi être lente : elle ne doit jamais garder le tool call.
                 result = await asyncio.to_thread(
                     download_music, parameters=args, player=self.ui, speak=self.speak,
+                )
+            elif name == "visual_recognition":
+                from actions.visual_recognition import visual_recognition
+                result = await asyncio.to_thread(
+                    visual_recognition, parameters=args, player=self.ui,
+                    session_memory=self._tool_session_memory, speak=self.speak,
+                    grab_frame=self._grab_camera_still, save_photo=self._save_capture,
                 )
             else:
                 return
@@ -4089,6 +4106,18 @@ class ToolDispatcher:
                                                 session_memory=self._tool_session_memory),
                     )
                     result = r or "Capture effectuée."
+
+            elif name == "visual_recognition" and _vision_is_deferred(args):
+                # Photo, analyse Gemini/Azure et recherche éventuelle :
+                # 8 à 14 s micro fermé. On rend la main tout de suite, le
+                # résultat arrive dans un nouveau tour.
+                if self._start_deferred_tool(name, args):
+                    result = ("Je regarde. Dis-le immédiatement en une phrase ; "
+                              "ce que je vois sera annoncé dès que l'analyse sera prête. "
+                              "Ne rappelle pas cet outil.")
+                else:
+                    result = ("Une analyse visuelle est déjà en cours ; dis-le brièvement "
+                              "et ne rappelle pas cet outil.")
 
             elif name == "visual_recognition":
                 from actions.visual_recognition import visual_recognition
