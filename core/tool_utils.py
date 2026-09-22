@@ -305,20 +305,6 @@ def check_command_exists(cmd: str) -> bool:
     """
     return shutil.which(cmd) is not None
 
-def get_command_output(cmd: str, timeout: int = 5) -> Optional[str]:
-    """Get command output or None on failure."""
-    try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            timeout=timeout,
-            text=True
-        )
-        return result.stdout.strip() if result.returncode == 0 else None
-    except Exception:
-        return None
-
 def log_tool_call(tool_name: str, parameters: Dict[str, Any], result: str) -> None:
     """Log tool call for debugging."""
     logger.info(f"Tool: {tool_name} | Params: {json.dumps(parameters)[:100]} | Result: {result[:100]}")
