@@ -6,6 +6,7 @@ chemins config corrigés, gestion d'erreurs robuste, modèle Live configurable.
 """
 from __future__ import annotations
 from core import action_kit as kit
+from core.background_task import spawn_logged
 
 import asyncio
 import base64
@@ -434,7 +435,7 @@ class _VisionSession:
                                 self._player.stop_camera_stream()
                             except Exception:
                                 pass
-                        asyncio.create_task(_deferred_close())
+                        spawn_logged(_deferred_close(), name="camera-close")
         except Exception as e:
             print(f"[Vision] ⚠️  Erreur de réception : {e}")
             raise

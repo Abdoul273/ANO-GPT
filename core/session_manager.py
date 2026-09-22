@@ -1636,11 +1636,11 @@ class SessionManager:
                                     self._last_voice_audio_ms,
                                 )
                             if full_in and self._dashboard:
-                                asyncio.create_task(self._dashboard.broadcast({
+                                spawn_logged(self._dashboard.broadcast({
                                     "type": "log", "speaker": "user",
                                     "text": full_in,
                                     "ts": datetime.now().isoformat(),
-                                }))
+                                }), name="dashboard-log")
                             in_buf = []
                             transcript_assembler.reset()
                             # Le tour est clos : plus rien n'attend de réponse.
@@ -1653,13 +1653,14 @@ class SessionManager:
                             if full_in or full_out:
                                 self._remember_turn(full_in, full_out)
                             if full_in:
-                                asyncio.create_task(self._inject_turn_context(full_in))
+                                spawn_logged(self._inject_turn_context(full_in),
+                                             name="inject-turn-context")
                             if full_out and self._dashboard:
-                                asyncio.create_task(self._dashboard.broadcast({
+                                spawn_logged(self._dashboard.broadcast({
                                     "type": "log", "speaker": "jarvis",
                                     "text": full_out,
                                     "ts": datetime.now().isoformat(),
-                                }))
+                                }), name="dashboard-log")
                             out_buf = []
 
                             # Vision injection: model finished tool-response turn → now send the image
@@ -1686,7 +1687,7 @@ class SessionManager:
                                 async def _cam_close():
                                     await asyncio.sleep(2.0)
                                     self.ui.stop_camera_stream()
-                                asyncio.create_task(_cam_close())
+                                spawn_logged(_cam_close(), name="camera-close")
 
                     if response.tool_call:
                         if self._interrupted or getattr(self, "_noise_turn", False):

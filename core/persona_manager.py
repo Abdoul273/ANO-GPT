@@ -20,6 +20,8 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 import yaml
 
+from core.background_task import spawn_logged
+
 logger = logging.getLogger(__name__)
 
 # Répertoire par défaut des personas
@@ -528,12 +530,13 @@ class PersonaManager:
     ) -> PersonaSwitchResult:
         """Version synchrone de commutation pour compatibilité avec appels non-async."""
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # Si on est déjà dans une boucle d'événements, on schedule la coroutine
-            loop.create_task(
+            spawn_logged(
                 self.async_switch_persona(
                     target, session_manager=session_manager, ui=ui, notify=notify, speak_ack=speak_ack
-                )
+                ),
+                name="persona-switch",
             )
             # Met à jour le persona courant immédiatement pour cohérence synchrone
             new_p = target if isinstance(target, Persona) else self.get_persona(target)

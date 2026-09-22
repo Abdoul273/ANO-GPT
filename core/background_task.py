@@ -12,6 +12,11 @@ import asyncio
 import traceback
 from typing import Any, Coroutine
 
+# La boucle asyncio ne garde qu'une référence faible sur ses tâches : une tâche
+# que personne ne retient peut être ramassée en plein vol. Toute tâche lancée
+# ici reste donc retenue jusqu'à sa fin.
+_LIVE_TASKS: set[asyncio.Task] = set()
+
 
 def log_task_result(task: asyncio.Task, ui: Any = None) -> None:
     """Callback ``add_done_callback`` : trace toute exception non récupérée."""
@@ -46,6 +51,8 @@ def spawn_logged(
     vie (limite « une à la fois » des générations longues).
     """
     task = asyncio.create_task(coro, name=name)
+    _LIVE_TASKS.add(task)
+    task.add_done_callback(_LIVE_TASKS.discard)
     if registry is not None:
         registry.add(task)
         task.add_done_callback(registry.discard)

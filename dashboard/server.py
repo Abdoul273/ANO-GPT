@@ -799,7 +799,7 @@ class DashboardServer:
             return f"https://{self._ip}:{PORT + 1}"
         return f"http://{self._ip}:{PORT}"
 
-    def spawn(self, coro, name: str):
+    def spawn(self, coro, name: str = "diffusion"):
         """Lance une tâche longue en la retenant, et signale sa mort.
 
         Deux pièges d'asyncio réunis : une tâche non référencée peut être
@@ -1089,7 +1089,7 @@ class DashboardServer:
         except RuntimeError:
             running = None
         if running is loop:
-            loop.create_task(coro)
+            self.spawn(coro, "diffusion-directe")
             return
         if loop.is_running():
             asyncio.run_coroutine_threadsafe(coro, loop)
@@ -1202,7 +1202,7 @@ class DashboardServer:
             if pairing:
                 if self._connect_callback:
                     self._connect_callback()
-                asyncio.create_task(self.broadcast(
+                self.spawn(self.broadcast(
                     {"type": "sys", "text": "Connexion distante établie."}
                 ))
                 return JSONResponse(pairing)
@@ -1228,7 +1228,7 @@ class DashboardServer:
                 )
             if self._connect_callback:
                 self._connect_callback()
-            asyncio.create_task(self.broadcast(
+            self.spawn(self.broadcast(
                 {"type": "sys", "text": "Application ANO Remote connectée."}
             ))
             return JSONResponse(pairing)
@@ -1257,7 +1257,7 @@ class DashboardServer:
 
             if self._connect_callback:
                 self._connect_callback()
-            asyncio.create_task(self.broadcast(
+            self.spawn(self.broadcast(
                 {"type": "sys", "text": "Connexion distante établie via QR code."}
             ))
 
@@ -1297,7 +1297,7 @@ class DashboardServer:
             self._aes_key(session_key)
             if self._connect_callback:
                 self._connect_callback()
-            asyncio.create_task(self.broadcast(
+            self.spawn(self.broadcast(
                 {"type": "sys", "text": "Appareil connu reconnecté automatiquement."}
             ))
             return JSONResponse({"ok": True, "token": tok, "key": session_key})
@@ -1435,7 +1435,7 @@ class DashboardServer:
                 await websocket.close(code=4001)
                 return
             self._authenticated_clients.add(websocket)
-            asyncio.create_task(self.broadcast(
+            self.spawn(self.broadcast(
                 {"type": "sys", "text": "Micro du téléphone en direct."}
             ))
             try:
@@ -1466,7 +1466,7 @@ class DashboardServer:
                         self._phone_audio_queue.put_nowait(marker)
                     except (asyncio.QueueEmpty, asyncio.QueueFull):
                         pass
-                asyncio.create_task(self.broadcast(
+                self.spawn(self.broadcast(
                     {"type": "sys", "text": "Micro du téléphone arrêté."}
                 ))
 
@@ -1488,7 +1488,7 @@ class DashboardServer:
                 await websocket.close(code=4001)
                 return
             self._authenticated_clients.add(websocket)
-            asyncio.create_task(self.broadcast(
+            self.spawn(self.broadcast(
                 {"type": "sys", "text": "Caméra du téléphone en direct."}
             ))
             try:
@@ -1515,7 +1515,7 @@ class DashboardServer:
                 self._authenticated_clients.discard(websocket)
                 self._phone_frame = None
                 self._phone_camera_ready.clear()
-                asyncio.create_task(self.broadcast(
+                self.spawn(self.broadcast(
                     {"type": "sys", "text": "Caméra du téléphone arrêtée."}
                 ))
 
@@ -1564,7 +1564,7 @@ class DashboardServer:
                         pass
                     return JSONResponse({"error": str(exc)}, status_code=500)
 
-                asyncio.create_task(self.broadcast({
+                self.spawn(self.broadcast({
                     "type": "file_received",
                     "name": dest.name,
                     "size": size,
