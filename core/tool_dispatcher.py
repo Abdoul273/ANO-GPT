@@ -2944,6 +2944,7 @@ class ToolDispatcher:
             delivered = False
             print(f"[DeepResearch] Livraison vocale différée : {exc}")
         if not delivered:
+            self._defer_turn(prompt)
             self.ui.write_log(
                 "WARN: résultat vocal différé ; il reste disponible dans la carte."
             )
@@ -3010,15 +3011,17 @@ class ToolDispatcher:
 
         result = str(result or f"{title} terminé.").strip()
         self._ui_card("show_card", "result", title, result[:12_000])
-        if self.session is not None:
-            try:
-                await self._submit_text_turn(
-                    f"[RÉSULTAT {title.upper()}]\n{result[:8_000]}\n\n"
-                    "Annonce directement ce résultat en français, sans rappeler d'outil.",
-                    timeout_s=35.0,
-                )
-            except Exception as exc:
-                self.ui.write_log(f"WARN: livraison différée {name} indisponible : {exc}")
+        prompt = (
+            f"[RÉSULTAT {title.upper()}]\n{result[:8_000]}\n\n"
+            "Annonce directement ce résultat en français, sans rappeler d'outil."
+        )
+        try:
+            delivered = await self._submit_text_turn(prompt, timeout_s=35.0)
+        except Exception as exc:
+            delivered = False
+            self.ui.write_log(f"WARN: livraison différée {name} indisponible : {exc}")
+        if not delivered:
+            self._defer_turn(prompt)
 
     def _start_deferred_tool(self, name: str, args: dict) -> bool:
         """Un seul travail long du même type, accusé immédiat pour le micro."""
@@ -3074,15 +3077,20 @@ class ToolDispatcher:
         self._ui_card("show_card", "result", "Création d'image", result)
         # Pas de test `self.session is not None` : si la connexion est en
         # reprise, le tour est conservé puis livré après la reconnexion.
-        delivered = await self._submit_text_turn(
+        prompt = (
             "[RÉSULTAT DE GÉNÉRATION D'IMAGE]\n"
             f"Demande : {prompt}\nRésultat : {result}\n\n"
             "Annonce uniquement le résultat en français, avec le ton Majeur. "
             "Si l'image est créée, confirme qu'elle est prête et indique son chemin. "
-            "Si elle a échoué, explique la raison en français sans proposer de la relancer automatiquement.",
-            timeout_s=35.0,
+            "Si elle a échoué, explique la raison en français sans proposer de la relancer automatiquement."
         )
+        try:
+            delivered = await self._submit_text_turn(prompt, timeout_s=35.0)
+        except Exception as exc:
+            delivered = False
+            self.ui.write_log(f"WARN: annonce image différée : {exc}")
         if not delivered:
+            self._defer_turn(prompt)
             self.ui.write_log("WARN: image prête ; annonce vocale différée (carte disponible).")
 
     def _start_image_generation(self, args: dict) -> bool:
@@ -3138,15 +3146,20 @@ class ToolDispatcher:
         self._task_card(task_id, f"{title} — échec" if failed else f"{title} terminée",
                         _task_result_excerpt(result), "error" if failed else "done")
         self._ui_card("show_card", "result", title, result)
-        delivered = await self._submit_text_turn(
+        prompt = (
             "[RÉSULTAT DE GÉNÉRATION VIDÉO]\n"
             f"Demande : {prompt}\nRésultat : {result}\n\n"
             "Annonce uniquement le résultat en français, avec le ton Majeur. "
             "Si la vidéo est créée, confirme qu'elle est prête et indique son chemin. "
-            "Si elle a échoué, explique la raison sans relancer la génération.",
-            timeout_s=35.0,
+            "Si elle a échoué, explique la raison sans relancer la génération."
         )
+        try:
+            delivered = await self._submit_text_turn(prompt, timeout_s=35.0)
+        except Exception as exc:
+            delivered = False
+            self.ui.write_log(f"WARN: annonce vidéo différée : {exc}")
         if not delivered:
+            self._defer_turn(prompt)
             self.ui.write_log("WARN: vidéo prête ; annonce vocale différée (carte disponible).")
 
     def _task_card(self, task_id: str, title: str, body: str, status: str) -> None:

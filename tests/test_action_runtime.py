@@ -254,7 +254,7 @@ def test_timeout_vision_libere_le_verrou_et_interdit_la_relance_automatique(monk
     jarvis._noise_turn = False
     jarvis._event_bus = None
 
-    async def verified(_name): return ""
+    async def verified(_name, _args): return ""
     async def blocked(*_args): await asyncio.sleep(1)
     jarvis._verify_sensitive_voice_command = verified
     jarvis._execute_tool_impl = blocked

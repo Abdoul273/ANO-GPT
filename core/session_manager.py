@@ -717,23 +717,22 @@ class SessionManager:
         text = strip_emoji(str(text or "")).strip()
         if not text:
             return False
+        original_text = text
         if not self.session:
             # Résultat d'une tâche longue arrivé pendant une reconnexion : on
             # le garde, `_resend_unanswered` le livrera sur la session suivante.
             self._defer_turn(text)
             return False
         self._maybe_show_clock_particles(text)
+        deferred_turns = [str(item or "").strip() for item in getattr(self, "_deferred_turns", ())]
         deferred = [
-            *[str(item or "").strip() for item in getattr(self, "_deferred_turns", ())],
+            *deferred_turns,
             str(getattr(self, "_deferred_voice_note", "") or "").strip(),
             str(getattr(self, "_deferred_context", "") or "").strip(),
         ]
         deferred = [item for item in deferred if item]
         if deferred:
             text = "\n\n".join((*deferred, text))
-            self._deferred_turns = []
-            self._deferred_voice_note = ""
-            self._deferred_context = ""
         # Le verrou est créé une seule fois (constructeur) : il sérialise les
         # tours texte, pas une connexion WebSocket. Le recréer à chaque
         # reconnexion laissait une tâche de fond (vidéo, image, recherche)
@@ -747,7 +746,7 @@ class SessionManager:
         async with lock:
             session = self.session
             if session is None:
-                self._defer_turn(text)
+                self._defer_turn(original_text)
                 return False
             if session is not session_before:
                 # La connexion a été remplacée pendant l'attente du verrou : la
@@ -830,6 +829,13 @@ class SessionManager:
                 finally:
                     self._active_turn_task = None
             self._active_turn_task = None
+            if deferred:
+                self._deferred_turns = [
+                    item for item in getattr(self, "_deferred_turns", ())
+                    if item not in deferred_turns
+                ]
+                self._deferred_voice_note = ""
+                self._deferred_context = ""
             return True
 
     def _defer_turn(self, text: str) -> None:
@@ -1671,9 +1677,13 @@ class SessionManager:
         )
         text = note + action_rule + local_context + "\n".join(pending)
         try:
-            await self._submit_text_turn(text)
+            delivered = await self._submit_text_turn(text)
+            if not delivered:
+                self._unanswered = pending + self._unanswered
+                return
             self._toolkit_context_on_reconnect = False
             self.ui.write_log(f"SYS : reprise de « {pending[-1][:60]} ».")
+            await self._flush_deferred_turns()
         except Exception as exc:
             print(f"[JARVIS] Reprise impossible : {exc}")
             self._unanswered = pending
@@ -1695,3 +1705,8 @@ class SessionManager:
             delivered = False
         if delivered:
             self.ui.write_log("SYS : résultat différé annoncé après la reconnexion.")
+        else:
+            # Un socket peut tomber après le test `self.session`. La carte
+            # reste visible, mais l'annonce doit survivre à cette coupure.
+            for item in pending:
+                self._defer_turn(item)

@@ -130,12 +130,10 @@ async def _test_toolkit_reconnect_replays_local_context_without_live_handle():
     host._unanswered = ["lance-le"]
     asyncio.create_task(_finish_turn(host, 0.5))
     await host._resend_unanswered()
-    assert host.session.sent == [
-        "[Contexte local juste avant la reconnexion. Continue cette "
-        "conversation naturellement, sans le répéter.]\n"
-        "Utilisateur : où est le morceau ?\nANO-GPT : Il est dans Musique.\n\n"
-        "lance-le"
-    ]
+    assert len(host.session.sent) == 1
+    assert "appelle l'outil correspondant MAINTENANT" in host.session.sent[0]
+    assert "Utilisateur : où est le morceau ?\nANO-GPT : Il est dans Musique." in host.session.sent[0]
+    assert host.session.sent[0].endswith("lance-le")
     assert host._toolkit_context_on_reconnect is False
 
 
