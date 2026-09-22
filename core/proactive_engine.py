@@ -336,7 +336,10 @@ class ProactiveEngine:
                         await asyncio.wait_for(self._turn_done_event.wait(), timeout=15.0)
                     except asyncio.TimeoutError:
                         logger.debug("Tour précédent non terminé avant l'annonce proactive")
-                while self._is_speaking:
+                # Borné comme au briefing : un indicateur de parole resté
+                # levé gardait le volume baissé à 35 % pour toujours.
+                deadline = time.monotonic() + 20.0
+                while self._is_speaking and time.monotonic() < deadline:
                     await asyncio.sleep(0.08)
         finally:
             if lowered:
