@@ -319,7 +319,7 @@ def _start_sounddevice_import() -> None:
 from actions.system_monitor    import SystemMonitor
 from actions.proactive         import ProactiveService
 from actions.background_tasks  import BackgroundTaskService
-from memory.config_manager     import get_brief_enabled, save_live_voice as save_live_voice
+from memory.config_manager     import save_live_voice as save_live_voice
 from core.screen_consciousness import get_screen_consciousness
 from core.live_speech_config   import (
     DEFAULT_LIVE_VOICE,
@@ -328,9 +328,11 @@ from core.live_speech_config   import (
 from core.personality_modes import voice_settings_for_mode
 from core.live_model_policy    import (
     LiveModelPolicy,
+    TRANSCRIBE_MODEL,
 )
 from core.gemini_connection    import (
     ConnectionState,
+    is_quota_exhausted_error,
     is_invalid_api_key_error,
     is_invalid_live_setup_error,
     safe_error_summary,
@@ -387,6 +389,35 @@ from core.phone_relay import PhoneRelay
 # laissait la boucle vocale suspendue pour toujours : plus de voix, plus de
 # texte, aucun journal. Passé ce délai, on relâche et on réessaie.
 LIVE_CONNECT_TIMEOUT_S = 25.0
+DEFAULT_LIVE_QUOTA_RETRY_S = 300.0
+
+
+def _live_quota_retry_delay(settings: dict | None = None) -> float:
+    """Délai calme après un refus de quota, borné pour éviter le martelage."""
+    try:
+        value = float((settings or {}).get(
+            "gemini_live_quota_retry_seconds", DEFAULT_LIVE_QUOTA_RETRY_S
+        ))
+    except (TypeError, ValueError):
+        value = DEFAULT_LIVE_QUOTA_RETRY_S
+    return max(60.0, min(value, 3600.0))
+
+
+def _live_api_version(settings: dict | None = None) -> str:
+    """Version Live explicitement limitée aux deux API Gemini supportées."""
+    value = str((settings or {}).get("gemini_live_api_version", "v1beta")).strip()
+    return value if value in {"v1alpha", "v1beta"} else "v1beta"
+
+
+async def _sleep_with_audio_heartbeat(delay: float) -> None:
+    """Attend une reconnexion sans faire croire à FreezeWatch à un gel."""
+    from core import freeze_watch
+    remaining = max(0.0, float(delay or 0.0))
+    while remaining > 0:
+        freeze_watch.beat("boucle audio")
+        step = min(0.25, remaining)
+        await asyncio.sleep(step)
+        remaining -= step
 
 
 @contextlib.asynccontextmanager
@@ -710,6 +741,8 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self._vision_close_pending = False   # True after vision injected; next turn_complete closes camera
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
+        self._open_app_last_sig    = ""      # "app_name|command|workspace" of last open_app call (dedup guard)
+        self._open_app_last_time   = 0.0     # monotonic time of last open_app call (dedup guard)
         self._interrupted          = False   # True while draining audio after user interrupt
         self._discard_turn_audio   = False   # audio du tour coupé jeté jusqu'à son turn_complete
         self._discard_turn_audio_since = 0.0
@@ -842,6 +875,24 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # Scribe peut réutiliser la même seconde passe Gemini sans exposer la
         # clé à l'interface ou aux journaux.
         self._gemini_api_key = str(voice_settings.get("gemini_api_key", "") or "")
+        # Gemini 3.5 Transcribe est réservé au contrôle ciblé des actions
+        # irréversibles ; il ne participe jamais au dialogue ordinaire.
+        self._precision_stt_enabled = _setting_bool(
+            voice_settings.get(
+                "sensitive_command_verification",
+                voice_settings.get("precision_stt_enabled", True),
+            ), True
+        )
+        self._precision_stt_model = str(
+            voice_settings.get(
+                "sensitive_command_transcribe_model",
+                voice_settings.get(
+                    "precision_stt_model", TRANSCRIBE_MODEL
+                ),
+            ) or TRANSCRIBE_MODEL
+        )
+        self._precision_stt = None
+        self._precision_stt_warning_logged = False
         # Ce que l'utilisateur a dit sans obtenir de réponse : renvoyé après
         # une coupure, sinon sa phrase est perdue avec la connexion.
         # Tour jugé « bruit » par le garde-fou : sa réponse ne doit pas sortir.
@@ -1752,7 +1803,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 # Fresh client on every reconnect — avoids stale HTTP session state
                 client = genai.Client(
                     api_key=_get_live_api_key(),
-                    http_options={"api_version": "v1beta"}
+                    http_options={"api_version": _live_api_version(_voice_engine_settings())}
                 )
 
                 live_model = self._live_models.current
@@ -1834,7 +1885,11 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                         tg.create_task(self._relay_phone_audio())
 
                     # Morning briefing — fires once per process launch (if enabled)
-                    if not self._briefing_sent and get_brief_enabled():
+                    # L'accueil est désormais une phrase très courte (pas un
+                    # briefing coûteux) : il doit donc se produire à chaque
+                    # premier démarrage, même si l'ancien briefing quotidien
+                    # a été désactivé dans les réglages.
+                    if not self._briefing_sent:
                         self._briefing_sent = True
                         tg.create_task(self._send_startup_briefing())
 
@@ -1861,6 +1916,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 root_str = f"{type(root_exc).__name__}: {root_exc}"
                 if root_exc is not e:
                     err_str = f"{err_str} — {root_str}"
+                quota_error = is_quota_exhausted_error(root_exc)
                 if self._toolkit_reconnect_requested:
                     # Élargissement de la boîte à outils : la poignée de
                     # reprise sera jetée dans le `finally`, car Gemini peut
@@ -1888,22 +1944,24 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                         f"SYS : activation de la voix {self._live_voice}…"
                     )
                     continue
-                print(f"[JARVIS] Error ({type(e).__name__}): {e}")
+                if not quota_error:
+                    print(f"[JARVIS] Error ({type(e).__name__}): {e}")
                 # Une coupure WebSocket (keepalive ping timeout, 1006, 1011…)
                 # est une perte de réseau, pas une faute du code : on se
                 # reconnecte sans proposer de « corriger » quoi que ce soit.
                 dropped = is_connection_dropped_error(root_exc)
-                if not dropped:
+                if not dropped and not quota_error:
                     try:
                         from core import incident_log
                         incident_log.record("session vocale", root_exc, message=root_str[:200])
                     except Exception:
                         pass
-                self._event_bus.publish_sync(SystemAlertEvent(
-                    severity="WARNING" if dropped else "ERROR", source="gemini-live",
-                    message=root_str,
-                ))
-                traceback.print_exc()
+                if not quota_error:
+                    self._event_bus.publish_sync(SystemAlertEvent(
+                        severity="WARNING" if dropped else "ERROR", source="gemini-live",
+                        message=root_str,
+                    ))
+                    traceback.print_exc()
 
                 # Certains couples modèle/endpoint Live plus anciens rejettent
                 # encore ce champ. Un seul repli contrôlé évite toute boucle de
@@ -1932,7 +1990,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     self._conn.forget_session()
                     self._conn.on_go_away()
                     self.ui.write_log(
-                        "WARN: Gemini 3.1 Live indisponible pour ce compte ; "
+                        "WARN: Gemini 3.8 Live indisponible pour ce compte ; "
                         f"repli automatique vers {fallback}."
                     )
                     continue
@@ -1969,12 +2027,34 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     await asyncio.sleep(10)
                     continue
 
+                if quota_error:
+                    delay = _live_quota_retry_delay(_voice_engine_settings())
+                    self._connection_retry_delay_override = delay
+                    self._last_disconnect_was_net_err = True
+                    self.ui.set_state("OFFLINE")
+                    self.ui.write_log(
+                        "ERR : quota Gemini Live épuisé ou facturation indisponible — "
+                        f"nouvel essai dans {delay / 60:.0f} min."
+                    )
+                    try:
+                        self.ui.show_card(
+                            "error", "Gemini Live indisponible",
+                            "Google a refusé la session pour **quota ou facturation**. "
+                            "Vérifie le projet associé à `gemini_live_api_key` (plan et "
+                            "facturation), puis ANO-GPT réessaiera automatiquement. "
+                            f"Prochain essai dans **{delay / 60:.0f} min**.",
+                        )
+                    except Exception:
+                        pass
+                    # Pas de traceback : le message Google est déjà une cause
+                    # confirmée, non un défaut du programme.
+
                 # Network / timeout errors — log clearly and back off
-                is_net_err = dropped or any(k in err_str for k in (
+                is_net_err = quota_error or dropped or any(k in err_str for k in (
                     "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
                     "ConnectionRefusedError", "OSError", "Cannot connect",
                 ))
-                if is_net_err:
+                if is_net_err and not quota_error:
                     delay = self._conn.next_delay()
                     self._conn_backoff = delay
                     # Un hoquet de Wi-Fi de trois secondes se rattrape sans
@@ -1995,7 +2075,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                             )
                         except Exception:
                             pass
-                else:
+                elif not quota_error:
                     self._conn_backoff = self._conn.next_delay()
                 self._last_disconnect_was_net_err = is_net_err
             finally:
@@ -2042,11 +2122,14 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
             if self._dashboard and not silent:
                 await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
 
-            delay = self._conn.next_delay()
+            delay = getattr(self, "_connection_retry_delay_override", None)
+            self._connection_retry_delay_override = None
+            if delay is None:
+                delay = self._conn.next_delay()
             self._conn_backoff = delay
             print(f"[JARVIS] Reconnecting in {delay:.0f}s...")
             if delay:
-                await asyncio.sleep(delay)
+                await _sleep_with_audio_heartbeat(delay)
 
 def main():
     # Avant la fenêtre : une panne d'initialisation doit laisser une trace,

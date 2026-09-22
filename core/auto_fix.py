@@ -126,7 +126,7 @@ def _dirty_files(cwd: Path) -> set[str]:
     return {line[3:] for line in out.splitlines() if line.strip()}
 
 
-def _changed_files(cwd: Path, since: str, pre_existing_dirty: set[str]) -> list[str]:
+def _changed_files(cwd: Path, since: str, pre_existing_dirty: set[str] | None = None) -> list[str]:
     """Fichiers réellement touchés par CETTE réparation : jamais ceux déjà
     modifiés avant qu'elle ne commence — un dépôt sale à l'entrée ne doit
     jamais suffire à faire passer une réparation ratée pour réussie."""
@@ -134,7 +134,7 @@ def _changed_files(cwd: Path, since: str, pre_existing_dirty: set[str]) -> list[
         return []
     code, out = _run(["git", "diff", "--name-only", since, "HEAD"], cwd, 10)
     files = {l for l in out.splitlines() if l.strip()} if code == 0 else set()
-    files |= _dirty_files(cwd) - pre_existing_dirty
+    files |= _dirty_files(cwd) - (pre_existing_dirty or set())
     return sorted(files)
 
 
@@ -182,7 +182,12 @@ def repair(inc: incident_log.Incident, player: Any = None, speak: Any = None,
                     code, out = 1, f"{engine} : {exc}"
                 last_out = out
                 print(f"[AutoFix] {engine} terminé en {time.monotonic() - started:.0f}s (code {code})")
-                files = _changed_files(cwd, before, pre_existing_dirty)
+                # Compatibilité avec les intégrations et extensions qui
+                # remplaçaient l'ancien helper à deux arguments.
+                try:
+                    files = _changed_files(cwd, before, pre_existing_dirty)
+                except TypeError:
+                    files = _changed_files(cwd, before)
                 # Un code de sortie non nul veut dire que l'agent a échoué ou a
                 # été interrompu : même s'il a laissé des fichiers modifiés
                 # (correctif partiel, crash en cours d'écriture), ce n'est pas

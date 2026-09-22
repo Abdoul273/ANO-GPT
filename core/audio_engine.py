@@ -47,6 +47,7 @@ import numpy as np
 
 from core import audio_router
 from core.barge_in import InterruptPhraseDetector, LocalBargeInListener, hold_live_audio
+from core.live_speech_config import full_duplex_aec_is_validated
 
 
 def barge_in_enabled() -> bool:
@@ -62,6 +63,15 @@ def barge_in_enabled() -> bool:
         return bool(get_config().get("voice_barge_in_enabled", True))
     except Exception:
         return True
+
+
+def full_duplex_aec_enabled() -> bool:
+    """Activation effective du full-duplex, après validation explicite AEC."""
+    try:
+        from config import get_config
+        return full_duplex_aec_is_validated(get_config())
+    except Exception:
+        return False
 from core.echo_canceller import get_full_duplex_filter
 from core.event_bus import AudioCaptureFrameEvent, BargeInDetectedEvent
 from core.speech_sync import (
@@ -989,17 +999,16 @@ class AudioEngine:
         self.ui.write_log("MIC : capture fidèle — aucun filtre spectral ni gain logiciel empilé.")
 
         # ── Full-duplex AEC ───────────────────────────────────────────────
-        # Si libspeexdsp est disponible, on fonctionne en full-duplex : le
-        # micro reste ouvert en permanence, l'écho du haut-parleur est
-        # soustrait en temps réel, et le VAD Silero détecte la voix de
-        # l'utilisateur sur le signal nettoyé. Sinon → half-duplex classique.
-        _duplex_filter = get_full_duplex_filter()
-        _aec_mode = _duplex_filter.aec_available
+        # La simple disponibilité de Speex n'est pas une preuve d'AEC fiable.
+        # Le filtre n'est armé qu'après validation explicite ; sinon le gate
+        # strict ci-dessous protège le modèle de sa propre voix.
+        _duplex_filter = get_full_duplex_filter() if full_duplex_aec_enabled() else None
+        _aec_mode = bool(_duplex_filter and _duplex_filter.aec_available)
         self._duplex_filter = _duplex_filter  # accessible par _play_audio
         if _aec_mode:
-            print("[ANO-GPT] 🔇 AEC actif — émission micro bloquée pendant la réponse")
+            print("[ANO-GPT] 🔇 AEC validé — full-duplex expérimental armé")
         else:
-            print("[JARVIS] 🔇↔🎤 Half-duplex (fallback) — micro coupé pendant la parole")
+            print("[JARVIS] 🔇↔🎤 Half-duplex sûr — micro coupé pendant la parole")
 
         _cb_state = {"last_err_log": 0.0, "err_count": 0, "level": 0.06,
                      "last_voice": time.monotonic(), "last_voice_raw": time.monotonic(), "barge_stop_quiet": 0,
@@ -1031,6 +1040,7 @@ class AudioEngine:
             )
 
         def callback(indata, frames, time_info, status):
+            nonlocal _aec_mode
             try:
                 if self._phone_active:
                     # Le téléphone possède alors le tour audio. Ne surtout pas
@@ -1087,13 +1097,37 @@ class AudioEngine:
                                     self._maybe_routine, heard, "voix hors-ligne")
                     return
 
-                float_audio = raw_channel.astype(np.float32) / 32768.0
-
                 with self._speaking_lock:
                     jarvis_speaking = self._is_speaking
 
-                # Détection de parole : en mode AEC, le VAD est appliqué sur le
-                # signal nettoyé (sans écho) ; en half-duplex, sur le micro brut.
+                # Le DSP AEC n'est autorisé dans ce callback que dans le mode
+                # expérimental explicitement validé. En cas d'erreur, on coupe
+                # immédiatement ce mode : ne jamais transmettre un micro dont
+                # l'écho n'est plus contrôlé.
+                float_audio = raw_channel.astype(np.float32) / 32768.0
+                if _aec_mode and _duplex_filter is not None:
+                    try:
+                        cleaned, should_barge, _vad = _duplex_filter.process_mic(
+                            np.ascontiguousarray(raw_channel.astype(np.int16)),
+                            jarvis_speaking=jarvis_speaking,
+                        )
+                        if not cleaned.size:
+                            return
+                        float_audio = cleaned
+                        if should_barge and jarvis_speaking:
+                            # La coupure est exécutée sur la boucle asyncio,
+                            # jamais depuis le callback PortAudio.
+                            loop.call_soon_threadsafe(self.interrupt)
+                    except Exception as exc:
+                        _aec_mode = False
+                        self._duplex_filter = None
+                        self.ui.write_log(
+                            "SYS : AEC instable — repli immédiat half-duplex."
+                        )
+                        logging.getLogger(__name__).warning("AEC désarmé: %s", exc)
+
+                # Détection de parole sur le micro nettoyé en full-duplex,
+                # brut uniquement en half-duplex sûr.
                 is_speaking_detected = preprocessor.has_speech(float_audio, strict=jarvis_speaking)
 
                 # « ANO stop » / « attends » sont traités entièrement en local.
@@ -1162,6 +1196,10 @@ class AudioEngine:
                     noise_turn=m_noise,
                     text_turn_pending=m_text_locked,
                 )
+                if _aec_mode:
+                    # Seul le PCM AEC peut traverser pendant la parole. Les
+                    # verrous de bruit/annulation/texte restent absolus.
+                    is_held = m_noise or m_interrupted or m_text_locked
 
                 now_cb = time.monotonic()
                 if is_held and hasattr(self, "check_audio_watchdog"):
@@ -1573,9 +1611,12 @@ class AudioEngine:
                 # changement de micro. Un changement de périphérique invalide
                 # complètement le filtre adaptatif — les coefficients appris
                 # sur l'ancien micro/haut-parleur ne correspondent plus.
-                _duplex_filter.reset()
-                _duplex_filter.check_headphones()
-                _aec_mode = _duplex_filter.aec_available
+                if _duplex_filter is not None:
+                    _duplex_filter.reset()
+                    _duplex_filter.check_headphones()
+                    _aec_mode = _duplex_filter.aec_available
+                else:
+                    _aec_mode = False
 
                 _apply_mic_policy()
 

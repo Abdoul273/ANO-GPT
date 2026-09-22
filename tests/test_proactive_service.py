@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 
 from actions import proactive
+from core.proactive_engine import startup_greeting
 
 
 def test_un_evenement_attend_sans_boucle_de_polling(tmp_path):
@@ -79,6 +80,14 @@ def test_retour_maison_exige_une_transition(tmp_path, monkeypatch):
     assert not service.observe_location({"lat": 9.6, "lon": -13.7})
     assert not service.observe_location({"lat": 9.61, "lon": -13.7})
     assert service.observe_location({"lat": 9.5, "lon": -13.7})
+
+
+def test_salutation_demarrage_suit_le_mode_majeur(monkeypatch):
+    from core import personality_modes
+
+    monkeypatch.setattr(personality_modes, "active_mode", lambda: personality_modes.PersonalityMode.MAJEUR)
+    assert startup_greeting(proactive.datetime(2026, 9, 16, 10, 0)) == "Bonjour, Monsieur."
+    assert startup_greeting(proactive.datetime(2026, 9, 16, 20, 0)) == "Bon retour, Monsieur."
 
 
 def test_le_domicile_ne_peut_etre_enregistre_quexplicitement(tmp_path, monkeypatch):

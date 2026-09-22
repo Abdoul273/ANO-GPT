@@ -6,6 +6,8 @@ from core.live_speech_config import (
     LIVE_VOICE_OPTIONS,
     build_input_transcription_config,
     build_output_transcription_config,
+    full_duplex_aec_is_validated,
+    live_captions_provider,
     normalise_language_code,
     normalise_live_voice,
 )
@@ -13,6 +15,7 @@ from google.genai import types
 from core.gemini_connection import (
     is_invalid_api_key_error,
     is_invalid_live_setup_error,
+    is_quota_exhausted_error,
 )
 
 
@@ -52,6 +55,20 @@ def test_les_voix_live_sont_valides_et_normalisees():
     assert normalise_live_voice("voix-inconnue") == DEFAULT_LIVE_VOICE
 
 
+def test_migration_audio_sure_par_defaut():
+    assert live_captions_provider({}) == "gemini_live"
+    assert not full_duplex_aec_is_validated({})
+    assert not full_duplex_aec_is_validated({
+        "voice_barge_in_enabled": True,
+        "full_duplex_aec_enabled": True,
+    })
+    assert full_duplex_aec_is_validated({
+        "voice_barge_in_enabled": True,
+        "full_duplex_aec_enabled": True,
+        "full_duplex_aec_validated": True,
+    })
+
+
 def test_la_configuration_live_complete_est_serialisable():
     cfg = types.LiveConnectConfig(
         temperature=0.2,
@@ -83,6 +100,12 @@ def test_websocket_1007_ne_signifie_pas_automatiquement_cle_invalide():
 
 def test_une_vraie_erreur_de_cle_est_reconnue():
     assert is_invalid_api_key_error("400 API key not valid. Please pass a valid API key.")
+
+
+def test_un_refus_de_quota_n_est_ni_une_cle_invalide_ni_un_modele_absent():
+    error = "1011 You exceeded your current quota, please check your plan and billing details"
+    assert is_quota_exhausted_error(error)
+    assert not is_invalid_api_key_error(error)
 
 
 def test_les_hallucinations_classiques_du_bruit_sont_rejetees():

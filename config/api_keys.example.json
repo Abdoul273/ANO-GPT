@@ -4,12 +4,16 @@
   "github_backup_projects": [],
   "auto_extension_threshold": 3,
   "auto_extension_window_days": 14,
-  "live_model": "models/gemini-3.1-flash-live-preview",
+  "live_model": "models/gemini-3.8-live",
+  "gemini_live_api_version": "v1alpha",
   "live_model_fallback": "models/gemini-2.5-flash-native-audio-latest",
+  "live_captions_provider": "gemini_live",
+  "sensitive_command_verification": true,
+  "sensitive_command_transcribe_model": "models/gemini-3.8-live",
   "precision_stt_enabled": true,
-  "precision_stt_mode": "all",
+  "precision_stt_mode": "sensitive_only",
   "stt_provider": "gemini",
-  "precision_stt_model": "models/gemini-3.5-transcribe-live",
+  "precision_stt_model": "models/gemini-3.8-live",
   "serpapi_api_key": "",
   "deepseek_api_key": "",
   "xai_api_key": "",
@@ -67,5 +71,7 @@
   "user_lang": "fr",
   "user_city": "Conakry",
   "live_end_silence_ms": 700,
-  "voice_barge_in_enabled": true
+  "voice_barge_in_enabled": true,
+  "full_duplex_aec_enabled": false,
+  "full_duplex_aec_validated": false
 }

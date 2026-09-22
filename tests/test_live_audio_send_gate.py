@@ -20,6 +20,13 @@ def test_live_audio_is_checked_before_captions_and_transport(monkeypatch, condit
             async def close(self): pass
         async def send(**kwargs): sent.append(kwargs)
         monkeypatch.setattr("core.live_captions.LiveCaptions", Captions)
+        # Ce test cible l'ordre des garde-fous du mode diagnostic Transcribe.
+        # Le mode normal gemini_live ne crée volontairement aucun sous-titre
+        # parallèle.
+        monkeypatch.setattr(
+            "core.session_manager.live_captions_provider",
+            lambda _cfg: "gemini_transcribe",
+        )
         host = SimpleNamespace(out_queue=asyncio.Queue(), session=SimpleNamespace(send_realtime_input=send),
                                ui=SimpleNamespace(muted=condition in {"muted", "phone"}),
                                _is_speaking=condition in {"speaking", "video"},

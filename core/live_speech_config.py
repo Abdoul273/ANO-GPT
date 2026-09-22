@@ -10,8 +10,42 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+from core.live_model_policy import TRANSCRIBE_MODEL
 
 DEFAULT_LIVE_VOICE = "Charon"
+
+# Contrat de migration vocal. Ces valeurs sont lues depuis api_keys.json mais
+# restent ici afin que le comportement sûr soit testable sans démarrer Qt.
+DEFAULT_LIVE_CAPTIONS_PROVIDER = "gemini_live"
+DEFAULT_SENSITIVE_COMMAND_TRANSCRIBE_MODEL = TRANSCRIBE_MODEL
+
+
+def live_captions_provider(config: dict | None = None) -> str:
+    """Retourne le fournisseur de sous-titres, avec migration sûre.
+
+    Les anciens fichiers ne contiennent pas cette clé : ils migrent donc vers
+    Gemini Live et n'ouvrent plus de deuxième session Transcribe par défaut.
+    ``gemini_transcribe`` est conservé comme opt-in de diagnostic seulement.
+    """
+    value = str((config or {}).get(
+        "live_captions_provider", DEFAULT_LIVE_CAPTIONS_PROVIDER
+    ) or "").strip().casefold()
+    return "gemini_transcribe" if value == "gemini_transcribe" else DEFAULT_LIVE_CAPTIONS_PROVIDER
+
+
+def full_duplex_aec_is_validated(config: dict | None = None) -> bool:
+    """True uniquement après les trois opt-ins explicites nécessaires.
+
+    La présence de Speex/PipeWire n'est jamais une validation acoustique : sur
+    haut-parleurs, l'émission reste half-duplex tant que l'utilisateur n'a pas
+    validé la chaîne capture micro + sortie réellement jouée.
+    """
+    cfg = config or {}
+    return all(bool(cfg.get(key, False)) for key in (
+        "voice_barge_in_enabled",
+        "full_duplex_aec_enabled",
+        "full_duplex_aec_validated",
+    ))
 
 # Noms acceptés par ``speech_config.voice_config.prebuilt_voice_config``.
 # Le qualificatif sert uniquement à l'interface ; seul le nom canonique est

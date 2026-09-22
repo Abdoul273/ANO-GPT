@@ -19,8 +19,10 @@ from dataclasses import dataclass
 
 
 # ── Session vocale Live ──────────────────────────────────────────────────────
-DEFAULT_PRIMARY_MODEL = "models/gemini-3.1-flash-live-preview"
+# Modèle principal en streaming bidirectionnel temps réel à ultra-faible latence.
+DEFAULT_PRIMARY_MODEL = "models/gemini-3.8-live"
 DEFAULT_FALLBACK_MODEL = "models/gemini-2.5-flash-native-audio-latest"
+LIVE_EXTENDED_THINKING_MODEL = "models/gemini-3.8-live-extended-thinking"
 
 # ── Rôles texte et vision ────────────────────────────────────────────────────
 #: Extraction, classification, reformulation courte. Le plus appelé, de loin :
@@ -40,14 +42,15 @@ REASONING_PREVIEW_MODEL = "gemini-3-pro-preview"
 PINNED_PRO_MODEL = "gemini-2.5-pro"
 PINNED_FLASH_MODEL = "gemini-2.5-flash"
 #: Analyse d'écran par session Live audio-natif.
-SCREEN_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+SCREEN_LIVE_MODEL = "models/gemini-3.8-live"
 #: Seconde passe de transcription pour les commandes sensibles.
-TRANSCRIBE_MODEL = "models/gemini-3.5-transcribe-live"
+TRANSCRIBE_MODEL = "models/gemini-3.8-live"
 
 #: Rôle → identifiant, pour les usages dynamiques (diagnostic, configuration).
 MODEL_CATALOG: dict[str, str] = {
     "live_primary": DEFAULT_PRIMARY_MODEL,
     "live_fallback": DEFAULT_FALLBACK_MODEL,
+    "live_thinking": LIVE_EXTENDED_THINKING_MODEL,
     "fast": FAST_MODEL,
     "balanced": BALANCED_MODEL,
     "reasoning": REASONING_MODEL,
@@ -98,4 +101,3 @@ class LiveModelPolicy:
     def activate_fallback(self) -> str:
         self.active = self.fallback
         return self.active
-

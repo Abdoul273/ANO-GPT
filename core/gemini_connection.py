@@ -28,6 +28,11 @@ _INVALID_SETUP_MARKERS = (
     "invalid argument",
 )
 
+_QUOTA_MARKERS = (
+    "quota exceeded", "exceeded your current quota", "resource_exhausted",
+    "billing details", "rate_limit_exceeded", "rate limit exceeded",
+)
+
 
 def is_invalid_api_key_error(error: BaseException | str) -> bool:
     """Le code WebSocket 1007 seul ne signifie PAS clé invalide.
@@ -42,6 +47,16 @@ def is_invalid_api_key_error(error: BaseException | str) -> bool:
 def is_invalid_live_setup_error(error: BaseException | str) -> bool:
     message = str(error).lower()
     return any(marker in message for marker in _INVALID_SETUP_MARKERS)
+
+
+def is_quota_exhausted_error(error: BaseException | str) -> bool:
+    """True pour un refus durable de quota/facturation Gemini.
+
+    Un code WebSocket 1011 seul reste ambigu. Seul le texte explicite du
+    serveur active cette voie afin de ne pas ralentir une vraie panne réseau.
+    """
+    message = str(error).casefold()
+    return any(marker in message for marker in _QUOTA_MARKERS)
 
 
 def safe_error_summary(error: BaseException | str, limit: int = 320) -> str:

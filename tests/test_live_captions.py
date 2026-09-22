@@ -64,7 +64,7 @@ def test_sans_cle_les_sous_titres_sont_inactifs_et_push_ne_bloque_pas():
 
 
 def test_les_hypotheses_apparaissent_pendant_la_parole(monkeypatch):
-    monkeypatch.delenv("ANOGPT_LIVE_CAPTIONS", raising=False)
+    monkeypatch.setattr("core.live_captions.captions_enabled", lambda: True)
     _Turn.instances.clear()
     host = _host()
 
@@ -91,7 +91,7 @@ def test_les_hypotheses_apparaissent_pendant_la_parole(monkeypatch):
 
 
 def test_la_transcription_de_live_fait_taire_les_sous_titres(monkeypatch):
-    monkeypatch.delenv("ANOGPT_LIVE_CAPTIONS", raising=False)
+    monkeypatch.setattr("core.live_captions.captions_enabled", lambda: True)
     host = _host()
 
     async def scenario():
@@ -116,7 +116,7 @@ def test_la_transcription_de_live_fait_taire_les_sous_titres(monkeypatch):
 
 
 def test_un_tour_annule_abandonne_la_session_transcribe(monkeypatch):
-    monkeypatch.delenv("ANOGPT_LIVE_CAPTIONS", raising=False)
+    monkeypatch.setattr("core.live_captions.captions_enabled", lambda: True)
     _Turn.instances.clear()
     host = _host()
 
@@ -134,3 +134,38 @@ def test_un_tour_annule_abandonne_la_session_transcribe(monkeypatch):
     asyncio.run(scenario())
     assert _Turn.instances[0].aborted
     assert host._stt_live_preview == ("", 0.0, "")
+
+
+def test_pcm_pc_ouvre_et_clot_un_tour_sans_marqueur(monkeypatch):
+    """Le micro PC Mark-LII livre du PCM continu, sans activity start/end."""
+    monkeypatch.setattr("core.live_captions.captions_enabled", lambda: True)
+    _Turn.instances.clear()
+    host = _host()
+
+    async def scenario():
+        captions = LiveCaptions(host, turn_factory=_Turn)
+        captions.start()
+        # 128 ms de voix : au-delà de l'attaque de 90 ms.
+        captions.push({"data": b"\x00\x10" * 2048, "mime_type": "audio/pcm;rate=16000"})
+        for _ in range(40):
+            if _Turn.instances:
+                break
+            await asyncio.sleep(0)
+        assert _Turn.instances
+        await asyncio.sleep(0.9)
+        for _ in range(40):
+            if not captions._local_owns_turn:
+                break
+            await asyncio.sleep(0.05)
+        await captions.close()
+
+    asyncio.run(scenario())
+    assert _Turn.instances[0].pcm
+
+
+def test_gemini_live_est_le_defaut_et_ne_demarre_pas_transcribe():
+    from core.live_captions import captions_enabled
+
+    assert captions_enabled({}) is False
+    assert captions_enabled({"live_captions_provider": "gemini_live"}) is False
+    assert captions_enabled({"live_captions_provider": "gemini_transcribe"}) is True

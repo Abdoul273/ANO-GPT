@@ -306,7 +306,7 @@ class ThoughtNoiseFilter:
             "Un instant, j'analyse vos fichiers...",
         ),
         (
-            re.compile(r"\b(search|recherche|google|web|en ligne|duckduckgo|internet|source)\b", re.IGNORECASE),
+            re.compile(r"\b(search|recherche|google|web|en ligne|internet|source)\b", re.IGNORECASE),
             "Recherche d'informations sur le web...",
             "Un instant, je recherche sur le web...",
         ),
