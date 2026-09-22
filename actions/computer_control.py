@@ -703,8 +703,9 @@ def _erase(scope: str = "last", count: Any = None) -> str:
     # « efface » : ce qu'ANO vient de taper, rien de plus.
     last = dict(_last_typed)
     if not last or time.monotonic() - float(last.get("at", 0)) > _LAST_TYPED_TTL_S:
-        return ("Je n'ai rien tapé récemment. Précise quoi effacer : le dernier mot, "
-                "toute la ligne, ou un nombre de caractères.")
+        return ("Je n'ai rien tapé récemment. Si c'est l'utilisateur qui a écrit, "
+                "rappelle erase avec scope 'all' (toute la ligne) ou 'word' (dernier "
+                "mot) selon sa demande ; sinon demande-lui quoi effacer.")
     if last.get("submitted"):
         return ("Le texte a déjà été validé par Entrée : je ne peux plus l'effacer "
                 "au clavier.")
@@ -1359,7 +1360,10 @@ def _parse_control_locally(text: str) -> Optional[Dict[str, Any]]:
         n = re.search(r"(\d+)\s*(?:caract[èe]res?|lettres?)", rest)
         if n:
             return {"action": "erase", "params": {"count": int(n.group(1))}}
-        if re.search(r"\b(?:tout|toute\s+la\s+ligne|la\s+ligne|le\s+champ)\b", rest):
+        # « efface ce que j'ai écrit » : texte de l'utilisateur, pas d'ANO —
+        # il n'y a rien à retirer caractère par caractère, c'est la ligne.
+        if re.search(r"\b(?:tout|toute\s+la\s+ligne|la\s+ligne|le\s+champ)\b", rest) or \
+                re.search(r"\bj\W?ai\s+(?:[ée]crit|tap[ée])", rest):
             return {"action": "erase", "params": {"scope": "all"}}
         if re.search(r"\b(?:dernier\s+)?mot\b", rest):
             return {"action": "erase", "params": {"scope": "word"}}

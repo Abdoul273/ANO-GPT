@@ -1400,7 +1400,8 @@ TOOL_DECLARATIONS = [
                         "erase is the ONLY action for « efface / supprime / enlève » after typing: "
                         "default scope 'last' removes exactly the text ANO just typed (Backspace × its "
                         "length); scope 'word' removes the last word, scope 'all' clears the whole "
-                        "line/field; 'count' removes N characters. Never use clear_field or a raw "
+                        "line/field; 'count' removes N characters. When the USER typed the text "
+                        "(« efface ce que j'ai écrit »), use scope 'all' directly. Never use clear_field or a raw "
                         "hotkey such as ctrl+a for this: in a terminal ctrl+a moves the cursor "
                         "instead of selecting. "
                         "fullscreen toggles fullscreen mode on active or target window. "
@@ -2398,6 +2399,13 @@ _DEFERRED_TIKTOK_ACTIONS = frozenset({
 })
 
 
+def _music_is_deferred(args: dict) -> bool:
+    """Seule l'identification écoute la pièce ; rejouer ou lister est immédiat."""
+    action = str(args.get("action") or "identify").strip().lower()
+    return action not in {"play", "lance", "jouer", "play_last", "history",
+                          "historique", "last", "dernière", "derniere"}
+
+
 def _tiktok_is_deferred(args: dict) -> bool:
     action = str(args.get("action") or "diagnose").strip().lower()
     return action in _DEFERRED_TIKTOK_ACTIONS
@@ -3004,6 +3012,15 @@ class ToolDispatcher:
                     session_memory=self._tool_session_memory, speak=self.speak,
                     grab_frame=self._grab_camera_still, save_photo=self._save_capture,
                 )
+            elif name == "music_recognition":
+                # « J'écoute » part après l'accusé : l'enregistrer sur le
+                # monitor des enceintes fausserait l'empreinte.
+                await self._wait_voice_silence()
+                from actions.music_recognition import music_recognition
+                result = await asyncio.to_thread(
+                    music_recognition, parameters=args, player=self.ui,
+                    session_memory=self._tool_session_memory,
+                )
             elif name == "tiktok_coach":
                 from actions.tiktok_coach import tiktok_coach
                 result = await asyncio.to_thread(
@@ -3030,6 +3047,14 @@ class ToolDispatcher:
             self.ui.write_log(f"WARN: livraison différée {name} indisponible : {exc}")
         if not delivered:
             self._defer_turn(prompt)
+
+    async def _wait_voice_silence(self, *, start_s: float = 1.2, max_s: float = 8.0) -> None:
+        """Laisse l'accusé vocal démarrer puis finir avant d'écouter la pièce."""
+        await asyncio.sleep(start_s)
+        deadline = time.monotonic() + max_s
+        while getattr(self, "_is_speaking", False) and time.monotonic() < deadline:
+            await asyncio.sleep(0.2)
+        await asyncio.sleep(0.6)
 
     def _start_deferred_tool(self, name: str, args: dict) -> bool:
         """Un seul travail long du même type, accusé immédiat pour le micro."""
@@ -4187,6 +4212,17 @@ class ToolDispatcher:
                                                save_photo=self._save_capture),
                 )
                 result = r or "Je n'ai rien reconnu."
+
+            elif name == "music_recognition" and _music_is_deferred(args):
+                # Deux fenêtres d'écoute et l'empreinte : jusqu'à 50 s, au-delà
+                # du délai du répartiteur. Le titre arrive dans un nouveau tour.
+                if self._start_deferred_tool(name, args):
+                    result = ("J'écoute. Dis uniquement « J'écoute. » puis tais-toi : "
+                              "le titre sera annoncé dès qu'il sera reconnu. "
+                              "Ne rappelle pas cet outil.")
+                else:
+                    result = ("Une écoute est déjà en cours ; dis-le en quelques mots "
+                              "et ne rappelle pas cet outil.")
 
             elif name == "music_recognition":
                 from actions.music_recognition import music_recognition

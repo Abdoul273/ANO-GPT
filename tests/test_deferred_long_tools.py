@@ -70,3 +70,33 @@ def test_tiktok_video_analyses_are_deferred_but_local_reads_are_not():
     assert not td._tiktok_is_deferred({"action": "list"})
     assert not td._tiktok_is_deferred({"action": "best_time"})
     assert not td._tiktok_is_deferred({"action": "report"})
+
+
+def test_music_identification_is_deferred_but_history_is_not():
+    assert td._music_is_deferred({})
+    assert td._music_is_deferred({"action": "identify"})
+    assert not td._music_is_deferred({"action": "history"})
+    assert not td._music_is_deferred({"action": "play_last"})
+
+
+def test_music_listening_waits_for_ano_to_stop_speaking(monkeypatch):
+    calls = {}
+
+    def fake_music(**kwargs):
+        calls.update(kwargs)
+        return "C'est « Bella » de Maître Gims."
+
+    monkeypatch.setitem(sys.modules, "actions.music_recognition",
+                        types.SimpleNamespace(music_recognition=fake_music))
+    fake = _Fake()
+    waited = []
+
+    async def fake_wait():
+        waited.append(True)
+
+    fake._wait_voice_silence = fake_wait
+
+    asyncio.run(td.ToolDispatcher._deliver_deferred_tool(fake, "music_recognition", {}))
+
+    assert waited == [True]
+    assert "Bella" in fake.turns[0]

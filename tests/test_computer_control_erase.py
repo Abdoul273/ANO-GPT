@@ -84,3 +84,9 @@ def test_efface_tout(keyboard):
     sent, _ = keyboard
     assert "Ligne effacée" in cc.computer_control({"description": "efface tout"})
     assert sent == [("combo", "ctrl+e"), ("combo", "ctrl+u")]
+
+
+def test_efface_ce_que_j_ai_ecrit_vise_la_ligne(keyboard):
+    sent, _ = keyboard
+    cc.computer_control({"description": "efface ce que j'ai écrit"})
+    assert sent == [("combo", "ctrl+e"), ("combo", "ctrl+u")]
