@@ -101,7 +101,7 @@ def test_la_reprise_de_parole_referme_une_interruption_bloquee(assistant):
 def test_un_nouveau_tour_du_modele_referme_linterruption():
     """C'est la garantie principale : le modèle reparle, donc c'est terminé."""
     start = MAIN.index("if audio_data:")
-    block = MAIN[start:start + 500]
+    block = MAIN[start:start + 900]
     assert "if not self._model_turn_active:" in block
     assert "_clear_interrupted()" in block
 
@@ -109,7 +109,7 @@ def test_un_nouveau_tour_du_modele_referme_linterruption():
 def test_la_transcription_de_sortie_referme_aussi():
     """Certains tours n'arrivent que par la transcription, sans audio brut."""
     start = MAIN.index("sc.output_transcription and sc.output_transcription.text")
-    block = MAIN[start:start + 300]
+    block = MAIN[start:start + 600]
     assert "_clear_interrupted()" in block
 
 

@@ -18,6 +18,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import Callable
 
 STALL_S = 3.0
 REPORT_COOLDOWN_S = 30.0
@@ -26,6 +27,13 @@ _LOG = logging.getLogger("anogpt.freeze")
 _beats: dict[str, float] = {}
 _last_report = 0.0
 _thread: threading.Thread | None = None
+_alert: Callable[[str, Path | None], None] | None = None
+
+
+def set_alert(callback: Callable[[str, Path | None], None] | None) -> None:
+    """Installe l'alerte de l'interface ; appelée depuis le veilleur indépendant."""
+    global _alert
+    _alert = callback
 
 
 def beat(name: str) -> None:
@@ -65,6 +73,11 @@ def dump_all_threads(reason: str) -> Path | None:
         path = None
     _LOG.error("gel : %s — piles dans %s", reason, path, extra={"reason": reason})
     print(f"[FreezeWatch] ⚠️ {reason} — piles écrites dans {path}", file=sys.stderr)
+    if _alert is not None:
+        try:
+            _alert(reason, path)
+        except Exception:
+            _LOG.exception("alerte de gel indisponible")
     return path
 
 

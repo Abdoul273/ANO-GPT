@@ -1599,6 +1599,16 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         # toujours (boucle au repos, plus de voix, plus de texte).
         self._session_tg = None
         spawn_logged(self._session_teardown_watchdog(), name="session-teardown-watchdog", ui=self.ui)
+        def _freeze_alert(reason, path) -> None:
+            def display() -> None:
+                detail = f"{reason}. Diagnostic : {path or 'journal'}"
+                self.ui.write_log("ALERTE : gel détecté — " + detail)
+                self.ui.show_card("error", "Gel de la voix détecté", detail)
+
+            if self._loop and self._loop.is_running():
+                self._loop.call_soon_threadsafe(display)
+
+        freeze_watch.set_alert(_freeze_alert)
 
         # Initialisation paresseuse des fonctionnalités vision/RAG terminées.
         # Elles tournent hors de la boucle audio et restent dormantes tant que
@@ -1748,6 +1758,27 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
+
+        async def _report_startup_health() -> None:
+            from core.startup_health import collect_startup_health
+            connected = bool(self._dashboard and self._dashboard._phone_clients)
+            try:
+                states, missing = await asyncio.wait_for(
+                    asyncio.to_thread(collect_startup_health, connected), timeout=11.0,
+                )
+            except Exception as exc:
+                self.ui.write_log(f"WARN : contrôle de santé indisponible — {exc}")
+                return
+            self.ui.write_log("SANTÉ : " + " ; ".join(states))
+            if missing:
+                detail = " ; ".join(missing)
+                self.ui.write_log("ALERTE démarrage : " + detail)
+            self.ui.show_card(
+                "error" if missing else "info", "Santé au démarrage",
+                "\n".join([*states, *missing]),
+            )
+
+        spawn_logged(_report_startup_health(), name="startup-health", ui=self.ui)
 
         # Control socket — lives for the whole process, not per-session, so the
         # global hotkey keeps working across reconnects.
