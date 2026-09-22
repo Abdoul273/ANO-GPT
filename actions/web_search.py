@@ -16,6 +16,7 @@ import threading
 import time
 import unicodedata
 import atexit
+import contextvars
 import importlib.util
 import warnings
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
@@ -32,6 +33,9 @@ _REQUESTS = importlib.util.find_spec("requests") is not None
 warnings.filterwarnings("ignore", message="This package.*has been renamed", category=RuntimeWarning)
 
 _GEMINI_TIMEOUT = 8.0
+# L'analyse d'intention n'est qu'un aiguillage : au-delà, la recherche
+# générale sur la phrase brute vaut mieux qu'un tour coupé par le répartiteur.
+_INTENT_TIMEOUT = 3.0
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gemini-search")
 atexit.register(_executor.shutdown, wait=False)
 
@@ -45,6 +49,26 @@ def get_last_card_markdown() -> Optional[str]:
     global _last_card_markdown
     v, _last_card_markdown = _last_card_markdown, None
     return v
+
+
+# Échéance de l'appel `web_search` en cours. Chaque requête SerpApi réduit
+# son délai au temps restant : sans elle, deux appels de 8 s enchaînés
+# (localisation refusée, prix puis repli) dépassaient les 15 s du
+# répartiteur, qui coupait l'outil sans qu'aucun texte ne revienne.
+_deadline: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar(
+    "web_search_deadline", default=None,
+)
+
+
+def _time_left(default: float) -> float:
+    """Délai à accorder à un appel réseau, borné par l'échéance en cours."""
+    deadline = _deadline.get()
+    if deadline is None:
+        return default
+    left = deadline - time.monotonic()
+    if left < 0.5:
+        raise TimeoutError("temps de recherche épuisé")
+    return min(default, left)
 
 
 def _run_with_timeout(fn, *args, timeout: float = _GEMINI_TIMEOUT, **kwargs):
@@ -305,8 +329,9 @@ def _call_serpapi(params: dict, timeout: Any = 8) -> dict:
         attempt = {k: v for k, v in params.items() if k != "location"}
         if location:
             attempt["location"] = location
+        call_timeout = _time_left(float(timeout))
         try:
-            r = kit.http().get("https://serpapi.com/search.json", params=attempt, timeout=timeout)
+            r = kit.http().get("https://serpapi.com/search.json", params=attempt, timeout=call_timeout)
             r.raise_for_status()
             data = r.json()
             if isinstance(data, dict) and data.get("error") and not any(
@@ -736,7 +761,7 @@ def _gather(jobs: dict, deadline: float) -> Tuple[dict, dict]:
 def _fresh_search(subjects: list, mode: str, budget_s: float = 13.0) -> Tuple[str, str]:
     """Recherche parallèle par sujet. Rend (texte pour le modèle, Markdown carte)."""
     from datetime import datetime
-    deadline = time.monotonic() + max(3.0, budget_s - 1.0)
+    deadline = time.monotonic() + max(1.0, budget_s - 1.0)
     with_news = mode == "news" or any(_is_time_sensitive(s) for s in subjects)
     with_web = mode != "news" or len(subjects) == 1
     use_serp = bool(_get_serpapi_api_key())
@@ -1242,7 +1267,8 @@ def _gemini_headlines_impl(n: int) -> tuple:
 
 
 def _gemini_headlines(n: int = 5) -> tuple:
-    return _run_with_timeout(_gemini_headlines_impl, n)
+    return _run_with_timeout(_gemini_headlines_impl, n,
+                             timeout=_time_left(_GEMINI_TIMEOUT))
 
 
 # ── Modes ───────────────────────────────────────────────────────────────────
@@ -1410,8 +1436,7 @@ def _detect_search_intent_ai(description: str) -> Optional[Dict]:
     if not api_key:
         return None
     try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client()
         prompt = (
             f"Analyse la phrase suivante et détermine le mode de recherche et les paramètres. "
             f"Retourne UNIQUEMENT un objet JSON avec les clés nécessaires.\n"
@@ -1442,6 +1467,18 @@ def web_search(
     Recherche web intelligente avec sélection automatique du mode.
     Modes : search, social, news, research, price, nearby, compare, headlines.
     """
+    try:
+        budget_s = float((parameters or {}).get("_budget_s") or 13.0)
+    except (TypeError, ValueError):
+        budget_s = 13.0
+    token = _deadline.set(time.monotonic() + budget_s)
+    try:
+        return _web_search(parameters, player)
+    finally:
+        _deadline.reset(token)
+
+
+def _web_search(parameters: dict, player=None) -> str:
     params = parameters or {}
     description = params.get("description", "").strip()
     query  = params.get("query", "").strip()
@@ -1451,10 +1488,6 @@ def web_search(
     count  = int(params.get("count", 5))
     platform = str(params.get("platform", "")).casefold().strip()
     queries = params.get("queries") or []
-    try:
-        budget_s = float(params.get("_budget_s") or 13.0)
-    except (TypeError, ValueError):
-        budget_s = 13.0
 
     # Interprétation de la description naturelle
     if description and not query and not items:
@@ -1467,7 +1500,12 @@ def web_search(
             count  = local.get("count", count)
             platform = local.get("platform", platform)
         else:
-            ai = _detect_search_intent_ai(description)
+            try:
+                ai = _run_with_timeout(_detect_search_intent_ai, description,
+                                       timeout=_time_left(_INTENT_TIMEOUT))
+            except Exception as exc:
+                print(f"[WebSearch] analyse d'intention abandonnée ({exc})")
+                ai = None
             if ai:
                 mode   = ai.get("mode", mode)
                 query  = ai.get("query", query)
@@ -1513,7 +1551,7 @@ def web_search(
         if mode in ("search", "news", "research") and subjects:
             # Recherche fraîche : un sujet par requête, actualités datées
             # et web en parallèle, repli automatique si SerpApi tombe.
-            text, card = _fresh_search(subjects, mode, budget_s)
+            text, card = _fresh_search(subjects, mode, _time_left(60.0))
             _last_card_markdown = card or None
             return text
         if not _get_serpapi_api_key():
