@@ -591,9 +591,13 @@ def _relevant(subject: str, text: str) -> bool:
         return True
     hay = _words(text)
     numbers = {w for w in key if re.search(r"\d", w)}
+    names = key - numbers
     if numbers and not numbers & hay:
         return False
-    return bool(key & hay)
+    # Le numéro seul ne suffit pas : « DnD 5.5 » n'est pas « Opus 5.5 ».
+    if names:
+        return bool(names & hay)
+    return True
 
 
 def _fetch_news_items(subject: str, limit: int = 6) -> list:
@@ -649,7 +653,7 @@ def _ai_overview_text(data: dict) -> str:
     return " ".join(parts).strip()
 
 
-def _web_lines(data: dict, max_results: int = 4) -> list:
+def _web_lines(data: dict, max_results: int = 4, subject: str = "") -> list:
     lines = []
     ab = data.get("answer_box") or {}
     ans = ab.get("answer") or ab.get("snippet") or ab.get("result")
@@ -662,12 +666,14 @@ def _web_lines(data: dict, max_results: int = 4) -> list:
     if kg.get("title") and kg.get("description"):
         lines.append(f"  📖 {kg['title']} : {kg['description']}")
     stories = data.get("top_stories") or []
+    if subject:
+        stories = [st for st in stories if _relevant(subject, st.get("title") or "")]
     for st in stories[:3]:
         if st.get("title"):
             src = _source_name(st.get("source"))
             meta = ", ".join(x for x in (src, st.get("date") or "") if x)
             lines.append(f"  📰 {st['title']}" + (f" — {meta}" if meta else ""))
-    for r in (data.get("organic_results") or [])[:max_results]:
+    for r in _relevant_organic(data, subject)[:max_results]:
         title = r.get("title")
         if not title:
             continue
@@ -678,6 +684,13 @@ def _web_lines(data: dict, max_results: int = 4) -> list:
         if r.get("link"):
             lines.append(f"    Source : {r['link']}")
     return lines
+
+
+def _relevant_organic(data: dict, subject: str = "") -> list:
+    rows = [r for r in (data.get("organic_results") or []) if r.get("title")]
+    if not subject:
+        return rows
+    return [r for r in rows if _relevant(subject, f"{r['title']} {r.get('snippet') or ''}")]
 
 
 def _ddgs_fallback(subject: str, news: bool) -> dict:
@@ -781,12 +794,12 @@ def _fresh_search(subjects: list, mode: str, budget_s: float = 13.0) -> Tuple[st
                 md.append(f"- **[{n['title']}]({link})**" if link else f"- **{n['title']}**")
                 if meta:
                     md.append(f"  _{meta}_")
-        wl = _web_lines(web, max_results=3 if news else 5) if web else []
+        wl = _web_lines(web, max_results=3 if news else 5, subject=subject) if web else []
         if wl:
             out.append("  Web :")
             out.extend(wl)
-            for r in (web.get("organic_results") or [])[:3 if news else 5]:
-                if r.get("title") and r.get("link"):
+            for r in _relevant_organic(web, subject)[:3 if news else 5]:
+                if r.get("link"):
                     md.append(f"- [{r['title']}]({r['link']})")
         if not news and not wl:
             failed = [k for k in errors if k[1] == i]

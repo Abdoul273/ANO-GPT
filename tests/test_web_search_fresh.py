@@ -41,3 +41,19 @@ def test_each_subject_searched_in_parallel_and_reported(monkeypatch):
     assert "▶ Opus 5.5" in text and "rien ne confirme" in text
     assert "pas accès" not in text.split("Consigne")[0]
     assert "[xAI lance Grok 4.7](https://z.fr/a)" in card
+
+
+def test_runtime_accepts_queries_without_query():
+    """Régression : `queries` seul était rejeté (« paramètres requis manquants : query »)."""
+    from core.action_runtime import ActionRuntime
+    from core.tool_dispatcher import TOOL_DECLARATIONS
+
+    runtime = ActionRuntime(TOOL_DECLARATIONS)
+    prepared = runtime.prepare("web_search", {"queries": ["Opus 5.5", "GPT-6 Sol"]})
+    assert prepared["queries"] == ["Opus 5.5", "GPT-6 Sol"]
+    assert runtime.prepare("web_search", {"mode": "headlines"})["mode"] == "headlines"
+
+
+def test_version_alone_is_not_relevant():
+    assert not ws._relevant("Opus 5.5", "Arcana Unleashed : Les Sorts - DnD 5.5")
+    assert ws._relevant("Opus 5.5", "Anthropic dévoile Claude Opus 5.5")

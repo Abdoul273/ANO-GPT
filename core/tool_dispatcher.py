@@ -319,14 +319,16 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "query":  {"type": "STRING", "description": "Search query or topic"},
+                "query":  {"type": "STRING", "description": "Search query or topic (or use 'queries' for several subjects)"},
                 "queries": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "One short query per distinct subject when the question covers several (max 4), e.g. ['Grok 4.7', 'GPT-6 Sol', 'Claude Opus 5.5']"},
                 "mode":   {"type": "STRING", "description": "search | social | news | research | price | nearby | compare | headlines"},
                 "platform": {"type": "STRING", "description": "For social mode: tiktok | instagram | youtube | facebook | x | twitch | snapchat"},
                 "items":  {"type": "ARRAY",  "items": {"type": "STRING"}, "description": "Items to compare (compare mode)"},
                 "aspect": {"type": "STRING", "description": "Comparison aspect: price | specs | reviews | features"},
             },
-            "required": ["query"]
+            # Ni `query` ni `queries` n'est requis seul : l'un OU l'autre suffit
+            # (et aucun pour headlines). L'action refuse elle-même un appel vide.
+            "required": []
         }
     },
     {
