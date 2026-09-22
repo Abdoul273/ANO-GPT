@@ -70,7 +70,7 @@ mcp = FastMCP(
 )
 
 
-def _run(name: str, offline=None, **args) -> str:
+def _run(name: str, /, *, offline=None, **args) -> str:
     """Exécute l'outil dans ANO-GPT, avec repli hors-ligne facultatif.
 
     `offline` est appelé si — et seulement si — l'application est éteinte. Les
