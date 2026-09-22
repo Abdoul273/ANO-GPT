@@ -390,6 +390,30 @@ def get_user_coords() -> Optional[Tuple[float, float]]:
     return geocode(place or loc.get("country_name") or "")
 
 
+def get_last_known_gps() -> Optional[dict]:
+    """Dernier relevé GPS du téléphone, même périmé, avec son âge en secondes.
+
+    Sert aux usages où une vraie position ancienne vaut mieux qu'un centroïde
+    de ville ou de pays (heures de prière : l'utilisateur n'a probablement pas
+    bougé de 100 km depuis son dernier relevé, alors que la ville configurée
+    peut être à des centaines de km).
+    """
+    try:
+        d = json.loads(_LIVE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    lat, lon = d.get("lat"), d.get("lon")
+    if lat is None or lon is None:
+        return None
+    return {
+        "lat": float(lat),
+        "lon": float(lon),
+        "accuracy_m": d.get("accuracy_m"),
+        "source": d.get("source", "phone-gps"),
+        "age_s": max(0.0, time.time() - float(d.get("_at", 0))),
+    }
+
+
 def get_precise_user_coords(
     max_accuracy_m: float = 500.0, *, max_age_s: float | None = None,
 ) -> Optional[Tuple[float, float]]:

@@ -265,6 +265,7 @@ class PrayerConfig:
     last_lat: Optional[float] = None
     last_lon: Optional[float] = None
     last_city: Optional[str] = None
+    last_source: Optional[str] = None
 
 
 class PrayerManager:
@@ -273,8 +274,12 @@ class PrayerManager:
     CONFIG_FILE = Path(__file__).resolve().parent.parent / "config" / "prayer_config.json"
     STATE_FILE = Path(__file__).resolve().parent.parent / "config" / "prayer_state.json"
 
-    # Seuil de déplacement (en km) pour recalculer immédiatement
-    DISPLACEMENT_THRESHOLD_KM = 10.0
+    # Seuil de déplacement (en km) pour recalculer immédiatement. Le calcul
+    # est instantané : autant suivre le GPS de près plutôt que d'annoncer
+    # l'horaire d'une localité voisine.
+    DISPLACEMENT_THRESHOLD_KM = 2.0
+    # Au-delà de ce déplacement, le nom de lieu affiché est re-résolu.
+    CITY_REFRESH_KM = 1.0
 
     def __init__(self, config_path: Path | None = None, state_path: Path | None = None):
         self._config_path = config_path or self.CONFIG_FILE
@@ -345,27 +350,80 @@ class PrayerManager:
         except Exception as exc:
             print(f"[Prayer] Erreur sauvegarde état : {exc}")
 
+    # Description lisible de la source de position (pour « status »/« today »).
+    position_source: str = "inconnue"
+
+    def _remember_position(self, lat: float, lon: float, source: str) -> str:
+        """Mémorise la position et résout le nom de lieu seulement si on a bougé."""
+        moved = (
+            self.config.last_lat is None
+            or self.config.last_lon is None
+            or haversine_km(lat, lon, self.config.last_lat, self.config.last_lon) > self.CITY_REFRESH_KM
+        )
+        if moved or not self.config.last_city:
+            city = None
+            try:
+                from core.geolocation import reverse_geocode
+                place = reverse_geocode(lat, lon) or {}
+                city = place.get("city") or place.get("country_name")
+            except Exception:
+                city = None
+            self.config.last_city = city or self.config.last_city or "position GPS"
+        if moved or self.config.last_source != source:
+            self.config.last_lat = lat
+            self.config.last_lon = lon
+            self.config.last_source = source
+            self.save_config()
+        return self.config.last_city or "position GPS"
+
     def resolve_coords(self) -> Tuple[float, float, str]:
-        """Obtient les coordonnées via core.geolocation ou retombe sur la config/défaut."""
+        """Position réelle de l'utilisateur, de la plus précise à la plus vague.
+
+        1. GPS du téléphone (relevé récent ou dernier relevé connu) ;
+        2. dernière position GPS mémorisée dans la config ;
+        3. ville configurée géocodée.
+        Jamais Paris : sans aucune source, on lève une erreur explicite plutôt
+        que d'annoncer des horaires d'un autre continent.
+        """
+        try:
+            from core.geolocation import get_last_known_gps
+            gps = get_last_known_gps()
+        except Exception:
+            gps = None
+        if gps:
+            age_min = int(gps["age_s"] // 60)
+            fresh = "à l'instant" if age_min < 1 else f"il y a {age_min} min"
+            self.position_source = f"GPS du téléphone ({fresh})"
+            city = self._remember_position(gps["lat"], gps["lon"], "phone-gps")
+            return gps["lat"], gps["lon"], city
+
+        if self.config.last_lat is not None and self.config.last_lon is not None:
+            self.position_source = "dernière position GPS mémorisée"
+            return (
+                float(self.config.last_lat),
+                float(self.config.last_lon),
+                self.config.last_city or "dernière position connue",
+            )
+
         try:
             from core.geolocation import get_user_coords, get_user_location
-            coords = get_user_coords()
             loc = get_user_location()
-            city = loc.get("city") or loc.get("country_name") or "Localité inconnue"
-            if coords and len(coords) == 2 and coords[0] is not None:
-                lat, lon = float(coords[0]), float(coords[1])
-                self.config.last_lat = lat
-                self.config.last_lon = lon
-                self.config.last_city = city
-                return lat, lon, city
+            coords = get_user_coords()
+            if coords and coords[0] is not None:
+                city = loc.get("city") or loc.get("country_name") or "ville configurée"
+                self.position_source = f"ville configurée ({city})"
+                self.config.last_lat, self.config.last_lon = float(coords[0]), float(coords[1])
+                self.config.last_city, self.config.last_source = city, "config"
+                self.save_config()
+                return float(coords[0]), float(coords[1]), city
         except Exception:
             pass
 
-        # Repli sur les coordonnées enregistrées ou Paris par défaut
-        lat = self.config.last_lat if self.config.last_lat is not None else 48.8566
-        lon = self.config.last_lon if self.config.last_lon is not None else 2.3522
-        city = self.config.last_city or "Paris"
-        return lat, lon, city
+        self.position_source = "inconnue"
+        raise RuntimeError(
+            "Position inconnue : ouvre le dashboard sur le téléphone pour envoyer "
+            "le GPS, ou renseigne user_city dans config/api_keys.json."
+        )
 
     def get_schedule(
         self,
@@ -492,8 +550,11 @@ class PrayerManager:
             return None
 
         now = now or datetime.datetime.now().astimezone()
-        schedule = self.get_schedule(target_date=now.date())
-        _, _, city = self.resolve_coords()
+        try:
+            schedule = self.get_schedule(target_date=now.date(), now_ref=now)
+        except RuntimeError as exc:
+            print(f"[Prayer] Annonce impossible : {exc}")
+            return None
 
         for name in PRAYER_NAMES:
             if not self.is_prayer_enabled(name):

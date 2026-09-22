@@ -48,7 +48,10 @@ def prayer_control(parameters: dict | None = None) -> str:
             _, _, city = manager.resolve_coords()
             next_name, _, remaining = manager.get_next_prayer()
 
-            lines = [f"Heures de prière aujourd'hui ({city}, convention {manager.config.method}) :"]
+            lines = [
+                f"Heures de prière aujourd'hui ({city}, convention {manager.config.method}, "
+                f"position : {manager.position_source}) :"
+            ]
             order = ("fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha")
             for name in order:
                 dt = schedule.get(name)
@@ -125,6 +128,7 @@ def prayer_control(parameters: dict | None = None) -> str:
             lines = [
                 f"Statut du module de prière : {status_word}",
                 f"• Ville / Localité : {city}",
+                f"• Source de position : {manager.position_source}",
                 f"• Convention de calcul : {manager.config.method} ({desc})",
                 f"• Heures calmes (Fajr autorisé) : {'Oui' if manager.config.allow_fajr_in_quiet_hours else 'Non'}",
                 "• État individuel des prières :",
