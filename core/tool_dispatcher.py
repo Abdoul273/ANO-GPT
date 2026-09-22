@@ -1388,7 +1388,7 @@ TOOL_DECLARATIONS = [
                     "type": "STRING",
                     "description": (
                         "type | smart_type | click | double_click | right_click | hotkey | press | "
-                        "scroll | move | copy | paste | wait | clear_field | "
+                        "scroll | move | copy | paste | wait | erase | clear_field | "
                         "focus_window | fullscreen | float | center | close | "
                         "move_to_workspace | switch_workspace | list_windows | "
                         "screen_find | screen_click | random_data | user_data | "
@@ -1397,6 +1397,12 @@ TOOL_DECLARATIONS = [
                         "Pour une capture d'écran destinée à l'utilisateur, utiliser capture_control, "
                         "jamais cet outil. "
                         "type types text into active window, or target 'window' if provided. "
+                        "erase is the ONLY action for « efface / supprime / enlève » after typing: "
+                        "default scope 'last' removes exactly the text ANO just typed (Backspace × its "
+                        "length); scope 'word' removes the last word, scope 'all' clears the whole "
+                        "line/field; 'count' removes N characters. Never use clear_field or a raw "
+                        "hotkey such as ctrl+a for this: in a terminal ctrl+a moves the cursor "
+                        "instead of selecting. "
                         "fullscreen toggles fullscreen mode on active or target window. "
                         "float toggles floating window mode. "
                         "center centers the active window. "
@@ -1431,6 +1437,8 @@ TOOL_DECLARATIONS = [
                 "type":        {"type": "STRING",  "description": "Data type for random_data"},
                 "field":       {"type": "STRING",  "description": "Field for user_data: name|email|city"},
                 "clear_first": {"type": "BOOLEAN", "description": "Clear field before typing (default: true)"},
+                "scope":       {"type": "STRING",  "description": "For erase: last (default, text ANO just typed) | word | all"},
+                "count":       {"type": "INTEGER", "description": "For erase: number of characters to remove with Backspace"},
             },
             "required": ["action"]
         }

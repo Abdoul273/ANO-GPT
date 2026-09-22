@@ -596,6 +596,130 @@ def _hotkey(*keys: str) -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Effacement
+# ════════════════════════════════════════════════════════════════════════════
+
+# Dernier texte tapé par ANO : « efface » retire exactement ces caractères, à
+# coups de Retour arrière — seule méthode qui marche partout (terminal,
+# navigateur, éditeur) sans toucher au reste de la ligne.
+_last_typed: Dict[str, Any] = {}
+_LAST_TYPED_TTL_S = 600.0
+_MAX_ERASE = 500
+
+# Dans un terminal, Ctrl+A ramène en début de ligne au lieu de tout
+# sélectionner : Ctrl+A puis Suppr effaçait la première lettre (« salut »
+# devenait « alut »). Readline : Ctrl+E fin de ligne, Ctrl+U efface avant,
+# Ctrl+W efface le mot précédent.
+_TERMINAL_CLASSES = (
+    "kitty", "foot", "alacritty", "wezterm", "konsole", "terminal", "xterm",
+    "ghostty", "terminator", "tilix", "urxvt", "st-256color",
+)
+
+
+def _active_window_info() -> Dict[str, str]:
+    win = _hyprctl_json("activewindow") if (_WAYLAND and _have("hyprctl")) else None
+    if isinstance(win, dict):
+        return {"address": str(win.get("address") or ""),
+                "class": str(win.get("class") or win.get("initialClass") or "")}
+    return {"address": "", "class": ""}
+
+
+def _is_terminal(window_class: str) -> bool:
+    cls = (window_class or "").casefold()
+    return any(name in cls for name in _TERMINAL_CLASSES)
+
+
+def _remember_typed(text: str, submitted: bool) -> None:
+    kit.hypr_invalidate()
+    _last_typed.clear()
+    _last_typed.update(text=text, submitted=submitted, at=time.monotonic(),
+                       **_active_window_info())
+
+
+def _press_repeat(key: str, count: int) -> bool:
+    """Une touche répétée en un seul processus (et non N lancements)."""
+    count = max(0, min(int(count), _MAX_ERASE))
+    if not count:
+        return True
+    k = key.lower()
+    if _WAYLAND:
+        if _have("ydotool") and k in _LINUX_KEYCODES:
+            code = _LINUX_KEYCODES[k]
+            events = [f"{code}:{state}" for _ in range(count) for state in (1, 0)]
+            try:
+                if _run(["ydotool", "key", *events], timeout=2 + count * 0.02).returncode == 0:
+                    return True
+            except Exception:
+                pass
+        if _have("wtype"):
+            name = {"backspace": "BackSpace", "delete": "Delete"}.get(k, key)
+            cmd = ["wtype"] + ["-k", name] * count
+            try:
+                if _run(cmd, timeout=2 + count * 0.02, env=_hypr_env()).returncode == 0:
+                    return True
+            except Exception:
+                pass
+    return all(_press_key(key).startswith("Touche pressée") for _ in range(count))
+
+
+def _clear_line(terminal: bool) -> str:
+    if terminal:
+        _hotkey("ctrl", "e")
+        return _hotkey("ctrl", "u")
+    _hotkey("ctrl", "a")
+    return _press_key("backspace")
+
+
+def _erase(scope: str = "last", count: Any = None) -> str:
+    scope = (scope or "last").strip().casefold()
+    info = _active_window_info()
+    terminal = _is_terminal(info["class"])
+
+    if count not in (None, "", 0, "0"):
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            return f"Nombre de caractères invalide : {count!r}."
+        if n <= 0:
+            return "Rien à effacer."
+        n = min(n, _MAX_ERASE)
+        if not _press_repeat("backspace", n):
+            return "Effacement impossible : aucun outil de clavier n'a répondu."
+        return f"{n} caractère(s) effacé(s)."
+
+    if scope in ("all", "tout", "field", "champ", "line", "ligne"):
+        res = _clear_line(terminal)
+        _last_typed.clear()
+        if res.startswith(("Touche pressée", "Combinaison envoyée")):
+            return "Ligne effacée." if terminal else "Champ effacé."
+        return f"Effacement impossible : {res}"
+
+    if scope in ("word", "mot"):
+        res = _hotkey("ctrl", "w") if terminal else _hotkey("ctrl", "backspace")
+        if res.startswith("Combinaison envoyée"):
+            return "Dernier mot effacé."
+        return f"Effacement impossible : {res}"
+
+    # « efface » : ce qu'ANO vient de taper, rien de plus.
+    last = dict(_last_typed)
+    if not last or time.monotonic() - float(last.get("at", 0)) > _LAST_TYPED_TTL_S:
+        return ("Je n'ai rien tapé récemment. Précise quoi effacer : le dernier mot, "
+                "toute la ligne, ou un nombre de caractères.")
+    if last.get("submitted"):
+        return ("Le texte a déjà été validé par Entrée : je ne peux plus l'effacer "
+                "au clavier.")
+    if last.get("address") and info["address"] and last["address"] != info["address"]:
+        return ("La fenêtre active n'est plus celle où j'ai tapé : je n'efface rien "
+                "pour ne pas toucher à un autre texte. Reviens sur cette fenêtre ou "
+                "dis-moi quoi effacer.")
+    text = str(last.get("text") or "")
+    if not _press_repeat("backspace", len(text)):
+        return "Effacement impossible : aucun outil de clavier n'a répondu."
+    _last_typed.clear()
+    return f"Texte effacé : «{text[:60]}{'…' if len(text) > 60 else ''}»"
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Souris (ydotool sous Wayland — attend des masques hex de boutons)
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -1228,6 +1352,19 @@ def _parse_control_locally(text: str) -> Optional[Dict[str, Any]]:
             params_dict["press_enter"] = True
         return {"action": "type", "params": params_dict}
 
+    # Effacement (avant « Touches » : « efface » n'est pas une touche)
+    m = re.search(r"^(?:efface|effacer|supprime|enl[èe]ve)\b(.*)$", t)
+    if m:
+        rest = m.group(1)
+        n = re.search(r"(\d+)\s*(?:caract[èe]res?|lettres?)", rest)
+        if n:
+            return {"action": "erase", "params": {"count": int(n.group(1))}}
+        if re.search(r"\b(?:tout|toute\s+la\s+ligne|la\s+ligne|le\s+champ)\b", rest):
+            return {"action": "erase", "params": {"scope": "all"}}
+        if re.search(r"\b(?:dernier\s+)?mot\b", rest):
+            return {"action": "erase", "params": {"scope": "word"}}
+        return {"action": "erase", "params": {"scope": "last"}}
+
     # Presse-papiers
     if re.search(r"\bcolle\b|\bpaste\b|ctrl\+v", t):
         return {"action": "paste", "params": {}}
@@ -1360,6 +1497,8 @@ def _user_data(field: str) -> str:
 _CANONICAL_MAP = {
     "type": "type", "tape": "type", "écris": "type", "ecris": "type",
     "saisis": "type", "entre": "type", "type_text": "type",
+    "erase": "erase", "efface": "erase", "effacer": "erase", "delete_text": "erase",
+    "backspace": "erase", "undo_type": "erase", "supprime": "erase",
     "paste": "paste", "colle": "paste",
     "copy": "copy", "copie": "copy",
     "click": "click", "clique": "click",
@@ -1441,10 +1580,13 @@ def computer_control(parameters: dict, **kwargs) -> str:
             press_enter_val = params.get("press_enter")
             if press_enter_val is None:
                 press_enter_val = params.get("enter")
-            if press_enter_val is True or str(press_enter_val).lower() in ("true", "1", "yes"):
+            submit = press_enter_val is True or str(press_enter_val).lower() in ("true", "1", "yes")
+            _remember_typed(text, submitted=False)
+            if submit:
                 pressed = _press_key("enter")
                 if not pressed.startswith("Touche pressée"):
                     return f"Commande non validée : {pressed}. Le texte a été saisi, sans confirmation d'Entrée."
+                _last_typed["submitted"] = True
                 res = f"{res} (validé par Entrée)"
             return res
         elif action == "paste":
@@ -1491,16 +1633,19 @@ def computer_control(parameters: dict, **kwargs) -> str:
                 return "Coordonnées x/y requises pour déplacer la souris."
             return _move(int(x), int(y))
         elif action == "clear_field":
-            _hotkey("ctrl", "a")
-            return _press_key("Delete")
+            return _erase("all")
+        elif action == "erase":
+            return _erase(str(params.get("scope") or "last"), params.get("count"))
         elif action == "smart_type":
             text = params.get("text", "")
             if not text:
                 return "Aucun texte à taper."
             if params.get("clear_first", True):
-                _hotkey("ctrl", "a")
-                _press_key("Delete")
-            return _type_text(text)
+                _clear_line(_is_terminal(_active_window_info()["class"]))
+            res = _type_text(text)
+            if res.startswith("Texte tapé"):
+                _remember_typed(text, submitted=False)
+            return res
         elif action == "screen_find":
             desc = params.get("description", "")
             if not desc:
