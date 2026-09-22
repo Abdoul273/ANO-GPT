@@ -294,8 +294,15 @@ TOOL_DECLARATIONS = [
     {
         "name": "web_search",
         "description": (
-            "Searches the web. Use for ANY question about current facts, events, prices, "
-            "or topics — always prefer this over guessing. "
+            "Searches the web (Google + Google News, dated, freshest first). Use for ANY "
+            "question about current facts, events, releases, prices, or topics — always "
+            "prefer this over guessing or over your own memory, which is outdated. "
+            "When the question covers SEVERAL subjects (e.g. 'Grok 4.7, GPT-6 Sol and "
+            "Opus 5.5 are out'), pass one short query per subject in 'queries' — never "
+            "merge them into one query. Copy names and version numbers EXACTLY as the "
+            "user said them: never add, drop or 'correct' a version. "
+            "If the result lists no source for a subject, say you found no confirmation "
+            "yet — never claim you cannot access the information. "
             "For SOMEONE ELSE's creator/influencer account handle, use mode='social' "
             "with the exact handle and platform. This performs a site-restricted profile lookup "
             "and only reports publicly indexed profile URLs; never guess an account. "
@@ -306,13 +313,15 @@ TOOL_DECLARATIONS = [
             "'nearby' (a physical place/service near the user — 'closest hospital', "
             "'pharmacy near me' — uses local/Maps search and the user's real location "
             "instead of generic web results), "
-            "'compare' (side-by-side comparison of items)."
+            "'compare' (side-by-side comparison of items), "
+            "'headlines' (today's top stories)."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "query":  {"type": "STRING", "description": "Search query or topic"},
-                "mode":   {"type": "STRING", "description": "search | social | news | research | price | nearby | compare"},
+                "queries": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "One short query per distinct subject when the question covers several (max 4), e.g. ['Grok 4.7', 'GPT-6 Sol', 'Claude Opus 5.5']"},
+                "mode":   {"type": "STRING", "description": "search | social | news | research | price | nearby | compare | headlines"},
                 "platform": {"type": "STRING", "description": "For social mode: tiktok | instagram | youtube | facebook | x | twitch | snapchat"},
                 "items":  {"type": "ARRAY",  "items": {"type": "STRING"}, "description": "Items to compare (compare mode)"},
                 "aspect": {"type": "STRING", "description": "Comparison aspect: price | specs | reviews | features"},
@@ -4683,6 +4692,7 @@ class ToolDispatcher:
 
         return web_search({
             "query": self._arg(args, "query"),
+            "queries": args.get("queries") or [],
             "mode": self._arg(args, "mode", "search") or "search",
             "platform": self._arg(args, "platform"),
             "items": args.get("items") or [],
