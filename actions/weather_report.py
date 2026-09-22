@@ -137,6 +137,29 @@ def _day_index(when: str) -> int:
         return 2
     return 0
 
+def _v(value, unit: str = "", digits: int = 0) -> str:
+    """Valeur lisible, ou « n/d » : Open-Meteo et wttr laissent des trous
+    (`null`, chaîne vide) qui s'entendaient « None degrés » à voix haute."""
+    if value is None or value == "":
+        return "n/d"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return f"{value}{unit}"
+    text = f"{number:.{digits}f}" if digits or number != int(number) else f"{int(number)}"
+    return f"{text}{unit}"
+
+
+def _range(low, high) -> str:
+    if low is None and high is None:
+        return "n/d"
+    if low is None:
+        return f"max. {_v(high, '°C')}"
+    if high is None:
+        return f"min. {_v(low, '°C')}"
+    return f"{_v(low)}°C à {_v(high)}°C"
+
+
 def _format_open_meteo(data: Dict, name: str, when: str) -> str:
     cur   = data.get("current", {}) or {}
     daily = data.get("daily", {}) or {}
@@ -150,8 +173,10 @@ def _format_open_meteo(data: Dict, name: str, when: str) -> str:
     precip = cur.get("precipitation")
 
     lines = [f"🌤️ Météo pour {name} :"]
-    lines.append(f"Actuellement : {desc}, {temp}°C (ressenti {feels}°C).")
-    lines.append(f"💧 Humidité : {hum}% | 💨 Vent : {wind} km/h {wdir} | 🌧️ Précipitations : {precip} mm.")
+    feels_str = f" (ressenti {_v(feels, '°C')})" if feels is not None else ""
+    lines.append(f"Actuellement : {desc}, {_v(temp, '°C')}{feels_str}.")
+    lines.append(f"💧 Humidité : {_v(hum, '%')} | 💨 Vent : {_v(wind, ' km/h')} {wdir}".rstrip()
+                 + f" | 🌧️ Précipitations : {_v(precip, ' mm')}.")
 
     tmax_list = daily.get("temperature_2m_max", [])
     tmin_list = daily.get("temperature_2m_min", [])
@@ -167,16 +192,18 @@ def _format_open_meteo(data: Dict, name: str, when: str) -> str:
             week = []
             for i in range(min(5, len(tmax_list))):
                 d = _WMO_CODES.get(code_list[i], "")
-                week.append(f"J+{i}: {tmin_list[i]}→{tmax_list[i]}°C, {d}")
+                low = tmin_list[i] if i < len(tmin_list) else None
+                week.append(f"J+{i}: {_range(low, tmax_list[i])}" + (f", {d}" if d else ""))
             lines.append("📅 Semaine : " + " | ".join(week))
     else:
         if idx < len(tmax_list) and idx < len(tmin_list):
             day_desc = _WMO_CODES.get(code_list[idx] if idx < len(code_list) else None, "")
             prob = prob_list[idx] if idx < len(prob_list) else None
-            prob_str = f", {prob}% de risque de pluie" if prob is not None else ""
+            prob_str = f", {_v(prob, '%')} de risque de pluie" if prob is not None else ""
             label = "Aujourd'hui" if idx == 0 else ("Demain" if idx == 1 else f"Jour {idx}")
-            lines.append(f"📅 {label} : {tmin_list[idx]}°C à {tmax_list[idx]}°C, {day_desc}{prob_str}.")
-            if idx == 0 and sunrise and sunset:
+            detail = "".join(x for x in (f", {day_desc}" if day_desc else "", prob_str))
+            lines.append(f"📅 {label} : {_range(tmin_list[idx], tmax_list[idx])}{detail}.")
+            if idx == 0 and sunrise and sunset and sunrise[0] and sunset[0]:
                 sr = sunrise[0].split("T")[1] if "T" in sunrise[0] else sunrise[0]
                 ss = sunset[0].split("T")[1] if "T" in sunset[0] else sunset[0]
                 lines.append(f"🌅 Lever : {sr} | 🌇 Coucher : {ss}.")
@@ -237,8 +264,10 @@ def _format_wttr(data: Dict, city: str, when: str) -> str:
         wdir = cur.get("winddir16Point", "")
         precip = cur.get("precipMM")
         lines = [f"🌤️ Météo pour {city} :"]
-        lines.append(f"Actuellement : {desc}, {temp}°C (ressenti {feels}°C).")
-        lines.append(f"💧 Humidité : {hum}% | 💨 Vent : {wind} km/h {wdir} | 🌧️ Précipitations : {precip} mm.")
+        feels_str = f" (ressenti {_v(feels, '°C')})" if feels not in (None, "") else ""
+        lines.append(f"Actuellement : {desc or 'conditions variées'}, {_v(temp, '°C')}{feels_str}.")
+        lines.append(f"💧 Humidité : {_v(hum, '%')} | 💨 Vent : {_v(wind, ' km/h')} {wdir}".rstrip()
+                     + f" | 🌧️ Précipitations : {_v(precip, ' mm')}.")
         weather = data.get("weather", [])
         idx = _day_index(when)
         if idx < len(weather):
@@ -249,7 +278,9 @@ def _format_wttr(data: Dict, city: str, when: str) -> str:
             hourly = day.get("hourly", [])
             noon = next((h for h in hourly if h.get("time") in ("1200", "900")), None)
             day_desc = (noon.get("weatherDesc") or [{}])[0].get("value", "") if noon else ""
-            lines.append(f"📅 {label} : {tmin}°C à {tmax}°C, {day_desc}.")
+            tmin = None if tmin in (None, "") else tmin
+            tmax = None if tmax in (None, "") else tmax
+            lines.append(f"📅 {label} : {_range(tmin, tmax)}" + (f", {day_desc}." if day_desc else "."))
         return "\n".join(lines)
     except Exception as e:
         return f"Impossible de formater la météo wttr : {e}"
