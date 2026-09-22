@@ -1458,8 +1458,15 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
         if ws_num is not None and not hidden and _SYSTEM == "Linux":
             _focus_workspace(ws_num)
 
+        # Un alias qui pointe sur un binaire présent (« chrome » →
+        # google-chrome) passe avant le nom brut : la recherche floue dans
+        # les .desktop ne doit jamais avoir la priorité sur une commande sûre.
+        alias_is_binary = bool(
+            normalized and normalized.lower() != app_name.lower()
+            and kit.which(normalized.split()[0])
+        )
         attempts = ([normalized, app_name] if normalized.lower() == app_name.lower()
-                    else ([app_name, normalized] if _SYSTEM == "Linux"
+                    else ([app_name, normalized] if _SYSTEM == "Linux" and not alias_is_binary
                           else [normalized, app_name]))
         attempts = [a for a in attempts if a]
 

@@ -39,6 +39,7 @@ from core.live_model_policy import (
 from core.live_speech_config import (
     build_input_transcription_config,
     build_output_transcription_config,
+    live_captions_provider,
     live_end_silence_ms,
     normalise_live_voice,
 )
@@ -1106,6 +1107,15 @@ class SessionManager:
             PersonalityMode.COQUIN: 0.74,
             PersonalityMode.MAJEUR: 0.22,
         }[mode_spec.key]
+
+        # Les fonctions locales couvrent tous les besoins (y compris web_search).
+        # Le grounding natif Google Search côté WebSocket Gemini Live requiert
+        # une facturation active spécifique sur les modèles Live 3.x/3.8, sans
+        # quoi Google rejette la session avec le code 1011 (quota/billing).
+        live_tools: list[dict] = [{"function_declarations": self._live_declarations()}]
+        if _setting_bool(_cfg.get("live_google_search_grounding"), False):
+            live_tools.append({"google_search": {}})
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             # Faible température : une commande vocale demande de la fidélité,
@@ -1121,9 +1131,7 @@ class SessionManager:
                 extra_phrases=(self._asst_name, _user_name),
             ),
             system_instruction="\n".join(parts),
-            tools=[{"function_declarations": (
-                self._live_declarations()
-            )}],
+            tools=live_tools,
             # La poignée rendue par le serveur au tour précédent : renvoyée
             # ici, Gemini reprend la conversation au lieu d'en ouvrir une
             # neuve. Sans elle, la configuration demandait une reprise que
@@ -1164,10 +1172,15 @@ class SessionManager:
         instantanés (`core.live_captions`), sans jamais retarder cet envoi.
         Les images temps réel conservent leur canal dédié.
         """
-        from core.live_captions import LiveCaptions
-        captions = LiveCaptions(self)
+        # En production, Gemini Live est le seul transcripteur et la seule
+        # source de sous-titres. Le flux 3.5 n'est conservé que pour un opt-in
+        # de diagnostic, jamais comme doublon silencieux.
+        captions = None
+        if live_captions_provider(_voice_engine_settings()) == "gemini_transcribe":
+            from core.live_captions import LiveCaptions
+            captions = LiveCaptions(self)
+            captions.start()
         self._live_captions = captions
-        captions.start()
         try:
             while True:
                 msg = await self.out_queue.get()
@@ -1185,7 +1198,8 @@ class SessionManager:
                             or getattr(self, "_interrupted", False)
                             or msg.get("_audio_epoch", epoch) != epoch):
                         continue
-                    captions.push(msg)
+                    if captions is not None:
+                        captions.push(msg)
                 try:
                     if marker == "video":
                         await self.session.send_realtime_input(
@@ -1206,7 +1220,8 @@ class SessionManager:
                     raise
         finally:
             self._live_captions = None
-            await captions.close()
+            if captions is not None:
+                await captions.close()
 
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
@@ -1242,6 +1257,13 @@ class SessionManager:
 
                     audio_data = _live_audio_data(response)
                     if audio_data:
+                        # Dès que Gemini commence à répondre, la demande qui a
+                        # déclenché ce tour n'est plus « sans réponse ».
+                        # Attendre exclusivement `turn_complete` laissait une
+                        # ancienne phrase dans la file de reprise lorsqu'une
+                        # reconnexion technique survenait au milieu de la
+                        # réponse ; elle pouvait alors écraser le fil courant.
+                        self._live_user_text = ""
                         if not self._model_turn_active:
                             # Le modèle recommence à parler : l'interruption
                             # précédente est close, quoi qu'il soit advenu de
@@ -1257,13 +1279,6 @@ class SessionManager:
                         # Ce tour a été jugé « bruit » par le garde-fou local :
                         # sa réponse est coupée dès le premier bloc audio, avant
                         # qu'un seul son ne sorte des enceintes. L'interruption
-                        # Dès que Gemini commence à répondre, la demande qui a
-                        # déclenché ce tour n'est plus « sans réponse ».
-                        # Attendre exclusivement `turn_complete` laissait une
-                        # ancienne phrase dans la file de reprise lorsqu'une
-                        # reconnexion technique survenait au milieu de la
-                        # réponse ; elle pouvait alors écraser le fil courant.
-                        self._live_user_text = ""
                         # tentée au moment du rejet arrivait souvent trop tôt —
                         # le tour du modèle n'avait pas encore commencé.
                         if self._noise_turn:
@@ -1342,6 +1357,10 @@ class SessionManager:
 
                         if (not self.discard_model_audio()) and sc.output_transcription and sc.output_transcription.text:
                             self.thought_streamer.on_speaking_start()
+                            # Certains tours texte n'ont pas de PCM sortant :
+                            # leur transcription de sortie confirme tout aussi
+                            # bien que la demande a commencé à être traitée.
+                            self._live_user_text = ""
                             if not self._model_turn_active:
                                 self._clear_interrupted()
                             self._model_turn_active = True
@@ -1357,10 +1376,6 @@ class SessionManager:
                                     ))
                                 self._queue_spoken_text(txt)
                                 _speaking_started = True
-                            # Certains tours texte n'ont pas de PCM sortant :
-                            # leur transcription de sortie confirme tout aussi
-                            # bien que la demande a commencé à être traitée.
-                            self._live_user_text = ""
 
                         # Transcription unique Mark-LII : celle de Gemini Live
                         # est affichée telle qu'elle arrive, sans correcteur,
@@ -1768,7 +1783,16 @@ class SessionManager:
                     "conversation naturellement, sans le répéter.]\n"
                     + "\n".join(lines) + "\n\n"
                 )
-        text = note + local_context + "\n".join(pending)
+        # Après une reconnexion pour élargir les outils, le modèle a tendance
+        # à « confirmer » la demande reprise sans appeler l'outil (« je te
+        # lance Chrome, c'est parti » — et rien ne s'ouvre).
+        action_rule = (
+            "[Cette demande a été reprise après reconnexion. Si elle exige une "
+            "action (ouvrir, lancer, fermer, aller sur un bureau, chercher…), "
+            "appelle l'outil correspondant MAINTENANT et n'annonce le résultat "
+            "qu'après son retour. Jamais « c'est fait » sans appel d'outil.]\n"
+        )
+        text = note + action_rule + local_context + "\n".join(pending)
         try:
             await self._submit_text_turn(text)
             self._toolkit_context_on_reconnect = False

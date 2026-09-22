@@ -250,28 +250,36 @@ def find_app(query: str, min_score: float = 0.35) -> Optional[AppEntry]:
     best: Optional[AppEntry] = None
     best_score = 0.0
     for app in apps:
-        haystacks = [app.name, app.generic_name, app.id, app.binary,
-                     app.wm_class] + app.keywords
-        haystacks = [h for h in haystacks if h]
+        # Les mots-clés sont des catégories vagues (« browser », « home ») :
+        # ils ne servent qu'en correspondance exacte, jamais en approché —
+        # sinon « chrome » ≈ « home » envoie sur le gestionnaire de fichiers.
+        identity = [h for h in (app.name, app.generic_name, app.id,
+                                app.binary, app.wm_class) if h]
+        haystacks = identity + [k for k in app.keywords if k]
         score = 0.0
         for h in haystacks:
             hl = _fold(h)
             if hl == q:
-                score = max(score, 1.0)
+                # Le binaire est partagé par ses variantes (thunar
+                # --bulk-rename) : le nom ou l'identifiant prime.
+                score = max(score, 1.0 if h in (app.name, app.id) else 0.97)
             elif q == _fold(app.id) or q == _fold(app.binary):
                 score = max(score, 0.98)
+            elif h in identity and q in _tokens(h):
+                # « chrome » est un mot entier de « Google Chrome ».
+                score = max(score, 0.9)
             elif hl.startswith(q) or q.startswith(hl):
                 score = max(score, 0.85)
             elif q in hl or hl in q:
                 score = max(score, 0.65)
-            else:
+            elif h in identity:
                 h_tokens = _tokens(h)
                 if q_tokens and h_tokens:
                     overlap = len(q_tokens & h_tokens) / len(q_tokens | h_tokens)
                     score = max(score, overlap * 0.6)
                 # Faute de transcription : « pie charm » → pycharm, « vs code ».
                 sim = _fuzzy(q, hl)
-                if sim >= 0.78:
+                if sim >= 0.78 and abs(len(q.replace(" ", "")) - len(hl.replace(" ", ""))) <= 2:
                     score = max(score, 0.4 + sim * 0.4)
         # Une entrée de désinstallation ou d'aide n'est jamais ce qu'on veut.
         if score and re.search(r"uninstall|désinstall|readme|help", _fold(app.name)):
