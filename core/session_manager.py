@@ -1177,6 +1177,11 @@ class SessionManager:
                 automatic_activity_detection=types.AutomaticActivityDetection(
                     silence_duration_ms=live_end_silence_ms(_cfg),
                 ),
+                # Par défaut, toute activité captée par le VAD serveur coupe la
+                # génération : ANO disait « Bonjour, Monsieur. » puis se taisait
+                # alors que la transcription de la phrase entière s'affichait.
+                # Seuls Échap, le bouton Arrêter ou un mot-clé local coupent.
+                activity_handling=types.ActivityHandling.NO_INTERRUPTION,
             ),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
