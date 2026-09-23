@@ -15,7 +15,7 @@ from ui.media.gallery import ImageGalleryOverlay
 from ui.media.map_views import NearbyMapPanel
 from ui.media.video_hub import VideoHubOverlay
 from ui.orb.companion import CompanionOrb
-from ui.orb.glsl_orb import create_hud_orb
+from ui.orb.host import OrbHost
 from ui.orb.mini_orb import MiniOrbOverlay
 from ui.orb.radial_waveform import BiDirectionalAudioBridge, CircularFFTEngine
 from ui.panels.rich_card_system import CardManager
@@ -48,7 +48,11 @@ class SceneMixin:
         )
         layout.add_fill(self._background_image)
 
-        self.hud = create_hud_orb(face_path, display_name)
+        # Hôte stable : ``self.hud`` reste le même objet quel que soit le
+        # style d'orbe choisi ; seul l'orbe actif existe et consomme.
+        self.hud = OrbHost(
+            face_path, display_name, _read_full_config().get("orb_style", ""), central,
+        )
         if hasattr(self.hud, "set_background_image_active"):
             self.hud.set_background_image_active(self._background_image.has_image)
         layout.add_fill(self.hud)
@@ -223,6 +227,20 @@ class SceneMixin:
         if central is not None:
             central.update()
         return applied
+
+    def set_orb_style(self, style_id: str) -> bool:
+        """Change le style de l'orbe ; l'ancien est détruit, rien d'autre ne bouge."""
+        hud = getattr(self, "hud", None)
+        if hud is None or not hud.set_style(style_id):
+            return False
+        hud.set_background_image_active(
+            bool(getattr(self, "_background_image", None) and self._background_image.has_image)
+        )
+        # Garder la pile : photo tout en bas, orbe juste au-dessus.
+        layer = getattr(self, "_background_image", None)
+        if layer is not None:
+            layer.lower()
+        return True
 
     def _on_audio_pcm(self, pcm: bytes, sample_rate: int, emitted: bool) -> None:
         if emitted:

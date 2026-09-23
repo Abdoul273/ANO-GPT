@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.core.fade_widget import FadeInWidget
+from ui.orb import registry as orb_registry
 from ui.paths import BASE_DIR
 from ui.styles.cyber import CyberHeader, micro_label
 from ui.styles.theme import C, DEFAULT_UI_COLOR, qcol
@@ -100,13 +101,14 @@ class HueWheel(QWidget):
 
 # ── CustomizeOverlay (hérite de FadeInWidget) ──────────────────────────────
 class CustomizeOverlay(FadeInWidget):
-    saved = pyqtSignal(str, str, str, str)
-    _OW, _OH = 420, 690
+    saved = pyqtSignal(str, str, str, str, str)
+    _OW, _OH = 420, 800
     _BACKGROUND_DIR = BASE_DIR / "background"
     _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
     def __init__(self, assistant_name="ANO-GPT", user_name="",
-                 ui_color=DEFAULT_UI_COLOR, background_image="", parent=None):
+                 ui_color=DEFAULT_UI_COLOR, background_image="", orb_style="",
+                 parent=None):
         super().__init__(parent, duration=300)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 18, 24, 18)
@@ -198,6 +200,21 @@ class CustomizeOverlay(FadeInWidget):
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             bg_row.addWidget(button)
         lay.addLayout(bg_row)
+        lay.addSpacing(5)
+        lay.addWidget(micro_label("Style de l'orbe"))
+        self.on_orb_preview = None
+        self._orb_style = orb_registry.resolve(orb_style)
+        self._initial_orb_style = self._orb_style
+        self._orb_buttons: dict[str, QToolButton] = {}
+        orb_grid = QGridLayout()
+        orb_grid.setContentsMargins(0, 0, 0, 0)
+        orb_grid.setSpacing(6)
+        for index, spec in enumerate(orb_registry.selectable_specs()):
+            button = self._make_orb_tile(spec)
+            self._orb_buttons[spec.id] = button
+            orb_grid.addWidget(button, index // 3, index % 3)
+        lay.addLayout(orb_grid)
+        self._update_orb_selection()
         lay.addSpacing(6)
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
         save_btn = QPushButton("▸  APPLIQUER")
@@ -243,7 +260,53 @@ class CustomizeOverlay(FadeInWidget):
                 return
             self._set_color(t, update_wheel=True, preview=True)
 
+    def _make_orb_tile(self, spec) -> QToolButton:
+        button = QToolButton()
+        button.setCheckable(True)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        button.setFixedSize(120, 38)
+        button.setIconSize(QSize(18, 18))
+        button.setText(spec.label)
+        button.setToolTip(spec.tagline)
+        button.setFont(QFont("Inter", 7, QFont.Weight.Bold))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        swatch = QPixmap(18, 18)
+        swatch.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(swatch)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(spec.swatch)
+        painter.setPen(QPen(color, 1.6))
+        painter.setBrush(QColor(color.red(), color.green(), color.blue(), 70))
+        painter.drawEllipse(QRectF(2, 2, 14, 14))
+        painter.end()
+        button.setIcon(QIcon(swatch))
+        button.setStyleSheet(f"""
+            QToolButton {{ color: {C.TEXT_MED}; background: rgba(14, 23, 36, 0.92);
+              border: 1px solid rgba(0, 212, 255, 0.30); border-radius: 4px; padding: 3px; }}
+            QToolButton:hover {{ color: {C.WHITE}; border-color: {C.PRI}; }}
+            QToolButton:checked {{ color: {C.PRI}; border: 1px solid {C.PRI};
+              background: rgba(0, 212, 255, 0.18); }}
+        """)
+        button.clicked.connect(lambda checked=False, sid=spec.id: self._select_orb(sid))
+        return button
+
+    def _select_orb(self, style_id: str):
+        # Aperçu immédiat ; si le style refuse de naître, la sélection reste.
+        if self.on_orb_preview and not self.on_orb_preview(style_id):
+            self._update_orb_selection()
+            return
+        self._orb_style = style_id
+        self._update_orb_selection()
+
+    def _update_orb_selection(self):
+        for style_id, button in self._orb_buttons.items():
+            button.blockSignals(True)
+            button.setChecked(style_id == self._orb_style)
+            button.blockSignals(False)
+
     def _cancel(self):
+        if self.on_orb_preview and self._orb_style != self._initial_orb_style:
+            self.on_orb_preview(self._initial_orb_style)
         if self.on_preview and self._sel_color != self._initial_color:
             self.on_preview(self._initial_color)
         if (self.on_background_preview
@@ -325,5 +388,6 @@ class CustomizeOverlay(FadeInWidget):
     def _save(self):
         name = self._name_input.text().strip() or "ANO-GPT"
         user = self._user_input.text().strip()
-        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._background_path)
+        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR,
+                        self._background_path, self._orb_style)
         self.hide()

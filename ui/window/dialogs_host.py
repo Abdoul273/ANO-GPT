@@ -111,6 +111,7 @@ class DialogsHostMixin:
             cfg.get("user_name", ""),
             cfg.get("ui_color", "") or DEFAULT_UI_COLOR,
             cfg.get("background_image", ""),
+            getattr(getattr(self, "hud", None), "style_id", "") or cfg.get("orb_style", ""),
             parent=cw,
         )
         ow, oh = CustomizeOverlay._OW, CustomizeOverlay._OH
@@ -124,6 +125,7 @@ class DialogsHostMixin:
         # Le choix d'une vignette s'affiche tout de suite ; « Appliquer »
         # persiste simplement ce choix dans la configuration.
         ov.on_background_preview = self.set_background_image
+        ov.on_orb_preview = self.set_orb_style
         ov.saved.connect(self._apply_name_update)
         self._show_settings_overlay(ov, "customize", "_customize_overlay")
 
@@ -206,7 +208,7 @@ class DialogsHostMixin:
             retheme_all_widgets(old, current_palette())
 
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = "",
-                           background_image: str = ""):
+                           background_image: str = "", orb_style: str = ""):
         self._assistant_name = name.strip() or "ANO-GPT"
         display = self._assistant_name.upper()
         self.setWindowTitle(f"{display} — NEURAL INTERFACE")
@@ -216,7 +218,7 @@ class DialogsHostMixin:
         else:
             self._sub_lbl.setText("Assistant IA personnel")
         self._log._ai_name_lc = self._assistant_name.lower()
-        self.hud._assistant_name = display
+        self.hud.set_assistant_name(display)
         if hasattr(self, "_speech_overlay"):
             self._speech_overlay.set_assistant_name(self._assistant_name)
         color_changed = False
@@ -232,6 +234,8 @@ class DialogsHostMixin:
             if ui_color:
                 data["ui_color"] = ui_color.strip().lower()
             data["background_image"] = background_image.strip()
+            if orb_style and self.set_orb_style(orb_style):
+                data["orb_style"] = self.hud.style_id
             _write_full_config(data)
             self.set_background_image(background_image)
             self._log.append_log(f"SYS : identité mise à jour — {display}")
