@@ -1,240 +1,272 @@
-# ANO-GPT
+# 🤖 ANO-GPT
 
-Mise à jour du socle : exécution des outils renforcée, configuration protégée,
-contrôle distant authentifié et panneau **Santé et performances** dans les paramètres.
+<div align="center">
 
-Diagnostic local : `./anogpt-ctl doctor` (ou `--json`).
-Voir les [changements et vérifications de septembre 2026](docs/MISE_A_JOUR_FIABILITE_2026-09.md).
+### Votre assistant personnel vocal, visuel et connecté à votre ordinateur.
 
-## Choisir le cerveau
+**Voix en direct · Bureau intelligent · Mémoire · Téléphone Android · Agents MCP**
 
-Réglages → **Configuration IA**. Le fournisseur sélectionné (« Appliquer ce
-fournisseur ») devient le cerveau conversationnel : compréhension, décision,
-appels d'outils et rédaction des réponses. **OpenRouter** accepte sa clé API et
-charge automatiquement son catalogue complet de modèles ; le choix se fait
-dans cette liste, sans avoir à connaître ni saisir les identifiants techniques.
+[🚀 Installation](#-installation) · [✨ Capacités](#-ce-que-peut-faire-ano-gpt) · [📱 ANO Remote](#-ano-remote--le-téléphone-comme-extension) · [🧩 MCP](#-vos-agents-mcp-sur-votre-ordinateur) · [📚 Documentation](#-documentation)
 
-Gemini Live conserve le micro et la voix, sauf si vous choisissez explicitement
-ElevenLabs pour la synthèse. Les rôles Azure spécialisés restent séparés : les
-modèles Azure configurés pour la réflexion approfondie, les documents, les
-images et les vidéos ne sont pas remplacés lorsque vous choisissez OpenRouter
-ou un autre cerveau conversationnel.
-
-Gemini Live garde le micro et la voix, quel que soit le cerveau : c'est lui qui
-entend et qui parle, il transmet chaque demande au cerveau choisi et prononce sa
-réponse mot pour mot. « Automatique » laisse la main au premier fournisseur de
-la liste de priorité dont une clé est enregistrée ; choisir Gemini rend le
-raisonnement à Gemini Live lui-même.
-
-Le changement prend effet à la reconnexion vocale, déclenchée automatiquement.
-Un cerveau à raisonnement lent (GPT-5.x, o-series) se paie en silence entre la
-question et la réponse : `brain_timeout_s` dans `config/api_keys.json` borne
-cette attente (45 s par défaut, 90 s au maximum).
-
-La documentation d'origine du projet est conservée ci-dessous.
-
-# ⚙️ MARK XLIX
-### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
-
-> 📺 **[Watch the full setup video on YouTube](https://youtu.be/CiGdcIlnXb8))**
-
-A real-time voice AI that can hear, see, understand, and control your computer — on any OS. Supports Windows, macOS, and Linux. Built on the Gemini Live API for native audio streaming, delivering zero subscriptions and total digital autonomy.
+</div>
 
 ---
 
-## ✨ Overview
+## 👋 Bienvenue dans ANO-GPT
 
-MARK XLIX deepens the personal assistant foundation. Rather than adding more tools, this build focused on making the assistant truly *yours*: it starts with your computer, learns your name, and pays attention to what you're doing. The goal before the plugin era begins is a core that feels alive — not just reactive.
+**ANO-GPT** transforme une demande en langage naturel en action visible : ouvrir une application, examiner l'écran, chercher un document, afficher une carte, gérer un rappel ou confier une tâche à un agent de développement. Il rassemble une conversation vocale avec **Gemini Live**, un cerveau conversationnel configurable, une interface **PyQt6**, des outils locaux, un tableau de bord et une application Android.
 
----
+Le projet est développé et utilisé principalement sur **Arch Linux / EndeavourOS avec Hyprland**. Il vise une expérience d'assistant personnel complète, utilisable aussi bien à la voix qu'au clavier ou depuis un téléphone appairé.
 
-## 🚀 Capabilities
+> 💡 **Parlez à votre ordinateur, voyez ce qu'il fait, reprenez la main à tout moment.**
 
-### Core Features
-| Feature | Description |
-|---|---|
-| 🎙️ Real-time Voice | Ultra-low latency conversation in any language via Gemini Live API |
-| 🖥️ System Control | Launch apps, adjust volume/brightness, WiFi, shortcuts, power — all by voice |
-| 🧩 Autonomous Tasks | High-level planning for complex multi-step goals via agent mode |
-| 👁️ Visual Awareness | Real-time screen capture and webcam vision piped into your main Gemini session |
-| 🧠 Persistent Memory | Deeply remembers projects, preferences, and personal context across sessions |
-| ⌨️ Hybrid Input | Seamlessly switch between keyboard typing and voice commands |
-| 🌅 Morning Briefing | On first boot: greets you, reads the time, fetches live news headlines, and checks weather |
-| 🔔 Proactive Check-ins | After 15 minutes of silence, checks context and offers something genuinely useful |
-| 📊 Hardware Monitoring | Continuous CPU, RAM, GPU and temperature telemetry with localized voice alerts |
-| 🌤️ Weather Report | Live weather data for your city, personalized from memory |
-| 🗺️ Dynamic Content Panel | Scrollable display layer beneath the HUD that renders web results, news, and search data |
-| 🔍 Multi-Mode Web Search | `news` / `research` / `price` / `compare` / `search` — Gemini Grounded first, DDG fallback |
-| ⏰ Smart Reminders | OS-native scheduled notifications (Windows Task Scheduler / macOS LaunchAgent / Linux systemd) |
-| ✈️ Flight Finder | Live flight price and availability lookup |
-| 🎮 Game Updater | Checks and triggers game updates on Steam and Epic Games on demand |
-| 📂 File Processor | Read, summarize, and answer questions about local files |
-| 💻 Code Helper | Inline code review, debugging, and generation |
-| 🌐 Browser Control | Open URLs, navigate tabs, and interact with the browser by voice |
-| 📨 Send Message | Compose and send messages through WhatsApp, Telegram, and more |
-| 🎬 YouTube Control | Search, play, and control YouTube playback by voice |
-| 🖱️ Desktop Control | Taskbar, window management, and desktop-level operations |
-| 🧑‍💻 Silent Language Memory | Detects spoken language on first use and saves it — all future sessions adapt automatically |
-| 📱 Remote Dashboard | Control the assistant from your phone via QR code pairing |
-| 📈 TikTok Tracker | « Suis mon TikTok » : abonnés, j'aime, vues par vidéo relus toutes les deux minutes (page publique via Chrome headless, comme Blow) ; carte à l'écran et annonces vocales des nouveaux abonnés, paliers et vidéos qui décollent |
-| 🎯 TikTok Coach | « Pourquoi ma vidéo n'a pas marché ? » : chiffres passés au crible + la vidéo visionnée par Gemini (accroche, rythme, texte, son) avec causes et corrections ; bilan du compte et plan ; « analyse cette vidéo avant que je la poste » : avis, montage, description, hashtags, couverture, meilleure heure |
+| Domaine | Ce qu'ANO-GPT peut faire |
+| --- | --- |
+| 🎙️ **Conversation** | Écouter, répondre à voix haute, afficher les échanges et accepter une interruption. |
+| 🖥️ **Bureau** | Ouvrir des applications, gérer des fenêtres, agir sur certains réglages et travailler avec les fichiers. |
+| 👁️ **Vision** | Capturer l'écran, utiliser une caméra, analyser une image et pointer un élément visible. |
+| 🌐 **Recherche** | Explorer le web, afficher des résultats, des vidéos, des lieux et une carte. |
+| 🧠 **Mémoire** | Retrouver des préférences, notes et documents personnels entre les sessions. |
+| 📱 **Mobilité** | Recevoir voix, caméra et position depuis **ANO Remote**. |
+| 🧩 **Agents** | Exposer ses outils via **MCP** et déléguer des missions longues. |
 
----
+Les fonctions qui dépendent d'un compte, d'une clé API, d'un périphérique ou d'une application externe demandent leur configuration respective.
 
-## 🎙️ Voice activation (Linux / Wayland)
+## ✨ Ce que peut faire ANO-GPT
 
-### Global hotkeys
+### 🎙️ Parler, écouter et s'adapter
 
-Wayland gives applications no global keyboard access, so the compositor owns the
-hotkey and forwards it to the running app through a Unix control socket
-(`$XDG_RUNTIME_DIR/anogpt.sock`). Hyprland binds are installed in
-`~/.config/hypr/hyprland/keybinds.lua`:
+- **Conversation vocale en direct** via Gemini Live, avec transcription dans l'interface et saisie au clavier.
+- **Cerveau conversationnel au choix** dans **Réglages → Configuration IA** : Gemini, OpenRouter, OpenAI, Anthropic, DeepSeek, Grok, Azure OpenAI, Groq ou Ollama, selon les accès configurés. OpenRouter peut charger son catalogue de modèles dans l'interface.
+- **Voix et raisonnement séparés** : Gemini Live gère le canal vocal ; le fournisseur choisi peut traiter la demande et rédiger la réponse. Une synthèse ElevenLabs peut être configurée séparément.
+- **Personnalisation** du nom de l'assistant, de l'apparence du HUD, des styles d'orbe, de la voix et des modes de personnalité disponibles.
+- **Interruption** de la réponse en cours et contrôle de l'écoute depuis l'interface, le terminal ou des raccourcis Hyprland.
+- **Mot d'activation local** avec Vosk en option, après installation et calibration.
 
-| Shortcut | Action |
-|---|---|
-| `SUPER + SHIFT + Space` | Mic: listening ⇄ standby (works on the lock screen) |
-| `SUPER + SHIFT + X` | Interrupt the assistant mid-sentence |
-| `SUPER + SHIFT + W` | Toggle the offline wake word |
+La chaîne audio comprend la capture, le débruitage et la détection de parole disponibles sur la machine. Pendant que l'assistant parle, le micro ne transmet pas sa propre voix au modèle : le chemin vocal applique un comportement **half-duplex**. Détails et limites propres à Python 3.14 : [guide audio Arch](docs/audio_setup_arch.md).
 
-The same commands work from any terminal or script:
+### 🖥️ Agir sur le bureau et les fichiers
+
+- Ouvrir et fermer des applications, gérer des fenêtres et des espaces de travail, utiliser des raccourcis et contrôler certains réglages système.
+- Chercher, lire, résumer et traiter des fichiers ; rechercher du contenu dans des documents personnels.
+- Capturer l'écran, analyser son contenu et montrer visuellement où cliquer.
+- Utiliser la caméra du PC ou celle du téléphone appairé ; décrire et reconnaître des éléments visuels selon les modèles configurés.
+- Piloter la lecture multimédia, la musique et YouTube ; reconnaître un morceau si le service nécessaire est disponible.
+- Aider sur le code, le débogage et des tâches de développement avec les outils et agents installés.
+
+### 🌍 Explorer et rester organisé
+
+- Rechercher sur le web, dans l'actualité et parmi des images ; afficher les résultats dans des cartes de l'interface.
+- Voir sa position, trouver des lieux à proximité, afficher **une carte plein cadre** ou un globe et lancer une navigation guidée. Voir [Localisation](docs/LOCALISATION.md).
+- Consulter la météo et des informations de voyage selon les sources accessibles.
+- Gérer rappels, agenda, contacts et e-mails après connexion des comptes correspondants.
+- Connecter **Notion** et **Figma**, ou utiliser des services web dans la session Google Chrome. Voir [Connexions cloud](docs/CLOUD_INTEGRATIONS.md).
+- Suivre des statistiques TikTok publiques et demander une analyse de contenu avec les outils dédiés.
+
+### 🧠 Garder le contexte et anticiper
+
+- Enregistrer des informations utiles et les retrouver en langage naturel.
+- Interroger une base de connaissances personnelle et des documents indexés.
+- Faire remonter des événements, des rappels et des tâches en arrière-plan dans l'interface.
+- Utiliser des routines, un briefing et des modes proactifs configurables.
+- Lancer une mission longue avec le **Mode Agent Fantôme** : ANO-GPT garde la conversation disponible pendant que l'agent travaille, puis affiche et annonce un résumé. Voir le [guide MCP](docs/MCP.md#mode-agent-fantôme).
+
+### 🛡️ Garder le contrôle
+
+- Instance unique et commandes locales via socket Unix.
+- Diagnostics locaux : environnement Python, dépendances, configuration et statistiques des actions.
+- Tableau de bord distant avec appairage et panneau **Santé et performances**.
+- Journalisation, reprise de certaines pannes et gestion des interruptions.
+- Plugins chargeables depuis `plugins/`, avec un format documenté et une interface de gestion.
+
+> 🔐 Les outils d'automatisation et les plugins agissent avec les droits de l'utilisateur qui lance ANO-GPT. Vérifiez le code des extensions et les accès accordés aux services connectés.
+
+## 🎨 Une interface qui donne vie à l'assistant
+
+L'interface PyQt6 réunit un **orbe animé**, des états d'écoute, les transcriptions, un journal, des cartes de résultats, des médias et les réglages. Plusieurs styles visuels d'orbe sont présents dans [`ui/orb/styles/`](ui/orb/styles/). La carte géographique occupe un **seul conteneur plein cadre**.
+
+ANO-GPT est conçu pour rester utilisable sur une machine modeste : l'interface et la voix partagent les ressources du processus, ce qui rend la fluidité de l'affichage importante pour la conversation.
+
+## 💬 Essayez de lui demander
+
+> « Ouvre Chrome et cherche les dernières nouvelles sur Python. »
+>
+> « Résume ce document et retrouve les passages sur le budget. »
+>
+> « Montre les restaurants près de moi sur la carte. »
+>
+> « Qu'est-ce qui est affiché à l'écran ? Montre-moi où cliquer. »
+>
+> « Rappelle-moi mon rendez-vous demain à 9 h. »
+>
+> « Analyse ce dépôt en arrière-plan et préviens-moi quand c'est terminé. »
+
+Ces exemples dépendent des modèles, services, permissions et agents configurés. Le choix du cerveau se fait dans **Réglages → Configuration IA** ; le changement déclenche une reconnexion vocale. Le mode **Automatique** choisit un fournisseur configuré selon l'ordre de priorité enregistré. Les modèles des rôles spécialisés (documents, images, vidéos, réflexion approfondie) se règlent séparément.
+
+## 📱 ANO Remote : le téléphone comme extension
+
+L'application Android dans [`mobile/ano_remote/`](mobile/ano_remote/) se connecte au PC après appairage. Elle peut :
+
+- 🎤 transmettre le micro du téléphone à ANO-GPT ;
+- 📷 diffuser sa caméra vers l'interface du PC et prendre des captures ;
+- 📍 partager sa position avec un service Android visible et désactivable ;
+- 🖼️ consulter les captures reçues ;
+- 🔗 découvrir le PC sur le réseau local ou se connecter par QR code ou adresse.
+
+Un tableau de bord web se trouve dans [`dashboard/`](dashboard/). Le téléphone et le PC doivent pouvoir communiquer sur le réseau, et les autorisations Android correspondantes doivent être accordées. Installation et dépannage : [guide ANO Remote](mobile/ano_remote/README.md).
+
+## 🧩 Vos agents MCP sur votre ordinateur
+
+[`anogpt_mcp.py`](anogpt_mcp.py) expose des outils d'ANO-GPT aux clients **Model Context Protocol**, notamment Antigravity, Claude Code, Codex CLI et Claude Desktop. Le serveur MCP transmet les actions à l'application en cours d'exécution par le socket de contrôle. Certains outils non visuels disposent d'un mode de repli lorsque l'interface est arrêtée.
+
+Un agent peut par exemple **afficher une carte**, **parler**, **chercher un fichier**, **consulter la météo**, **prendre une capture**, **interroger la mémoire** ou **afficher une fiche** sur le HUD.
 
 ```bash
-./anogpt-ctl toggle
-./anogpt-ctl ask "ouvre firefox"
-./anogpt-ctl status
+python anogpt_mcp.py --selftest
 ```
 
-### Offline wake word
+Le [guide MCP](docs/MCP.md) donne les configurations de chaque client, les limites du mode hors application et le dépannage. Pour Antigravity, le fichier lu par `agy` est **`~/.gemini/config/mcp_config.json`**.
 
-While the mic is on standby, audio is scanned **locally** by Vosk — nothing is
-sent to Gemini until the wake phrase is heard, so standby is genuinely private.
+## 🚀 Installation
+
+### Prérequis
+
+| Élément | Détail |
+| --- | --- |
+| 🐧 **Système principal** | Arch Linux / EndeavourOS, avec développement et utilisation sur Wayland / Hyprland. Le code contient aussi des adaptations Windows et macOS ; ce guide couvre Arch. |
+| 🐍 **Python** | 3.13 ou plus récent. |
+| 🎤 **Audio** | Micro, sortie audio et pile PipeWire fonctionnelle. |
+| 🌐 **Navigateur** | Google Chrome pour les fonctions navigateur et OAuth. |
+| 🔑 **IA** | Clé Gemini pour la voix ; autres clés et comptes selon les fournisseurs et services activés. |
+
+### 1. Installer les dépendances système
 
 ```bash
-bash scripts/install_wake_word.sh          # vosk + small French model (~40 MB)
-python scripts/calibrate_wake_word.py      # tune it to your own voice
+sudo pacman -S --needed python python-pip pipewire pipewire-pulse pipewire-alsa pipewire-audio wireplumber rnnoise webrtc-audio-processing
+yay -S google-chrome
 ```
 
-> ⚠️ **Calibration is required.** "Ano" is not in the French model's vocabulary,
-> so it is transcribed as whichever real words sound closest — and *which* words
-> depends on your voice, accent and microphone. The calibration tool prints what
-> Vosk actually hears when you speak; add those transcriptions to
-> `DEFAULT_PHRASES` in `core/wake_word.py`. Without this step, detection is
-> unreliable. The hotkey above always works regardless.
+Le [guide audio](docs/audio_setup_arch.md) explique le réglage de PipeWire, la vérification du micro et les dépendances facultatives.
 
----
-
-## 🆕 What's New in XLIX
-
-### ⚡ Auto-Start on Boot
-The assistant now registers itself with the operating system's startup system. One click in the UI toggles it on or off. On Windows, it writes to the registry using `pythonw.exe` so no console window ever appears. On macOS it installs a LaunchAgent plist; on Linux a `.desktop` autostart entry. The button reflects the current state every time the app launches.
-
-### 🎨 Assistant Customization
-The assistant is no longer locked to the name "JARVIS". Click `⚙ CUSTOMISE ASSISTANT` in the right panel to change:
-- **Assistant name** — displayed everywhere in the UI (title bar, header, HUD, log, footer) and injected into the Gemini system prompt so the AI knows its own name
-- **Your name** — how the assistant addresses you. Leave blank for the default language-aware addressing (`sir` / `efendim`), or set your actual name for a more personal feel
-
-Changes take effect immediately without restarting.
-
-### 📋 Clipboard Intelligence
-Copy any text of 10 or more characters and a floating panel appears at the bottom of the window. Four quick actions — **TRANSLATE**, **SUMMARISE**, **EXPLAIN**, **FIX** — send the copied content directly to the assistant with one click. The panel auto-dismisses after 8 seconds. This turns the clipboard into a silent command channel for anything on your screen.
-
-### ☀ Morning Brief Toggle + Speed Optimization
-The morning briefing can now be turned on or off with one click from the settings drawer (`⚙` → `☀ MORNING BRIEF: ON/OFF`). Users who don't want a startup briefing can disable it permanently; the setting survives restarts. The briefing itself was also re-engineered: news is now pre-fetched in a background thread the moment the session starts, running in parallel while the greeting plays. By the time the greeting finishes, the results are already ready — no extra Gemini tool-call round-trip needed. Briefing delivery is noticeably faster as a result.
-
----
-
-## 🗺️ Mark Roadmap
-
-| Mark | Focus |
-|---|---|
-| **XLVIII** | Instant interrupt · parallel news · two-phase briefing · exponential backoff · vision cooldown |
-| **XLIX** | Auto-start · clipboard intelligence · assistant customization |
-| **L** | Wake word · proactive system 2.0 · session memory / daily continuity |
-| **LI+** | Plugin system · email · quiz mode · calorie counter · and more |
-
----
-
-## ⚡ Quick Start
+### 2. Cloner et préparer Python
 
 ```bash
 git clone https://github.com/Abdoul273/ANO-GPT.git
 cd ANO-GPT
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+`setup.py` peut également installer les dépendances Python. Certaines intégrations demandent des composants supplémentaires décrits dans leur guide.
+
+### 3. Configurer la clé vocale
+
+```bash
+cp config/api_keys.example.json config/api_keys.json
+```
+
+Renseignez au minimum **`gemini_api_key`** dans `config/api_keys.json`. L'écran de première configuration peut aussi guider cette étape. Une clé vocale distincte peut être renseignée dans **Configuration IA** pour séparer les accès.
+
+> 🔒 `config/api_keys.json` contient des secrets personnels. Ne le publiez pas et ne le commitez pas sur GitHub.
+
+### 4. Démarrer et vérifier
+
+```bash
 python main.py
 ```
 
-> ⚠️ **Installation Note:** Some OS-specific dependencies are not bundled in `requirements.txt` to keep the repo lightweight. If you hit a `ModuleNotFoundError`, install the missing package with `pip install <module_name>`.
+Si l'interface est déjà ouverte, ANO-GPT réactive l'instance existante. Pour un diagnostic local, même lorsque l'assistant est arrêté :
 
----
-
-## 📋 Requirements
-
-| Requirement | Details |
-| --- | --- |
-| **OS** | Windows 10/11, macOS, or Linux (Arch / EndeavourOS + Hyprland on this machine) |
-| **Python** | **3.13 or newer** (developed on **3.14.7**) |
-| **Microphone** | Required for voice interaction |
-| **API Key** | Free Gemini API key (`config/api_keys.json`) |
-
-### Voice activity (VAD)
-
-`webrtcvad-wheels` is a **legacy fallback**. It imports `pkg_resources` (setuptools), which recent Python versions remove. The intended detector is **Silero VAD ONNX** (`core/vad_silero.py`, model `models/silero_vad.onnx` via `onnxruntime`) — already in the tree, no PyTorch.
-
-- Python **3.13** : Silero is used by default.
-- Python **3.14+** : Silero is **opt-in** (`ANOGPT_ENABLE_ONNX_VAD=1`) so ONNX Runtime does not run inside the PortAudio callback (glibc heap corruption observed here). Without the flag, WebRTC VAD is used until it disappears.
-
-Do **not** `pip install silero-vad` : that package pulls PyTorch, too heavy for a 2-core / 11 GB machine.
-
----
-
-## 🗂️ Project Structure
-
+```bash
+./anogpt-ctl doctor
+./anogpt-ctl doctor --json
 ```
+
+Le diagnostic ne valide pas à lui seul une clé API distante, le microphone ou chaque service connecté. Le panneau **Santé et performances** du tableau de bord affiche aussi les informations disponibles.
+
+## ⌨️ Contrôle depuis le terminal
+
+[`anogpt-ctl`](anogpt-ctl) communique avec l'application via `$XDG_RUNTIME_DIR/anogpt.sock` :
+
+```bash
+./anogpt-ctl status                 # état actuel
+./anogpt-ctl listen                 # activer l'écoute
+./anogpt-ctl mute                   # mettre en veille
+./anogpt-ctl toggle                 # basculer entre écoute et veille
+./anogpt-ctl interrupt              # interrompre la réponse vocale
+./anogpt-ctl ask "ouvre Chrome"     # envoyer une demande écrite
+./anogpt-ctl action-stats           # statistiques des actions
+```
+
+Sous Hyprland, le compositeur peut lier ces commandes à des raccourcis globaux. Le mot d'activation local repose sur Vosk et demande une calibration ; les scripts correspondants sont dans [`scripts/`](scripts/).
+
+## 🏗️ Architecture du projet
+
+```text
 ANO-GPT/
-├── main.py                  # Boucle Live — Gemini, audio, répartition d'outils
-├── anogpt-ctl               # Socket de contrôle (toggle, ask, doctor)
-├── anogpt_mcp.py            # Pont MCP vers les agents (Antigravity, Claude, Codex)
-├── setup.py                 # Première installation (pip + Playwright)
-├── ui/                      # HUD PyQt6 — plus de ui.py monolithique
-│   ├── jarvis_ui.py         # Façade publique JarvisUI
-│   ├── main_window.py       # Fenêtre principale
-│   ├── orb/                 # Orbe, waveform radial, mini-orbe
-│   ├── panels/              # Journal, cartes, musique, télémétrie
-│   ├── dialogs/             # Réglages IA, audio, mémoire, plugins
-│   ├── media/               # Caméra, galerie, carte, vidéo
-│   └── window/              # Chrome, tiroir, scène
-├── actions/                 # Outils vocaux (recherche, bureau, mail, code, …)
-├── core/
-│   ├── audio_engine.py      # Capture / lecture, half-duplex
-│   ├── audio_vad.py         # Silero ONNX (opt-in 3.14) ; webrtcvad en repli
-│   ├── vad_silero.py        # models/silero_vad.onnx via onnxruntime
-│   ├── map_render.py        # Carte unique plein cadre
-│   ├── llm_client.py        # Cerveau (Azure, OpenRouter, DeepSeek, …)
-│   └── prompt.txt           # Personnalité et routage d'outils
-├── dashboard/               # Serveur HTTPS + app téléphone (ANO Remote)
-├── memory/                  # RAG, habitudes, journal d'outils, config
-├── models/                  # silero_vad.onnx, embeddings
-├── plugins/                 # Extensions utilisateur
-├── tests/
-└── config/
-    └── api_keys.json        # Clés, cerveau, nom de l'assistant
+├── main.py                 # démarrage, boucle vocale et interface
+├── anogpt-ctl              # commandes locales via socket
+├── anogpt_mcp.py           # serveur MCP pour les agents externes
+├── actions/                # bureau, web, médias et services
+├── core/                   # audio, IA, mémoire, outils et IPC
+│   ├── audio_engine.py     # capture et lecture de la voix
+│   ├── llm_client.py       # fournisseurs de modèles
+│   ├── ipc.py              # socket de contrôle local
+│   └── map_render.py       # carte plein cadre
+├── ui/                     # interface PyQt6, orbe, panneaux et dialogues
+├── dashboard/              # serveur et tableau de bord distant
+├── mobile/ano_remote/      # application Android
+├── plugins/                # extensions utilisateur
+├── config/                 # exemples et réglages
+├── docs/                   # guides et dépannage
+└── tests/                  # tests automatisés
 ```
 
----
+La boucle vocale, l'interface Qt et les actions vivent dans des composants distincts. Le serveur MCP réutilise le pont d'outils de l'application.
 
-## ⚠️ License
+## 🔌 Étendre ANO-GPT
 
-Personal and non-commercial use only.
-Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)**.
+Les plugins recommandés prennent la forme d'un dossier avec `plugin.json` et `main.py`. Ils apparaissent dans **Menu → Plugins** et leurs outils deviennent disponibles à la prochaine connexion vocale. Consultez le [guide de création](plugins/PLUGIN_AUTHORING_GUIDE.md) et le [résumé du système de plugins](plugins/README.md).
 
----
+Les développeurs peuvent aussi enrichir `actions/`, les déclarations d'outils de `core/tool_dispatcher.py` et les composants visuels de `ui/`.
 
-## 👤 Connect with the Creator
+## 📚 Documentation
 
-Engineered by a developer building a real-world JARVIS-style assistant.
-⭐ **Star the repository to support the journey to Mark 100.**
-
-| Platform | Link |
+| Guide | Sujet |
 | --- | --- |
-| YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
-| Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
+| [Audio sur Arch](docs/audio_setup_arch.md) | PipeWire, débruitage, VAD et diagnostics micro. |
+| [Reconnaissance vocale](docs/RECONNAISSANCE_VOCALE.md) | Transcription et fidélité des commandes. |
+| [Azure OpenAI](docs/AZURE_OPENAI.md) | Configuration des modèles et rôles spécialisés. |
+| [MCP](docs/MCP.md) | Connexion des agents et Mode Agent Fantôme. |
+| [ANO Remote](mobile/ano_remote/README.md) | Installation et usage de l'application Android. |
+| [Téléphonie Android](docs/TELEPHONIE_ANDROID.md) | Appels et messages depuis le téléphone. |
+| [Localisation](docs/LOCALISATION.md) | Carte, globe, recherche locale et navigation. |
+| [Connexions cloud](docs/CLOUD_INTEGRATIONS.md) | Notion, Figma et services dans Chrome. |
+| [Fiabilité et diagnostics](docs/MISE_A_JOUR_FIABILITE_2026-09.md) | Exécution des outils, contrôle distant et vérifications. |
+| [Plugins](plugins/PLUGIN_AUTHORING_GUIDE.md) | Développer une extension. |
+
+## 🤝 Contribuer
+
+Les contributions sont les bienvenues : signalez un problème avec ses étapes de reproduction, proposez une amélioration ou ouvrez une pull request ciblée. Pour vérifier les changements Python :
+
+```bash
+python -m pytest -q
+ruff check .
+```
+
+Les fonctions vocales, visuelles et Android demandent aussi une vérification sur les appareils et services concernés.
+
+### 🙌 Origine et crédits
+
+Le projet s'appuie sur une base d'assistant personnel présentée auparavant sous le nom **MARK XLIX**, créée par [FatihMakes](https://www.youtube.com/@FatihMakes). ANO-GPT poursuit son développement avec ses propres intégrations, son interface, son contrôle distant et ses outils. Merci aux auteurs des bibliothèques et projets libres utilisés par l'application.
+
+---
+
+<div align="center">
+
+**ANO-GPT — votre assistant, votre bureau, votre façon de travailler.** 🚀
+
+Si le projet vous plaît, une ⭐ sur le dépôt aide à le faire découvrir.
+
+</div>
