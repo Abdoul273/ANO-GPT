@@ -32,12 +32,37 @@ def test_astro_est_un_pote_qui_vanne_pas_un_jarvis():
     assert "avis" in prompt
     assert "callback" in prompt
     assert "générateur de slang" in prompt
+    assert "rafale de commandes" in prompt
+    assert "bureau 1, puis 2" in prompt
     assert detect_mode_command("Passe en mode vannes") is PersonalityMode.ASTRO
     assert detect_mode_command("passe en mode pote") is PersonalityMode.ASTRO
     addr = identity_address_line(MODE_SPECS[PersonalityMode.ASTRO]).casefold()
     assert "always call the user" not in addr
     assert "frérot" in addr
     assert "monsieur" in addr
+
+
+def test_astro_reconnait_une_rafale_de_bureaux_distincts_sans_inventer_de_succes():
+    from core.personality_modes import astro_action_rhythm_context
+
+    history = []
+    def note(desk, when, result=None):
+        return astro_action_rhythm_context(
+            history, tool_name="computer_control",
+            args={"action": "switch_workspace", "workspace": desk},
+            result=result or f"Navigation confirmée : bureau {desk}.", now=when,
+        )
+
+    assert note(1, 0) == ""
+    second = note(2, 5)
+    assert "1 → 2" in second
+    assert "Confirme d'abord le résultat réel" in second
+    assert "je viens de te le dire" not in second
+    assert note(3, 10, "Navigation envoyée, mais non confirmée") == ""
+    third = note(1, 15)
+    assert "1 → 2 → 1" in third
+    assert "chambrer franchement" in third
+    assert note(3, 200) == ""
 
 
 def test_normal_coquin_majeur_ont_une_voix_nette():

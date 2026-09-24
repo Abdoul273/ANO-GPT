@@ -24,7 +24,7 @@ Corrections par rapport à l'ancienne version :
       XDG_RUNTIME_DIR et WAYLAND_DISPLAY le sont désormais pour hyprctl,
       grim et slurp ;
     - les bureaux acceptent les ordinaux (« deuxième bureau », « bureau 3 ») ;
-    - le focus ramène la fenêtre sur le bureau courant si elle est ailleurs.
+    - le focus rejoint le bureau de la fenêtre sans la déplacer.
 """
 import json
 import os
@@ -826,6 +826,7 @@ def _focus_window(title: str) -> str:
             elif needle.startswith("0x"):
                 query_addr = needle
 
+            matches = []
             for c in clients:
                 c_addr = str(c.get("address") or "").lower().strip()
                 if query_addr and (c_addr == query_addr or c_addr.lstrip("0x") == query_addr.lstrip("0x")):
@@ -833,8 +834,26 @@ def _focus_window(title: str) -> str:
                     break
                 blob = f"{(c.get('title') or '')} {(c.get('class') or '')}".lower()
                 if needle and needle in blob:
-                    target = c
-                    break
+                    matches.append(c)
+            if not query_addr:
+                if needle in ("terminal", "le terminal", "un terminal"):
+                    # Le titre peut devenir « codex » après le lancement.
+                    matches = [c for c in clients if _is_terminal(
+                        str(c.get("class") or c.get("initialClass") or ""))]
+                if matches:
+                    target = matches[0]
+                    # Hyprland ne garantit pas l'ordre des clients. L'adresse
+                    # du journal identifie la dernière instance lancée.
+                    try:
+                        from actions import launch_tracker
+                        for entry in launch_tracker.live_entries(max_age=600):
+                            candidate = next((c for c in matches
+                                              if c.get("address") == entry.get("address")), None)
+                            if candidate:
+                                target = candidate
+                                break
+                    except Exception:
+                        pass
             if not target:
                 open_titles = ", ".join(
                     f"«{c.get('title') or c.get('class')}»" for c in clients[:10]
@@ -842,23 +861,31 @@ def _focus_window(title: str) -> str:
                 return (f"Aucune fenêtre correspondant à «{title}» trouvée. "
                         f"Fenêtres ouvertes : {open_titles}")
             addr = target.get("address")
-            # Ramener la fenêtre sur le bureau courant si elle est ailleurs,
-            # sinon le focus partirait dans le vide.
+            # Rejoindre son bureau : déplacer une fenêtre pour y taper une
+            # commande détruit le contexte spatial choisi par l'utilisateur.
             try:
                 active_ws = _hyprctl_json("activeworkspace") or {}
                 current = active_ws.get("id")
                 win_ws = (target.get("workspace") or {}).get("id")
                 if (current is not None and win_ws is not None
                         and win_ws != current and addr):
-                    _hypr_dispatch("movetoworkspacesilent",
-                                   f"{current},address:{addr}")
+                    if not _hypr_dispatch("workspace", str(win_ws)):
+                        return f"Impossible de rejoindre le bureau {win_ws} de la fenêtre."
+                    kit.hypr_invalidate()
             except Exception:
                 pass
+            focused = False
             if _HAS_WINDOW_INSTANCES and addr:
-                _hypr_focus_window(f"address:{addr}")
+                focused = bool(_hypr_focus_window(f"address:{addr}"))
             elif addr:
-                _hypr_dispatch("focuswindow", f"address:{addr}")
+                focused = _hypr_dispatch("focuswindow", f"address:{addr}")
+            if not focused:
+                return f"Impossible de focaliser la fenêtre «{target.get('title') or target.get('class')}»."
             time.sleep(0.2)
+            kit.hypr_invalidate()
+            active = _hyprctl_json("activewindow") or {}
+            if isinstance(active, dict) and active.get("address") and active["address"] != addr:
+                return "Impossible de confirmer le focus de la fenêtre demandée."
             return f"Fenêtre focalisée : «{target.get('title') or target.get('class')}»"
         except Exception as e:
             return f"Erreur hyprctl lors du focus : {e}"
@@ -1252,7 +1279,7 @@ def _screen_find(description: str) -> Optional[Tuple[int, int]]:
     il peut tomber sur « Supprimer » ou « Acheter ». On réutilise donc la
     détection du pointeur visuel — boîte normalisée 0-1000, modèle vision
     configuré, boîte invraisemblable rejetée, gros plan de contre-vérification
-    quand la confiance est moyenne — plutôt que de demander « x,y » à un modèle
+    systématique — plutôt que de demander « x,y » à un modèle
     léger et de cliquer sur le premier nombre trouvé dans sa phrase.
     """
     try:
@@ -1573,6 +1600,14 @@ def computer_control(parameters: dict, **kwargs) -> str:
             if not text:
                 return "Aucun texte à taper."
             target_win = params.get("window") or params.get("title")
+            if (not target_win and text.startswith("/")
+                    and _last_typed.get("submitted")
+                    and _is_terminal(str(_last_typed.get("class") or ""))
+                    and time.monotonic() - _last_typed.get("at", 0) < _LAST_TYPED_TTL_S
+                    and _last_typed.get("address")):
+                # Suite d'une commande interactive comme « codex » : une
+                # commande /usage doit rester dans la même fenêtre exacte.
+                target_win = f"address:{_last_typed['address']}"
             if target_win:
                 focused = _focus_window(str(target_win))
                 if not (focused.startswith("Fenêtre") and "focalisée" in focused):

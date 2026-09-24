@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import os
 import shutil
 import time
@@ -264,6 +265,18 @@ def get_focused_monitor_name() -> Optional[str]:
     return None
 
 
+def monitor_names_focused_first() -> List[str]:
+    """Moniteurs disponibles, l'écran regardé en premier."""
+    monitors = _hyprctl_json("monitors")
+    if not isinstance(monitors, list):
+        return []
+    active = [str(m["name"]) for m in monitors
+              if isinstance(m, dict) and m.get("name") and m.get("focused")]
+    others = [str(m["name"]) for m in monitors
+              if isinstance(m, dict) and m.get("name") and not m.get("focused")]
+    return list(dict.fromkeys(active + others))
+
+
 def get_monitor_geometry(name: Optional[str] = None) -> Optional[Tuple[int, int, int, int]]:
     """Géométrie logique Hyprland d'un moniteur (x, y, largeur, hauteur).
 
@@ -343,12 +356,25 @@ def capture_raw_geometry(geometry: Optional[str] = None, monitor: Optional[str] 
     return proc.stdout
 
 
+_DESKTOP_SCOPE = re.compile(
+    r"(?:\b(?:sur|de|dans|tout)\s+(?:mon|le|l['’])?\s*(?:syst[èe]me|bureau|desktop|[ée]cran)\b"
+    r"|\b(?:barre\s+(?:du\s+haut|des\s+t[âa]ches|d['’][ée]tat)|horloge)\b)",
+    re.IGNORECASE,
+)
+
+
+def capture_target_for_query(query: str, default: str = "active_window") -> str:
+    """Choisit le bureau entier quand la demande vise l'interface système."""
+    return "screen" if _DESKTOP_SCOPE.search(query or "") else default
+
+
 def capture_window_or_screen(
     target: str = "active_window",
     window_query: Optional[str] = None,
     compress: bool = True,
     max_dim: Tuple[int, int] = (1920, 1080),
     quality: int = 85,
+    monitor_name: Optional[str] = None,
 ) -> Tuple[bytes, str, Dict[str, Any]]:
     """
     Point d'entrée principal pour la perception visuelle.
@@ -394,7 +420,7 @@ def capture_window_or_screen(
                 metadata["capture_origin"] = win_info.at
                 metadata["capture_size"] = win_info.size
         else:
-            mon = get_focused_monitor_name() if target == "monitor" else None
+            mon = (monitor_name or get_focused_monitor_name()) if target == "monitor" else None
             raw_bytes = capture_raw_geometry(monitor=mon)
             if mon:
                 metadata["monitor"] = mon
@@ -403,6 +429,17 @@ def capture_window_or_screen(
                     mx, my, mw, mh = monitor_geometry
                     metadata["capture_origin"] = (mx, my)
                     metadata["capture_size"] = (mw, mh)
+            elif target == "screen":
+                # Sur un seul écran, la vue complète reste projetable dans
+                # le repère du pointeur. En multi-écran, leurs échelles peuvent
+                # différer : la détection dédiée traite chaque sortie à part.
+                names = monitor_names_focused_first()
+                if len(names) == 1:
+                    monitor_geometry = get_monitor_geometry(names[0])
+                    if monitor_geometry is not None:
+                        mx, my, mw, mh = monitor_geometry
+                        metadata["capture_origin"] = (mx, my)
+                        metadata["capture_size"] = (mw, mh)
     except Exception as exc:
         # Repli de secours : capture de tout l'écran
         raw_bytes = capture_raw_geometry()

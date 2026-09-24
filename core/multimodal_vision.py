@@ -560,7 +560,8 @@ def highlight_vision_targets(
     if box is None:
         return False
     try:
-        pointer.highlight_region(*box, label=str(chosen.get("label") or "Ici"), duration=3.5)
+        pointer.point_at_rect(*box, label=str(chosen.get("label") or "Ici"), duration=3.5,
+                              monitor=str(meta.get("monitor") or ""))
         return True
     except Exception as exc:
         print(f"[Vision] pointeur impossible : {exc}")
@@ -751,20 +752,23 @@ def inspect_screen_live(
     Capture instantanément l'écran/fenêtre et exécute l'analyse multimodale spécialisée.
     Affiche la carte de résultat dans le HUD et retourne la synthèse vocale.
     """
+    target = screen_capture.capture_target_for_query(user_query, default=target)
     win_info = window_info
     meta = dict(metadata or {})
     if image_bytes is None:
-        if win_info is None:
+        if target == "screen":
+            win_info = None
+        elif win_info is None:
             win_info = screen_capture.get_active_window(skip_anogpt=True)
         guessed = domain or detect_visual_domain(user_query, win_info)
-        policy = capture_policy(win_info, guessed)
+        policy = capture_policy(win_info, "document" if target == "screen" else guessed)
         image_bytes, mime_type, meta = screen_capture.capture_window_or_screen(
             target=target,
             compress=True,
             max_dim=policy["max_dim"],
             quality=policy["quality"],
         )
-        if win_info is None:
+        if win_info is None and target != "screen":
             win_info = screen_capture.get_active_window(skip_anogpt=True)
 
     result = analyze_visual_content(

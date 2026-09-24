@@ -10,6 +10,7 @@ Couvre :
   6. Parsing local en langage naturel (_parse_control_locally).
 """
 import subprocess
+import time
 
 from actions.computer_control import (
     computer_control,
@@ -219,6 +220,55 @@ def test_focus_window_by_address(monkeypatch):
     assert "Editor Window" in res2 or "code" in res2
     assert "address:0x55aabbcc" in focused or any("address:0x55aabbcc" in str(x) for x in focused)
 
+
+def test_type_uses_recent_terminal_on_its_workspace(monkeypatch):
+    from actions import launch_tracker
+
+    windows = [
+        {"address": "0xold", "title": "~", "class": "kitty", "workspace": {"id": 1}},
+        {"address": "0xnew", "title": "codex", "class": "kitty", "workspace": {"id": 3}},
+    ]
+    events = []
+    active = {"address": "0xold"}
+
+    def hypr_json(command):
+        if command == "clients":
+            return windows
+        if command == "activeworkspace":
+            return {"id": 1}
+        if command == "activewindow":
+            return active
+        return None
+
+    monkeypatch.setattr(cc, "_WAYLAND", True)
+    monkeypatch.setattr(cc, "_have", lambda command: command == "hyprctl")
+    monkeypatch.setattr(cc, "_hyprctl_json", hypr_json)
+    monkeypatch.setattr(launch_tracker, "live_entries", lambda **kwargs: [
+        {"address": "0xnew", "opened_at": 2},
+        {"address": "0xold", "opened_at": 1},
+    ])
+    monkeypatch.setattr(cc, "_hypr_dispatch", lambda command, arg="": events.append((command, arg)) or True)
+    monkeypatch.setattr(cc, "_hypr_focus_window", lambda selector: events.append(("focuswindow", selector)) or active.update(address="0xnew") or True)
+    monkeypatch.setattr(cc, "_type_text", lambda value: events.append(("type", value)) or f"Texte tapé : «{value}»")
+    monkeypatch.setattr(cc, "_press_key", lambda value: events.append(("press", value)) or f"Touche pressée : {value}")
+    monkeypatch.setattr(cc.time, "sleep", lambda seconds: None)
+
+    result = cc.computer_control({"action": "type", "text": "/usage", "window": "terminal", "press_enter": True})
+
+    assert result.startswith("Texte tapé")
+    assert events[:3] == [("workspace", "3"), ("focuswindow", "address:0xnew"), ("type", "/usage")]
+    assert ("press", "enter") in events
+    assert not any(command.startswith("moveto") for command, _ in events)
+
+    # Le modèle peut omettre la fenêtre dans le tour de parole suivant.
+    events.clear()
+    active["address"] = "0xold"
+    monkeypatch.setattr(cc, "_last_typed", {
+        "text": "codex", "submitted": True, "class": "kitty",
+        "address": "0xnew", "at": time.monotonic(),
+    })
+    cc.computer_control({"action": "type", "text": "/usage", "press_enter": True})
+    assert events[:3] == [("workspace", "3"), ("focuswindow", "address:0xnew"), ("type", "/usage")]
 
 # ════════════════════════════════════════════════════════════════════════════
 # 4. Actions 'press' et 'hotkey' : keycodes Linux & ydotool

@@ -39,6 +39,25 @@ def test_detect_visual_domain_contextual():
     assert detect_visual_domain("Lis la page", window_info=win_pdf) == "document"
 
 
+def test_inspect_system_clock_uses_full_screen_capture(monkeypatch):
+    from core import screen_capture
+
+    captured = []
+    monkeypatch.setattr(screen_capture, "get_active_window",
+                        lambda **kwargs: (_ for _ in ()).throw(AssertionError("fenêtre recadrée")))
+    monkeypatch.setattr(screen_capture, "capture_window_or_screen",
+                        lambda **kwargs: (captured.append(kwargs) or
+                                          (b"image", "image/jpeg", {"target": kwargs["target"]})))
+    monkeypatch.setattr(mv, "analyze_visual_content",
+                        lambda **kwargs: MagicMock(spoken_summary="Horloge repérée"))
+
+    spoken, _ = inspect_screen_live("Où est l'heure sur mon système ?")
+
+    assert spoken == "Horloge repérée"
+    assert captured[0]["target"] == "screen"
+    assert captured[0]["max_dim"] == (2560, 1600)
+
+
 def test_build_domain_system_prompt():
     prompt_arch = _build_domain_system_prompt("architecture")
     assert "SCHÉMA D'ARCHITECTURE & RÉSEAU" in prompt_arch

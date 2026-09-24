@@ -216,23 +216,26 @@ def vision(image_bytes: bytes, mime: str, prompt: str, *, system: str = "",
     # gagne. Un fil qui attend le réseau ne coûte rien au GIL.
     racers = models[:_VISION_PARALLEL]
     errors: list[str] = []
-    with ThreadPoolExecutor(max_workers=len(racers)) as pool:
+    pool = ThreadPoolExecutor(max_workers=len(racers))
+    try:
         futures = {pool.submit(_ask, model): model for model in racers}
-        try:
-            for future in as_completed(futures, timeout=max(1, deadline - time.monotonic())):
-                model = futures[future]
-                try:
-                    answer = future.result()
-                except Exception as exc:
-                    errors.append(f"{model} : {exc}")
-                    continue
-                if answer:
-                    for other in futures:
-                        other.cancel()
-                    return answer, model
-                errors.append(f"{model} : réponse vide")
-        except FuturesTimeout:
-            errors.append(f"délai {timeout} s dépassé")
+        for future in as_completed(futures, timeout=max(0.1, deadline - time.monotonic())):
+            model = futures[future]
+            try:
+                answer = future.result()
+            except Exception as exc:
+                errors.append(f"{model} : {exc}")
+                continue
+            if answer:
+                return answer, model
+            errors.append(f"{model} : réponse vide")
+    except FuturesTimeout:
+        errors.append(f"délai {timeout} s dépassé")
+    finally:
+        # Le context manager attend tous les appels, même quand le gagnant a
+        # répondu ou que le délai est dépassé. Une requête HTTP en cours ne
+        # peut pas être annulée ; son timeout réseau la terminera en fond.
+        pool.shutdown(wait=False, cancel_futures=True)
     raise RuntimeError(f"Aucun modèle Azure n'a lu l'image ({' ; '.join(errors)}).")
 
 

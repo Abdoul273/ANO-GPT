@@ -576,6 +576,8 @@ TOOL_DECLARATIONS = [
             "diagrams, UI targets). MUST be called when the user asks what is on screen, "
             "what you see, look at the camera, analyze a schema/chart/PDF/code, etc. "
             "You have NO visual ability without this tool. "
+            "For questions about the system desktop, clock, taskbar, or entire screen, "
+            "the capture covers the whole display rather than the active window. "
             "The tool result is the finished analysis: answer from it, do not call "
             "the tool again, and do not wait for a later image. "
             "A block starting with [VISION EXPERTE] or [TEXTE DE L'ÉCRAN] is the answer. "
@@ -599,6 +601,7 @@ TOOL_DECLARATIONS = [
             "button, menu item, confirmation card, or region is located. "
             "Pass target (e.g. 'confirmation', 'carte de confirmation', 'terminal', 'bouton installer') "
             "and the real-time system will detect and frame it on screen without hallucinating coordinates. "
+            "For 'où est l'heure sur mon système et pointe', target the visible system clock. "
             "Coordinates can optionally be supplied: [x, y] for laser point; [x, y, w, h] for bounding box."
         ),
         "parameters": {
@@ -1442,6 +1445,9 @@ TOOL_DECLARATIONS = [
                         "Pour une capture d'écran destinée à l'utilisateur, utiliser capture_control, "
                         "jamais cet outil. "
                         "type types text into active window, or target 'window' if provided. "
+                        "For follow-up commands such as '/usage' in a terminal just opened by open_app, "
+                        "set window='terminal' (or the exact app name); the last opened matching window "
+                        "is selected on its own workspace. "
                         "erase is the ONLY action for « efface / supprime / enlève » after typing: "
                         "default scope 'last' removes exactly the text ANO just typed (Backspace × its "
                         "length); scope 'word' removes the last word, scope 'all' clears the whole "
@@ -3650,6 +3656,8 @@ class ToolDispatcher:
                     self._vision_last_time = _now
                     angle     = args.get("angle", "screen").lower()
                     user_text = args.get("text", "What do you see?")
+                    from core import screen_capture
+                    vision_target = screen_capture.capture_target_for_query(user_text) if angle != "camera" else "camera"
                     _skip_vision_pipeline = False
                     _meta = {}
                     if angle == "camera":
@@ -3660,10 +3668,10 @@ class ToolDispatcher:
                         print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
                         _stall = "camera"
                     else:
-                        from core import screen_capture
                         img_b = mime_t = _meta = None
                         mind = getattr(self, "_screen_mind", None)
-                        cached = mind.cached_capture(max_age_s=30.0) if mind is not None else None
+                        cached = (mind.cached_capture(max_age_s=30.0)
+                                  if mind is not None and vision_target == "active_window" else None)
                         if cached is not None and cached.webp_bytes:
                             img_b, mime_t, _meta = (
                                 cached.webp_bytes, cached.mime_type, cached.as_meta()
@@ -3679,11 +3687,21 @@ class ToolDispatcher:
                                 _skip_vision_pipeline = True
                         if not _skip_vision_pipeline:
                             if img_b is None:
-                                img_b, mime_t, _meta = await loop.run_in_executor(
-                                    None, lambda: screen_capture.capture_window_or_screen(target="active_window")
-                                )
-                            _win_cls = _meta.get("window_class", "screen")
-                            print(f"[Vision] 🖥️  Active Window ({_win_cls}): {len(img_b):,} bytes")
+                                if vision_target == "screen":
+                                    from core.multimodal_vision import capture_policy
+                                    policy = capture_policy(domain="document")
+                                    img_b, mime_t, _meta = await loop.run_in_executor(
+                                        None, lambda: screen_capture.capture_window_or_screen(
+                                            target="screen", max_dim=policy["max_dim"],
+                                            quality=policy["quality"])
+                                    )
+                                else:
+                                    img_b, mime_t, _meta = await loop.run_in_executor(
+                                        None, lambda: screen_capture.capture_window_or_screen(target="active_window")
+                                    )
+                            _win_cls = ("bureau complet" if vision_target == "screen"
+                                        else _meta.get("window_class") or "écran")
+                            print(f"[Vision] 🖥️  {_win_cls}: {len(img_b):,} bytes")
                             _stall = "screen"
 
                     if not _skip_vision_pipeline:
@@ -3729,7 +3747,8 @@ class ToolDispatcher:
                             _win_info = None
                             try:
                                 from core import screen_capture as _sc
-                                _win_info = _sc.get_active_window(skip_anogpt=True)
+                                _win_info = (_sc.get_active_window(skip_anogpt=True)
+                                             if vision_target == "active_window" else None)
                             except Exception:
                                 _win_info = None
                             # Une image caméra n'a rien à voir avec la fenêtre
@@ -3753,7 +3772,7 @@ class ToolDispatcher:
                                 def _expert():
                                     return inspect_screen_live(
                                         user_query=user_text,
-                                        target="active_window",
+                                        target=vision_target,
                                         domain=_domain,
                                         player=self.ui,
                                         image_bytes=img_b,
@@ -3840,11 +3859,9 @@ class ToolDispatcher:
                 )
 
             elif name == "point_on_screen":
-                desc = str(args.get("description") or "Élément ciblé")
-                coords = args.get("coordinates") or []
-                mode = str(args.get("mode") or "auto")
-                dur = float(args.get("duration") or 3.0)
-                result = self._agent_point_on_screen(desc, coords, mode, dur)
+                result = await loop.run_in_executor(
+                    None, lambda: self._agent_point_on_screen(args)
+                )
 
             elif name == "self_repair":
                 # Une réparation peut réveiller dev_agent : elle a sa place dans
@@ -4576,6 +4593,19 @@ class ToolDispatcher:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
+        if task_ok and name in {"computer_control", "hypr_control"} and not _looks_like_failure(result):
+            from core.personality_modes import (
+                PersonalityMode, active_mode, astro_action_rhythm_context,
+            )
+            if active_mode() is PersonalityMode.ASTRO:
+                history = getattr(self, "_astro_workspace_history", None)
+                if history is None:
+                    history = []
+                    self._astro_workspace_history = history
+                result = str(result) + astro_action_rhythm_context(
+                    history, tool_name=name, args=args, result=str(result),
+                )
+
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
         return types.FunctionResponse(
             id=fc.id, name=name,
@@ -4946,9 +4976,11 @@ class ToolDispatcher:
         }, player=self.ui, session_memory=self._tool_session_memory)
 
     def _agent_inspect_screen(self, args: dict) -> str:
+        from core import screen_capture
         query = self._arg(args, "query") or "Analyse ce qui est affiché à l'écran."
         domain = self._arg(args, "domain", "auto") or "auto"
         target = self._arg(args, "target", "active_window") or "active_window"
+        target = screen_capture.capture_target_for_query(query, default=target)
         spoken, diag = inspect_screen_live(
             user_query=query,
             target=target,

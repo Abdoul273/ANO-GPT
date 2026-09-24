@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import math
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, List, Literal, Optional, Sequence, Tuple, Union
@@ -45,6 +46,7 @@ from PyQt6.QtCore import (
     QPointF,
     QRectF,
     Qt,
+    QThread,
     QTimer,
     pyqtSignal,
     pyqtSlot,
@@ -62,6 +64,7 @@ from PyQt6.QtGui import (
     QScreen,
 )
 from PyQt6.QtWidgets import QApplication, QWidget
+from core import action_kit as kit
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -668,7 +671,6 @@ _MIN_BOX_AREA = 0.00012   # plus petit qu'une icône : le modèle a visé au has
 _MAX_BOX_AREA = 0.55      # « c'est quelque part par là » n'est pas une réponse
 _MIN_BOX_SPAN = 4.0       # sur 1000 : en deçà, la boîte est dégénérée
 _MIN_CONFIDENCE = 55.0
-_VERIFY_BELOW = 85.0      # sous ce seuil, on recoupe avant d'afficher
 
 
 def _valid_target_box(values: Tuple[float, float, float, float]) -> bool:
@@ -697,7 +699,7 @@ def _confirm_target_box(client, gtypes, img_bytes: bytes, mime: str,
         import io
         from PIL import Image
     except Exception:
-        return True  # Sans Pillow, on ne bloque pas : on n'a rien à opposer.
+        return False
     try:
         image = Image.open(io.BytesIO(img_bytes))
         width, height = image.size
@@ -715,7 +717,7 @@ def _confirm_target_box(client, gtypes, img_bytes: bytes, mime: str,
             buffer, format="JPEG", quality=92)
         crop_bytes = buffer.getvalue()
     except Exception:
-        return True
+        return False
 
     from core.multimodal_vision import _call_gemini_vision
     prompt = (
@@ -738,7 +740,7 @@ def _confirm_target_box(client, gtypes, img_bytes: bytes, mime: str,
         return bool(_json.loads(match.group(0)).get("match"))
     except Exception as exc:
         print(f"[VisualPointer] Contre-vérification impossible : {exc}")
-        return True
+        return False
 
 
 def detect_screen_target_live(target: str, query: str = "") -> Optional[ScreenTargetBox]:
@@ -760,20 +762,9 @@ def detect_screen_target_live(target: str, query: str = "") -> Optional[ScreenTa
         if not api_key:
             return None
 
-        # Le moniteur qui contient la fenêtre active est la seule référence
-        # utile pour « regarde ici ». Une capture de tout le bureau virtuel
-        # puis une projection sur primaryScreen décalait le pointeur dès que
-        # l'écran actif n'était pas l'écran principal.
-        # Localiser une icône ou un libellé de menu se joue sur quelques
-        # pixels : la politique par défaut (1600x1000, qualité 85) les efface.
-        # On reprend celle réservée au texte, déjà calibrée pour ça.
+        # Chaque moniteur garde sa résolution et sa géométrie propres. Une
+        # capture virtuelle comprimée rend les petites horloges illisibles.
         policy = capture_policy(domain="document")
-        img_bytes, mime, metadata = screen_capture.capture_window_or_screen(
-            target="monitor", compress=True,
-            max_dim=policy["max_dim"], quality=policy["quality"],
-        )
-        if not img_bytes:
-            return None
 
         from google import genai
         from google.genai import types as gtypes
@@ -795,45 +786,53 @@ def detect_screen_target_live(target: str, query: str = "") -> Optional[ScreenTa
             "Ne devine jamais une position : l'absence de réponse est préférable "
             "à une position approximative."
         )
-        resp, _model = _call_gemini_vision(
-            client, gtypes,
-            [gtypes.Part.from_bytes(data=img_bytes, mime_type=mime), prompt],
-            models,
-        )
-        text = (getattr(resp, "text", "") or "").strip()
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            return None
-        data = json.loads(match.group(0))
-        box = data.get("box")
-        if not (isinstance(box, list) and len(box) >= 4):
-            return None
-        values = tuple(float(v) for v in box[:4])
-        if not _valid_target_box(values):
-            print(f"[VisualPointer] Boîte rejetée pour « {target} » : {values}")
-            return None
-        try:
-            confidence = float(data.get("confidence") or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
-        if confidence and confidence < _MIN_CONFIDENCE:
-            print(f"[VisualPointer] « {target} » abandonné : confiance {confidence:.0f}.")
-            return None
-        if confidence < _VERIFY_BELOW and not _confirm_target_box(
-                client, gtypes, img_bytes, mime, values, target, models):
-            print(f"[VisualPointer] « {target} » infirmé par la contre-vérification.")
-            return None
-
-        origin = metadata.get("capture_origin") or (0, 0)
-        size = metadata.get("capture_size") or (0, 0)
-        if len(origin) != 2 or len(size) != 2 or size[0] <= 0 or size[1] <= 0:
-            return None
-        return ScreenTargetBox(
-            box=values,
-            origin=(float(origin[0]), float(origin[1])),
-            size=(float(size[0]), float(size[1])),
-            monitor=str(metadata.get("monitor") or ""),
-        )
+        monitor_names = screen_capture.monitor_names_focused_first() or [None]
+        for monitor_name in monitor_names:
+            try:
+                img_bytes, mime, metadata = screen_capture.capture_window_or_screen(
+                    target="monitor", monitor_name=monitor_name, compress=True,
+                    max_dim=policy["max_dim"], quality=policy["quality"],
+                )
+                origin = metadata.get("capture_origin") or (0, 0)
+                size = metadata.get("capture_size") or (0, 0)
+                if (not img_bytes or metadata.get("fallback")
+                        or len(origin) != 2 or len(size) != 2
+                        or size[0] <= 0 or size[1] <= 0):
+                    continue
+                resp, _model = _call_gemini_vision(
+                    client, gtypes,
+                    [gtypes.Part.from_bytes(data=img_bytes, mime_type=mime), prompt],
+                    models,
+                )
+                text = (getattr(resp, "text", "") or "").strip()
+                match = re.search(r"\{.*\}", text, re.DOTALL)
+                if not match:
+                    continue
+                data = json.loads(match.group(0))
+                box = data.get("box")
+                if not (isinstance(box, list) and len(box) >= 4):
+                    continue
+                values = tuple(float(v) for v in box[:4])
+                if not _valid_target_box(values):
+                    print(f"[VisualPointer] Boîte rejetée pour « {target} » : {values}")
+                    continue
+                confidence = float(data.get("confidence") or 0.0)
+                if confidence < _MIN_CONFIDENCE:
+                    continue
+                # Toute cible externe doit survivre à un gros plan, même si
+                # le premier modèle s'est dit très sûr de lui.
+                if not _confirm_target_box(
+                        client, gtypes, img_bytes, mime, values, target, models):
+                    print(f"[VisualPointer] « {target} » infirmé par la contre-vérification.")
+                    continue
+                return ScreenTargetBox(
+                    box=values,
+                    origin=(float(origin[0]), float(origin[1])),
+                    size=(float(size[0]), float(size[1])),
+                    monitor=str(metadata.get("monitor") or monitor_name or ""),
+                )
+            except Exception as exc:
+                print(f"[VisualPointer] Moniteur {monitor_name or 'actif'} ignoré : {exc}")
     except Exception as exc:
         print(f"[VisualPointer] Détection écran temps réel ignorée : {exc}")
     return None
@@ -858,16 +857,19 @@ class VisualPointerOverlay(QObject):
     sig_laser = pyqtSignal(float, float, float)
     sig_path = pyqtSignal(list, float, str)
     sig_clear = pyqtSignal()
+    sig_resolve_widget = pyqtSignal(str, object)
+    sig_screen_geometry = pyqtSignal(str, object)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._annotations: List[VisualAnnotation] = []
         self._windows: List[ScreenOverlayWindow] = []
         self._target_registry: dict[str, Any] = {}
+        self._focus_before_overlay = ""
 
-        # Boucle d'animation fluide (~45 FPS, 22ms)
+        # 30 FPS suffisent pour le guidage sans affamer le thread audio.
         self._timer = QTimer(self)
-        self._timer.setInterval(22)
+        self._timer.setInterval(33)
         self._timer.timeout.connect(self._on_tick)
 
         # Connexion des signaux inter-threads
@@ -875,6 +877,8 @@ class VisualPointerOverlay(QObject):
         self.sig_laser.connect(self._do_laser_point)
         self.sig_path.connect(self._do_draw_path)
         self.sig_clear.connect(self._do_clear)
+        self.sig_resolve_widget.connect(self._do_resolve_widget)
+        self.sig_screen_geometry.connect(self._do_screen_geometry)
 
         # Surveillance dynamique des écrans connectés
         app = QApplication.instance()
@@ -912,14 +916,58 @@ class VisualPointerOverlay(QObject):
         if not self._windows:
             self._rebuild_screen_overlays()
 
+        showing = any(not win.isVisible() for win in self._windows)
+        hyprland = QApplication.platformName() == "wayland" and kit.have("hyprctl")
+        if showing and hyprland:
+            active = kit.hypr_json("activewindow", default={}) or {}
+            self._focus_before_overlay = str(active.get("address") or "") if isinstance(active, dict) else ""
         for win in self._windows:
             win.sync_geometry()
             if not win.isVisible():
                 win.show()
                 win.raise_()
 
+        if showing and hyprland:
+            # La règle Hyprland livrée avec ANO peut ne pas être sourcée par
+            # l'utilisateur. Sans correction, l'overlay est *tuilé* et les
+            # coordonnées sont décalées de centaines de pixels.
+            QTimer.singleShot(80, self._arrange_hyprland_overlays)
+
         if not self._timer.isActive():
             self._timer.start()
+
+    def _arrange_hyprland_overlays(self) -> None:
+        clients = kit.hypr_json("clients", default=[]) or []
+        if not isinstance(clients, list):
+            return
+
+        def dispatch(command: str) -> bool:
+            result = kit.hypr("dispatch", command)
+            return result.ok and "error" not in result.out.lower()
+
+        for win in self._windows:
+            if not win.isVisible():
+                continue
+            client = next((c for c in clients if c.get("title") == win.windowTitle()), None)
+            if not client or not client.get("address"):
+                continue
+            address = f'address:{client["address"]}'
+            for prop, value in (("no_blur", "1"), ("no_shadow", "1"),
+                                ("no_dim", "1"), ("no_focus", "1"),
+                                ("no_anim", "1"), ("border_size", "0")):
+                dispatch(f'hl.dsp.window.set_prop({{ prop = "{prop}", value = "{value}", window = "{address}" }})')
+            if not client.get("floating"):
+                dispatch(f'hl.dsp.window.float({{ action = "set", window = "{address}" }})')
+            geometry = win._target_screen.geometry()
+            dispatch(f'hl.dsp.window.resize({{ x = {geometry.width()}, y = {geometry.height()}, window = "{address}" }})')
+            dispatch(f'hl.dsp.window.move({{ x = {geometry.x()}, y = {geometry.y()}, window = "{address}" }})')
+            if not client.get("pinned"):
+                dispatch(f'hl.dsp.window.pin({{ action = "set", window = "{address}" }})')
+            dispatch(f'hl.dsp.window.alter_zorder({{ mode = "top", window = "{address}" }})')
+
+        if self._focus_before_overlay:
+            dispatch(f'hl.dsp.focus({{ window = "address:{self._focus_before_overlay}" }})')
+            self._focus_before_overlay = ""
 
     def _on_tick(self) -> None:
         """Étape d'animation : purge les éléments expirés et redessine."""
@@ -1019,6 +1067,51 @@ class VisualPointerOverlay(QObject):
 
     def resolve_widget_geometry(self, target_name: str) -> Optional[Tuple[QWidget, float, float, float, float]]:
         """Résout un widget nommé et vérifie sa visibilité effective."""
+        if QThread.currentThread() != self.thread():
+            # QApplication.allWidgets() et mapToGlobal() appartiennent au
+            # thread Qt ; la vision distante tourne dans un worker.
+            response: dict[str, Any] = {"event": threading.Event(), "value": None}
+            self.sig_resolve_widget.emit(target_name, response)
+            if response["event"].wait(timeout=1.0):
+                return response["value"]
+            return None
+        return self._resolve_widget_geometry_direct(target_name)
+
+    @pyqtSlot(str, object)
+    def _do_resolve_widget(self, target_name: str, response: dict) -> None:
+        try:
+            response["value"] = self._resolve_widget_geometry_direct(target_name)
+        finally:
+            response["event"].set()
+
+    @pyqtSlot(str, object)
+    def _do_screen_geometry(self, monitor: str, response: dict) -> None:
+        try:
+            response["value"] = self._screen_geometry_direct(monitor)
+        finally:
+            response["event"].set()
+
+    def _screen_geometry(self, monitor: str) -> Optional[Tuple[float, float, float, float]]:
+        if QThread.currentThread() != self.thread():
+            response: dict[str, Any] = {"event": threading.Event(), "value": None}
+            self.sig_screen_geometry.emit(monitor, response)
+            if response["event"].wait(timeout=1.0):
+                return response["value"]
+            return None
+        return self._screen_geometry_direct(monitor)
+
+    @staticmethod
+    def _screen_geometry_direct(monitor: str) -> Optional[Tuple[float, float, float, float]]:
+        app = QApplication.instance()
+        if app is None:
+            return None
+        screen = next((s for s in app.screens() if s.name() == monitor), None) if monitor else app.primaryScreen()
+        if screen is None:
+            return None
+        geom = screen.geometry()
+        return (float(geom.x()), float(geom.y()), float(geom.width()), float(geom.height()))
+
+    def _resolve_widget_geometry_direct(self, target_name: str) -> Optional[Tuple[QWidget, float, float, float, float]]:
         key = (target_name or "").strip().lower()
         widget = self._target_registry.get(key)
 
@@ -1072,7 +1165,7 @@ class VisualPointerOverlay(QObject):
         resolved = self.resolve_widget_geometry(clean_target)
         if resolved is not None:
             widget, gx, gy, gw, gh = resolved
-            if gw <= 0 or gh <= 0 or not widget.isVisible():
+            if gw <= 0 or gh <= 0:
                 return f"Le widget '{clean_target}' n'est pas affiché actuellement à l'écran."
 
             pad = 4.0
@@ -1081,9 +1174,10 @@ class VisualPointerOverlay(QObject):
             rw = gw + pad * 2.0
             rh = gh + pad * 2.0
             lbl = description or f"Cible : {clean_target}"
-            self.highlight_region(rx, ry, rw, rh, label=lbl, duration=duration)
+            callout = self.point_at_rect(rx, ry, rw, rh, label=lbl, duration=duration)
             return (
-                f"Zone '{clean_target}' encadrée avec succès à ({rx:.0f}, {ry:.0f}, {rw:.0f}x{rh:.0f}) "
+                f"Zone '{clean_target}' {'indiquée par une flèche' if callout else 'encadrée'} "
+                f"à ({rx:.0f}, {ry:.0f}, {rw:.0f}x{rh:.0f}) "
                 f"pendant {duration:.1f}s."
             )
 
@@ -1102,21 +1196,11 @@ class VisualPointerOverlay(QObject):
             # Qt est l'autorité finale pour l'overlay : sur un écran HiDPI
             # les dimensions Hyprland de capture peuvent être physiques alors
             # que les coordonnées de QWidget sont logiques.
-            app = QApplication.instance()
-            if app is not None and box.monitor:
-                matched = next((screen for screen in app.screens()
-                                if screen.name() == box.monitor), None)
-                if matched is not None:
-                    geometry = matched.geometry()
-                    screen_x, screen_y = geometry.x(), geometry.y()
-                    screen_w, screen_h = geometry.width(), geometry.height()
+            geometry = self._screen_geometry(box.monitor) if box.monitor else None
+            if geometry is not None:
+                screen_x, screen_y, screen_w, screen_h = geometry
         else:
-            app = QApplication.instance()
-            prim = app.primaryScreen() if app else None
-            screen_w = prim.geometry().width() if prim else 1920
-            screen_h = prim.geometry().height() if prim else 1080
-            screen_x = prim.geometry().x() if prim else 0
-            screen_y = prim.geometry().y() if prim else 0
+            screen_x, screen_y, screen_w, screen_h = self._screen_geometry("") or (0, 0, 1920, 1080)
             ymin, xmin, ymax, xmax = box[0], box[1], box[2], box[3]
 
         bx = screen_x + (xmin / 1000.0) * screen_w
@@ -1125,11 +1209,58 @@ class VisualPointerOverlay(QObject):
         bh = max(20.0, ((ymax - ymin) / 1000.0) * screen_h)
 
         lbl = description or clean_target
-        self.highlight_region(bx, by, bw, bh, label=lbl, duration=duration)
+        callout = self.point_at_rect(
+            bx, by, bw, bh, label=lbl, duration=duration,
+            monitor=box.monitor if isinstance(box, ScreenTargetBox) else "",
+        )
         return (
-            f"Élément '{clean_target}' localisé et encadré à ({bx:.0f}, {by:.0f}, {bw:.0f}x{bh:.0f}) "
+            f"Élément '{clean_target}' localisé et "
+            f"{'indiqué par une flèche' if callout else 'encadré'} "
+            f"à ({bx:.0f}, {by:.0f}, {bw:.0f}x{bh:.0f}) "
             f"pendant {duration:.1f}s."
         )
+
+    def point_at_rect(self, x: float, y: float, w: float, h: float,
+                      label: str = "Ici", duration: float = 3.0,
+                      monitor: str = "") -> bool:
+        """Encadre la cible ou dessine une flèche si un panneau la recouvre."""
+        monitors = kit.hypr_json("monitors", default=[]) or []
+        if isinstance(monitors, list):
+            cx, cy = x + w / 2.0, y + h / 2.0
+            chosen = next((m for m in monitors if isinstance(m, dict)
+                           and m.get("name") == monitor), None) if monitor else None
+            if chosen is None and not monitor:
+                chosen = next((m for m in monitors if isinstance(m, dict)
+                               and m.get("x", 0) <= cx < m.get("x", 0) + m.get("width", 0)
+                               and m.get("y", 0) <= cy < m.get("y", 0) + m.get("height", 0)), None)
+            if chosen is not None:
+                reserved = chosen.get("reserved") or []
+                if isinstance(reserved, list) and len(reserved) >= 4:
+                    left, top, right, bottom = (max(0.0, float(v)) for v in reserved[:4])
+                    sx, sy = float(chosen.get("x") or 0), float(chosen.get("y") or 0)
+                    sw, sh = float(chosen.get("width") or 0), float(chosen.get("height") or 0)
+                    # Une surface layer-shell (dock/barre) est au-dessus des
+                    # fenêtres Qt : un cadre sur elle serait caché. La flèche
+                    # visible s'arrête juste au bord du panneau réel.
+                    if left > 20 and cx < sx + left:
+                        end = (sx + left + 10, cy)
+                        start = (min(sx + sw - 20, end[0] + 140), cy)
+                    elif right > 20 and cx > sx + sw - right:
+                        end = (sx + sw - right - 10, cy)
+                        start = (max(sx + 20, end[0] - 140), cy)
+                    elif top > 20 and cy < sy + top:
+                        end = (cx, sy + top + 10)
+                        start = (cx, min(sy + sh - 20, end[1] + 120))
+                    elif bottom > 20 and cy > sy + sh - bottom:
+                        end = (cx, sy + sh - bottom - 10)
+                        start = (cx, max(sy + 20, end[1] - 120))
+                    else:
+                        end = start = None
+                    if start is not None and end is not None:
+                        self.draw_path([start, end], duration=duration, label=label[:40])
+                        return True
+        self.highlight_region(x, y, w, h, label=label, duration=duration)
+        return False
 
     # ── Outil Gemini & Conversion Intelligente de Coordonnées ─────────────────
 

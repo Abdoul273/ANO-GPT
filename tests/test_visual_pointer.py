@@ -1,6 +1,7 @@
 """tests/test_visual_pointer.py — Tests unitaires pour ui/visual_pointer.py."""
 
 import pytest
+from types import SimpleNamespace
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QPainter
 from PyQt6.QtWidgets import QApplication
@@ -163,6 +164,7 @@ def test_visual_pointer_overlay_methods(qapp):
     assert len(overlay.active_annotations) == 0
     assert not overlay._timer.isActive()
 
+
     # 1. Ajout de highlight_region
     overlay.highlight_region(50, 50, 100, 60, label="Test", duration=2.0)
     assert len(overlay.active_annotations) == 1
@@ -180,6 +182,32 @@ def test_visual_pointer_overlay_methods(qapp):
     overlay.clear()
     assert len(overlay.active_annotations) == 0
     assert not overlay._timer.isActive()
+
+
+def test_overlay_recovers_when_hyprland_window_rule_is_missing(qapp, monkeypatch):
+    from ui import visual_pointer
+
+    overlay = VisualPointerOverlay()
+    overlay.highlight_region(100, 100, 80, 30, label="Cible")
+    win = overlay._windows[0]
+    sent = []
+    overlay._focus_before_overlay = "0xuser"
+    monkeypatch.setattr(visual_pointer.kit, "hypr_json", lambda *args, **kwargs: [{
+        "title": win.windowTitle(), "address": "0xpointer",
+        "floating": False, "pinned": False,
+    }])
+    monkeypatch.setattr(visual_pointer.kit, "hypr", lambda *args: (
+        sent.append(args) or SimpleNamespace(ok=True, out="ok")))
+
+    overlay._arrange_hyprland_overlays()
+
+    commands = [args[1] for args in sent]
+    assert any("window.float" in command and "0xpointer" in command for command in commands)
+    assert any("no_blur" in command for command in commands)
+    assert any("window.resize" in command for command in commands)
+    assert any("window.pin" in command for command in commands)
+    assert commands[-1] == 'hl.dsp.focus({ window = "address:0xuser" })'
+    overlay.clear()
 
 
 def test_point_on_screen_coordinate_formats(qapp):

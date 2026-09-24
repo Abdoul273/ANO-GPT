@@ -92,6 +92,9 @@ _POLICIES: dict[str, ActionPolicy] = {
     "file_controller": ActionPolicy(timeout_s=75.0),
     "browser_control": ActionPolicy(timeout_s=60.0),
     "screen_process": ActionPolicy(timeout_s=35.0),
+    # Localisation puis vérification en gros plan, éventuellement sur un
+    # second moniteur ; le délai standard de 20 s coupe ce second passage.
+    "point_on_screen": ActionPolicy(timeout_s=32.0),
     "deep_think": ActionPolicy(timeout_s=90.0),
     # Le relais tient une boucle d'agent complète (plusieurs allers-retours
     # d'outils) pendant que Gemini garde le tool call ouvert. Large, mais borné

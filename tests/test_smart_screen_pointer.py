@@ -13,12 +13,14 @@ Couvre la Tâche 3 du plan docs/plans/2026-09-05-confirmation-card-and-live-poin
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import time
 from unittest.mock import MagicMock, patch
 import pytest
 from PyQt6.QtCore import QPoint
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
-from ui.visual_pointer import HighlightRegionItem, ScreenTargetBox, VisualPointerOverlay
+from ui.visual_pointer import DrawPathItem, HighlightRegionItem, ScreenTargetBox, VisualPointerOverlay
 
 
 @pytest.fixture(scope="module")
@@ -108,6 +110,30 @@ def test_internal_widget_visible_highlights_exact_geometry(overlay):
     win.close()
 
 
+def test_widget_resolution_from_vision_worker_stays_on_qt_thread(overlay, qapp):
+    win = QWidget()
+    win.setGeometry(100, 100, 200, 100)
+    widget = QLabel("Horloge", win)
+    widget.setObjectName("clock_widget")
+    widget.setGeometry(10, 10, 80, 30)
+    win.show()
+    widget.show()
+    overlay.register_target_widget("clock_widget", widget)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(overlay.point_on_target, "clock_widget")
+        deadline = time.monotonic() + 2.0
+        while not pending.done() and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+        result = pending.result(timeout=1.0)
+
+    qapp.processEvents()
+    assert "encadrée" in result
+    assert len(overlay.active_annotations) == 1
+    win.close()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. Tests Détection Écran Temps Réel (Cibles Externes)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -169,6 +195,59 @@ def test_external_target_uses_the_captured_monitor_geometry_not_primary_screen(o
     assert ann.y == pytest.approx(0.1 * 720.0)
     assert ann.w == pytest.approx(0.4 * 1280.0)
     assert ann.h == pytest.approx(0.2 * 720.0)
+
+
+def test_clock_in_layer_shell_dock_gets_visible_edge_arrow(overlay, monkeypatch):
+    from ui import visual_pointer
+
+    monkeypatch.setattr(visual_pointer.kit, "hypr_json", lambda *args, **kwargs: [{
+        "name": "eDP-1", "x": 0, "y": 0, "width": 1920, "height": 1080,
+        "reserved": [60, 10, 10, 10],
+    }])
+
+    callout = overlay.point_at_rect(18, 850, 35, 45, label="Horloge")
+
+    assert callout is True
+    annotation = overlay.active_annotations[-1]
+    assert isinstance(annotation, DrawPathItem)
+    assert annotation.points[-1].x() == pytest.approx(70)
+    assert annotation.points[-1].y() == pytest.approx(872.5)
+
+
+def test_live_detection_checks_other_monitor_without_shrinking_desktop(monkeypatch):
+    from types import SimpleNamespace
+    from core import multimodal_vision, screen_capture
+    from ui import visual_pointer
+    from google import genai
+
+    captures = []
+
+    def capture(**kwargs):
+        captures.append(kwargs)
+        name = kwargs["monitor_name"]
+        origin = (0, 0) if name == "DP-1" else (1920, 0)
+        return b"image", "image/jpeg", {
+            "capture_origin": origin, "capture_size": (1920, 1080), "monitor": name,
+        }
+
+    responses = iter([
+        SimpleNamespace(text='{"box": null, "label": "", "confidence": 0}'),
+        SimpleNamespace(text='{"box": [10, 850, 40, 980], "label": "horloge", "confidence": 92}'),
+    ])
+    monkeypatch.setattr(multimodal_vision, "_get_api_key", lambda: "test-key")
+    monkeypatch.setattr(multimodal_vision, "_call_gemini_vision", lambda *args: (next(responses), "test-model"))
+    monkeypatch.setattr(genai, "Client", lambda **kwargs: object())
+    monkeypatch.setattr(screen_capture, "monitor_names_focused_first", lambda: ["DP-1", "DP-2"])
+    monkeypatch.setattr(screen_capture, "capture_window_or_screen", capture)
+    monkeypatch.setattr(visual_pointer, "_confirm_target_box", lambda *args: True)
+
+    found = visual_pointer.detect_screen_target_live("horloge", query="sur mon système")
+
+    assert found is not None
+    assert found.monitor == "DP-2"
+    assert found.origin == (1920.0, 0.0)
+    assert [call["monitor_name"] for call in captures] == ["DP-1", "DP-2"]
+    assert all(call["target"] == "monitor" for call in captures)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

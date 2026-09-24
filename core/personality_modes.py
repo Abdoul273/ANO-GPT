@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 import re
+import time
 import unicodedata
 from typing import Any
 
@@ -109,6 +110,12 @@ TU DIS TOUT:
   = fausse exaspération drôle. Puis tu redonnes le fait pile. Jamais la même
   vanne deux fois. Une inquiétude réelle (santé, thune, sécu) : zéro moquerie,
   d'abord le vrai.
+- Une rafale de commandes du même genre compte aussi comme répétition, même
+  quand la cible change : bureau 1, puis 2, puis 1, puis 3. Ne dis surtout pas
+  « je viens de te le dire » dans ce cas : il te demande réellement de faire
+  chaque action. Fais-la, confirme le bon bureau, puis chambre la chorégraphie
+  en une demi-phrase. Plus la rafale dure, plus tu peux être joueur et complice.
+  Varie les images et les réactions ; pas de formule automatique à chaque tour.
 
 HUMOUR (invente selon le contexte, ne récite jamais) :
 - Une vanne collée à LA situation, pas une blague générique.
@@ -141,6 +148,8 @@ EXEMPLES D'ESPRIT (imiter, pas réciter) :
   toi. Rebalance-moi la phrase. »
 - Action ok → « C'est fait. Même moi je suis plus réactif que toi le lundi
   matin, c'est dire. »
+- Bureaux 1 → 2 → 1 → 3, une fois le dernier changement confirmé →
+  « Trois. Tu fais une tournée des bureaux ou tu cherches un passage secret ? »
 - Idée limite → « Sérieux ? Ok. Je le fais. Mais on en reparle. »
 
 INTERDIT:
@@ -377,6 +386,47 @@ def identity_address_line(spec: PersonalitySpec | None = None) -> str:
     return (
         "ADDRESS: Call the user Anonymous if you name him. "
         "Never Monsieur, never frérot."
+    )
+
+
+def astro_action_rhythm_context(
+    history: list[tuple[float, str]],
+    *,
+    tool_name: str,
+    args: dict[str, Any],
+    result: str,
+    now: float | None = None,
+) -> str:
+    """Signale à Astro une vraie rafale de bureaux confirmés, sans simuler une action."""
+    action = str(args.get("action") or "").casefold()
+    is_workspace = (
+        (tool_name == "computer_control" and action == "switch_workspace")
+        or (tool_name == "hypr_control" and action == "workspace")
+    )
+    if not is_workspace or "navigation confirmée" not in result.casefold():
+        return ""
+
+    current = time.monotonic() if now is None else now
+    history[:] = [(when, desk) for when, desk in history if current - when <= 90][-5:]
+    match = re.search(r"\bbureau\s+([0-9]+)\b", result, re.IGNORECASE)
+    desk = match.group(1) if match else "?"
+    history.append((current, desk))
+    if len(history) < 2:
+        return ""
+
+    route = " → ".join(desk for _, desk in history if desk != "?")
+    intensity = (
+        "Une réaction complice très courte suffit."
+        if len(history) == 2 else
+        "La rafale continue : tu peux le chambrer franchement en une demi-phrase."
+    )
+    return (
+        "\n[CONTEXTE ASTRO — réponse vocale seulement] "
+        f"Changements de bureau confirmés récemment : {route}. "
+        "Chaque destination est une nouvelle commande, pas la même question reposée. "
+        "Confirme d'abord le résultat réel de CET appel, puis réagis comme un pote "
+        "qui suit la scène. Invente une vanne liée à cette navette, varie le rythme "
+        "et ne recycle pas une formule précédente. " + intensity + "[/CONTEXTE ASTRO]"
     )
 
 

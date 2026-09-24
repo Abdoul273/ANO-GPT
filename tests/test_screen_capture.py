@@ -9,6 +9,7 @@ from core.screen_capture import (
     find_window_by_query,
     compress_image_bytes,
     capture_window_or_screen,
+    capture_target_for_query,
 )
 
 
@@ -138,3 +139,44 @@ def test_capture_window_or_screen():
         assert mime == "image/jpeg"
         assert meta["window_class"] == "kitty"
         assert meta["is_terminal"] is True
+
+
+def test_system_question_captures_full_screen_not_active_window():
+    from core import screen_capture
+
+    assert capture_target_for_query("Où se trouve l'heure sur mon système ?") == "screen"
+    assert capture_target_for_query("Pointe l'horloge dans la barre du haut") == "screen"
+    assert capture_target_for_query("Lis cette erreur dans le terminal") == "active_window"
+
+    with patch.object(screen_capture, "capture_raw_geometry", return_value=b"image") as capture, \
+         patch.object(screen_capture, "get_active_window", side_effect=AssertionError("fenêtre recadrée")):
+        data, mime, metadata = capture_window_or_screen(target="screen", compress=False)
+
+    assert data == b"image"
+    assert metadata["target"] == "screen"
+    capture.assert_called_once_with(monitor=None)
+
+
+def test_monitor_capture_uses_requested_output():
+    from core import screen_capture
+
+    with patch.object(screen_capture, "capture_raw_geometry", return_value=b"image") as capture, \
+         patch.object(screen_capture, "get_monitor_geometry", return_value=(1920, 0, 1280, 720)):
+        _, _, metadata = capture_window_or_screen(
+            target="monitor", monitor_name="DP-2", compress=False)
+
+    capture.assert_called_once_with(monitor="DP-2")
+    assert metadata["capture_origin"] == (1920, 0)
+    assert metadata["capture_size"] == (1280, 720)
+
+
+def test_full_screen_single_monitor_keeps_pointing_geometry():
+    from core import screen_capture
+
+    with patch.object(screen_capture, "capture_raw_geometry", return_value=b"image"), \
+         patch.object(screen_capture, "monitor_names_focused_first", return_value=["eDP-1"]), \
+         patch.object(screen_capture, "get_monitor_geometry", return_value=(0, 0, 1920, 1080)):
+        _, _, metadata = capture_window_or_screen(target="screen", compress=False)
+
+    assert metadata["capture_origin"] == (0, 0)
+    assert metadata["capture_size"] == (1920, 1080)

@@ -85,6 +85,10 @@ class JarvisUI:
         splash.finish(self._win)
         self._win.show()
         self.root = _RootShim(self._app)
+        # Le pointeur et ses fenêtres Qt naissent sur le thread principal.
+        # La recherche visuelle peut ensuite tourner dans un worker.
+        from ui.visual_pointer import get_visual_pointer
+        self._visual_pointer = get_visual_pointer()
 
     @property
     def muted(self) -> bool:
@@ -412,8 +416,7 @@ class JarvisUI:
     @property
     def visual_pointer(self):
         """Gestionnaire d'annotations visuelles sur écran (Wayland overlay)."""
-        from ui.visual_pointer import get_visual_pointer
-        return get_visual_pointer()
+        return self._visual_pointer
 
     def highlight_region(
         self, x: float, y: float, w: float, h: float, label: str = "Ici", duration: float = 3.0
