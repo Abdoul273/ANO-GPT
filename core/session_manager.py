@@ -246,7 +246,7 @@ class SessionManager:
     def _fallback_after_bad_voice(self) -> None:
         """Change de modèle après une réponse transcrite mais presque muette."""
         policy = self._live_models
-        if policy.using_fallback or policy.primary == policy.fallback:
+        if not policy.can_fallback():
             return
         model = policy.activate_fallback()
         self._voice_degraded_reconnect = True
@@ -1167,7 +1167,12 @@ class SessionManager:
         # Le grounding natif Google Search côté WebSocket Gemini Live requiert
         # une facturation active spécifique sur les modèles Live 3.x/3.8, sans
         # quoi Google rejette la session avec le code 1011 (quota/billing).
-        live_tools: list[dict] = [{"function_declarations": self._live_declarations()}]
+        declarations = self._live_declarations()
+        if self._live_models.current == "models/gemini-3.8-live":
+            # 3.8 exécute les fonctions en arrière-plan par défaut. Les outils
+            # d'ANO attendent leur résultat avant que la réponse vocale reparte.
+            declarations = [{**decl, "behavior": "BLOCKING"} for decl in declarations]
+        live_tools: list[dict] = [{"function_declarations": declarations}]
         if _setting_bool(_cfg.get("live_google_search_grounding"), False):
             live_tools.append({"google_search": {}})
 

@@ -108,6 +108,8 @@ def test_une_vraie_erreur_de_cle_est_reconnue():
 def test_un_refus_de_quota_n_est_ni_une_cle_invalide_ni_un_modele_absent():
     error = "1011 You exceeded your current quota, please check your plan and billing details"
     assert is_quota_exhausted_error(error)
+    assert is_quota_exhausted_error("429 Too Many Requests")
+    assert is_quota_exhausted_error("quota_exceeded")
     assert not is_invalid_api_key_error(error)
 
 

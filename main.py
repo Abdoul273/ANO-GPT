@@ -328,6 +328,7 @@ from core.live_speech_config   import (
 )
 from core.personality_modes import voice_settings_for_mode
 from core.live_model_policy    import (
+    DEFAULT_EMERGENCY_MODEL,
     LiveModelPolicy,
     TRANSCRIBE_MODEL,
 )
@@ -872,6 +873,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self._live_models = LiveModelPolicy(
             primary=voice_settings.get("live_model", LIVE_MODEL),
             fallback=voice_settings.get("live_model_fallback", LIVE_FALLBACK_MODEL),
+            emergency=voice_settings.get("live_model_emergency", DEFAULT_EMERGENCY_MODEL),
         )
         # Éviter de relire le fichier de configuration dans le thread audio :
         # Scribe peut réutiliser la même seconde passe Gemini sans exposer la
@@ -2025,15 +2027,18 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     continue
 
                 if (
-                    not session_connected
-                    and not self._live_models.using_fallback
-                    and self._live_models.should_fallback(e)
+                    self._live_models.can_fallback()
+                    and (quota_error or (
+                        not session_connected
+                        and self._live_models.should_fallback(root_exc)
+                    ))
                 ):
                     fallback = self._live_models.activate_fallback()
                     self._conn.forget_session()
                     self._conn.on_go_away()
                     self.ui.write_log(
-                        "WARN: Gemini 3.8 Live indisponible pour ce compte ; "
+                        f"WARN : {live_model} indisponible "
+                        f"({'quota' if quota_error else 'modèle refusé'}) ; "
                         f"repli automatique vers {fallback}."
                     )
                     continue

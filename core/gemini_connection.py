@@ -29,8 +29,9 @@ _INVALID_SETUP_MARKERS = (
 )
 
 _QUOTA_MARKERS = (
-    "quota exceeded", "exceeded your current quota", "resource_exhausted",
-    "billing details", "rate_limit_exceeded", "rate limit exceeded",
+    "quota exceeded", "quota_exceeded", "exceeded your current quota",
+    "resource_exhausted", "billing details", "rate_limit_exceeded",
+    "rate limit exceeded", "too many requests", "429",
 )
 
 

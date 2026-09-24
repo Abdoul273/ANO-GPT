@@ -20,8 +20,9 @@ from dataclasses import dataclass
 
 # ── Session vocale Live ──────────────────────────────────────────────────────
 # Modèle principal en streaming bidirectionnel temps réel à ultra-faible latence.
-DEFAULT_PRIMARY_MODEL = "models/gemini-3.1-flash-live-preview"
-DEFAULT_FALLBACK_MODEL = "models/gemini-2.5-flash-native-audio-latest"
+DEFAULT_PRIMARY_MODEL = "models/gemini-3.8-live"
+DEFAULT_FALLBACK_MODEL = "models/gemini-3.1-flash-live-preview"
+DEFAULT_EMERGENCY_MODEL = "models/gemini-2.5-flash-native-audio-latest"
 LIVE_EXTENDED_THINKING_MODEL = "models/gemini-3.8-live-extended-thinking"
 
 # ── Rôles texte et vision ────────────────────────────────────────────────────
@@ -77,12 +78,20 @@ _MODEL_FAILURE_MARKERS = (
 class LiveModelPolicy:
     primary: str = DEFAULT_PRIMARY_MODEL
     fallback: str = DEFAULT_FALLBACK_MODEL
+    emergency: str = ""
     active: str = ""
 
     def __post_init__(self) -> None:
         self.primary = str(self.primary or DEFAULT_PRIMARY_MODEL).strip()
         self.fallback = str(self.fallback or DEFAULT_FALLBACK_MODEL).strip()
+        self.emergency = str(self.emergency or "").strip()
         self.active = str(self.active or self.primary).strip()
+
+    @property
+    def candidates(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(model for model in (
+            self.primary, self.fallback, self.emergency
+        ) if model))
 
     @property
     def current(self) -> str:
@@ -90,14 +99,20 @@ class LiveModelPolicy:
 
     @property
     def using_fallback(self) -> bool:
-        return self.active == self.fallback and self.fallback != self.primary
+        return self.active != self.primary
+
+    def can_fallback(self) -> bool:
+        models = self.candidates
+        return self.active in models and models.index(self.active) + 1 < len(models)
 
     def should_fallback(self, error: BaseException | str) -> bool:
-        if self.using_fallback or self.primary == self.fallback:
+        if not self.can_fallback():
             return False
         message = " ".join(str(error).casefold().split())
         return any(marker in message for marker in _MODEL_FAILURE_MARKERS)
 
     def activate_fallback(self) -> str:
-        self.active = self.fallback
+        if self.can_fallback():
+            models = self.candidates
+            self.active = models[models.index(self.active) + 1]
         return self.active
