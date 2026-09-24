@@ -91,11 +91,9 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
     _AUDIO_LAG_HOLD_S = 2.0
     # Un canevas Qt/Python ne bénéficie pas du parallélisme du WebGL : limiter
     # aussi le *calcul* (pas seulement le dessin) est indispensable au micro.
-    # Le pool complet (300) n'est dessiné qu'au repos : dès que la voix ou le
-    # micro travaillent, le budget actif redescend à 240. Le gel du 13/09
-    # (boucle audio muette 3 s, thread Qt dans _draw_particle_cloud) venait
-    # de 300 points projetés à 25 images/s pendant la synthèse.
-    _PARTICLE_N = 300
+    # Pool plus fourni au repos. Pendant la voix, le budget reste plafonné :
+    # Qt et l'audio partagent le GIL sur cette machine à deux cœurs.
+    _PARTICLE_N = 380
     # L'horloge concentre les photons dans une zone réduite. Ce budget supérieur
     # rend chaque chiffre immédiatement lisible, même à travers la lueur du HUD.
     _CLOCK_PARTICLE_BUDGET = 240
@@ -106,8 +104,11 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
     # 50 Hz font monopoliser un coeur entier, même quand l'assistant ne parle
     # pas. Ce budget garde la forme organique tout en laissant la priorité à
     # la capture et à la voix sur une machine deux coeurs.
-    _IDLE_PARTICLE_BUDGET = 300
+    _IDLE_PARTICLE_BUDGET = 380
     _ACTIVE_PARTICLE_BUDGET = 240
+    # Les photons supplémentaires flottent librement. Le calcul de proximité
+    # des filaments reste limité à l'ancien budget pour protéger la voix.
+    _LINK_PARTICLE_BUDGET = 240
     # +45 % : augmentation volontairement visible, demandée pour donner au
     # nuage une présence forte même derrière les panneaux de l'interface.
     # écran haute définition sans augmenter le coût CPU du nombre de points.
@@ -140,9 +141,9 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
         # rayon, agitation, taille, lumière, densité des liens, électrons, vortex
         # Rayon constant : chaque état se distingue par le mouvement, la
         # couleur et les échanges, jamais par une sphère qui se contracte.
-        "idle":      (1.00, 0.12, 0.35, 0.62, 0.12, 0.00, 0.00),
-        "listening": (1.00, 0.22, 0.42, 0.86, 0.38, 0.00, 0.00),
-        "thinking":  (1.00, 0.28, 0.40, 0.88, 1.00, 0.015, 0.00),
+        "idle":      (1.00, 0.12, 0.35, 0.80, 0.12, 0.00, 0.00),
+        "listening": (1.00, 0.22, 0.42, 0.94, 0.38, 0.00, 0.00),
+        "thinking":  (1.00, 0.28, 0.40, 0.94, 1.00, 0.015, 0.00),
         "speaking": (1.00, 0.32, 0.50, 1.00, 0.90, 0.010, 1.40),
         "acting":   (1.00, 0.38, 0.52, 1.00, 0.76, 0.010, 1.65),
         "error":    (1.00, 0.30, 0.48, 0.92, 0.62, 0.00, 0.55),
@@ -394,7 +395,7 @@ class HudCanvas(_HudPaintMixin, _HudSpritesMixin, _GL_BASE):
             return
         cell = self._LINK_CELL
         grid: dict[tuple[int, int, int], list[int]] = {}
-        limit = self._particle_budget()
+        limit = min(self._particle_budget(), self._LINK_PARTICLE_BUDGET)
         for i, pt in enumerate(self._particles[:limit]):
             key = (int(math.floor(pt["x"] / cell)), int(math.floor(pt["y"] / cell)),
                    int(math.floor(pt["z"] / cell)))

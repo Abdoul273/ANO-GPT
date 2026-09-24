@@ -70,6 +70,7 @@ class MainWindow(
     _accent_sig     = pyqtSignal(str, object)
     _clock_particles_sig = pyqtSignal(float)
     _show_sig       = pyqtSignal()
+    _hud_appearance_sig = pyqtSignal(object)
 
     def __init__(self, face_path: str):
         super().__init__()

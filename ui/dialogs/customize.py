@@ -304,6 +304,13 @@ class CustomizeOverlay(FadeInWidget):
             button.setChecked(style_id == self._orb_style)
             button.blockSignals(False)
 
+    def sync_external_appearance(self, background_path: str, orb_style: str) -> None:
+        """Garde Appliquer/Annuler cohérents après une commande de l'assistant."""
+        self._background_path = self._initial_background_path = background_path
+        self._orb_style = self._initial_orb_style = orb_style
+        self._refresh_background_gallery()
+        self._update_orb_selection()
+
     def _cancel(self):
         if self.on_orb_preview and self._orb_style != self._initial_orb_style:
             self.on_orb_preview(self._initial_orb_style)

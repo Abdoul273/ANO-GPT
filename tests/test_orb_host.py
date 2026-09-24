@@ -44,7 +44,7 @@ def test_resolve_retombe_sur_l_orbe_principal(monkeypatch):
     monkeypatch.delenv("ANOGPT_GLSL_ORB", raising=False)
     assert registry.resolve("") == "arc"
     assert registry.resolve("inconnu") == "arc"
-    assert registry.resolve("nebula") == "arc"  # en chantier
+    assert registry.resolve("nebula") == "nebula"
     assert registry.resolve("PULSE") == "pulse"
 
 
@@ -77,8 +77,13 @@ def test_style_en_echec_garde_l_orbe_actuel(qapp, broken_style):
     current = host.orb
     assert host.set_style(broken_style) is False
     assert host.orb is current and host.style_id == "pulse"
-    assert host.set_style("nebula") is False  # ready=False
-    assert host.orb is current
+    pending = replace(registry.get("nebula"), id="_chantier", ready=False)
+    registry.register(pending)
+    try:
+        assert host.set_style("_chantier") is False
+        assert host.orb is current
+    finally:
+        registry._SPECS.pop("_chantier", None)
 
 
 def test_demarrage_sur_style_casse_replie_sur_le_principal(qapp, broken_style):
@@ -132,4 +137,4 @@ def test_chaque_style_qpainter_se_construit(qapp, style_id):
 
 def test_preview_all_ne_modifie_pas_les_specs_par_effet_de_bord():
     spec = registry.get("nebula")
-    assert replace(spec, ready=True).ready and not registry.get("nebula").ready
+    assert not replace(spec, ready=False).ready and registry.get("nebula").ready

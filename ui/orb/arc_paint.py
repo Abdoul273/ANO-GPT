@@ -84,26 +84,13 @@ class _HudPaintMixin:
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(_rgba(wire, glow), 1.0))
 
-        # Quatre bras incomplets : ils cadrent l'arc-reacteur sans former une
-        # cage circulaire de plus autour de lui.
-        arm, notch = Rs * 0.15, Rs * 0.045
-        for x, y, sx, sy in (
-            (cx - radius, cy - radius, 1, 1),
-            (cx + radius, cy - radius, -1, 1),
-            (cx - radius, cy + radius, 1, -1),
-            (cx + radius, cy + radius, -1, -1),
-        ):
-            p.drawLine(QPointF(x, y), QPointF(x + sx * arm, y))
-            p.drawLine(QPointF(x, y), QPointF(x, y + sy * arm))
-            p.drawLine(QPointF(x + sx * notch, y + sy * notch),
-                       QPointF(x + sx * (notch + Rs * 0.075), y + sy * (notch + Rs * 0.075)))
-
-        font = QFont("JetBrains Mono", max(6, min(8, int(Rs * 0.030))), QFont.Weight.DemiBold)
+        font = QFont("JetBrains Mono", max(7, min(10, int(Rs * 0.042))), QFont.Weight.DemiBold)
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.05)
         p.setFont(font)
         p.setPen(QPen(_rgba(hot, 145 + int(75 * activity)), 1.0))
         top = QRectF(cx - Rs * 0.47, cy - radius - Rs * 0.09, Rs * 0.94, Rs * 0.10)
-        p.drawText(top, Qt.AlignmentFlag.AlignCenter, "A.N.O // NEURAL CORE")
+        title = "ANO / CORE" if Rs < 120 else "A.N.O  /  NEURAL CORE"
+        p.drawText(top, Qt.AlignmentFlag.AlignCenter, title)
 
         p.setPen(QPen(_rgba(wire, 120 + int(70 * activity)), 1.0))
         bottom = QRectF(cx - Rs * 0.50, cy + radius + Rs * 0.01, Rs, Rs * 0.10)
@@ -117,6 +104,31 @@ class _HudPaintMixin:
         p.setPen(Qt.PenStyle.NoPen)
         p.drawRect(QRectF(cx - Rs * 0.055, cy - radius - 3, Rs * 0.11, 2))
         p.restore()
+
+    def _draw_reactor(self, p: QPainter, cx: float, cy: float, Rs: float,
+                      t: float, core: QColor, hot: QColor, activity: float) -> None:
+        """Châssis du réacteur, son mouvement vient d'un seul sprite mis en cache."""
+        p.save()
+        p.translate(cx, cy)
+        p.rotate(t * (3.0 + activity * 3.0))
+        diameter = Rs * 2.02
+        p.setOpacity(0.68 + 0.18 * activity)
+        p.drawPixmap(QRectF(-diameter / 2, -diameter / 2, diameter, diameter),
+                     self._pm["reactor"],
+                     QRectF(0, 0, self._REACTOR_SPRITE, self._REACTOR_SPRITE))
+        p.restore()
+
+        # Deux arcs énergétiques contrarotatifs encadrent le nuage sans le masquer.
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for radius, speed, start, span, color, alpha in (
+            (Rs * .88, -12.0, 32.0, 54.0, hot, 182),
+            (Rs * .88, -12.0, 212.0, 54.0, hot, 182),
+            (Rs * .73, 17.0, 118.0, 76.0, core, 122),
+            (Rs * .73, 17.0, 298.0, 76.0, core, 122),
+        ):
+            p.setPen(QPen(_rgba(color, alpha + 38 * activity), 1.0))
+            rect = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
+            p.drawArc(rect, int(((start + t * speed) % 360) * 16), int(span * 16))
 
     # ══ Spectre radial : 48 barres pilotées par les 8 bandes FFT ══════════════
     def _draw_spectrum(self, p: QPainter, cx: float, cy: float, Rs: float,
@@ -168,10 +180,14 @@ class _HudPaintMixin:
         self._draw_connection_electrons(p, projected)
         light = self._cloud_live[3]
         buckets: list[list[QPointF]] = [[], [], []]
-        for x, y, z in projected:
+        glints: list[QPointF] = []
+        for index, (x, y, z) in enumerate(projected):
             depth = (z + 1.25) / 2.5
             depth = 0.0 if depth < 0.0 else (0.999 if depth > 0.999 else depth)
-            buckets[int(depth * 3.0)].append(QPointF(x, y))
+            point = QPointF(x, y)
+            buckets[int(depth * 3.0)].append(point)
+            if depth > .52 and index % 23 == 0:
+                glints.append(point)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         scale = self._PARTICLE_POINT_SCALE
         for i, points in enumerate(buckets):
@@ -191,6 +207,10 @@ class _HudPaintMixin:
             p.setPen(QPen(_rgba(color, alpha), min(3.0, (1.0 + depth * 0.45) * scale),
                           Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             p.drawPoints(poly)
+        if glints:
+            p.setPen(QPen(_rgba(hot, 225 * light), 3.2,
+                          Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawPoints(QPolygonF(glints))
 
     def _draw_particle_filaments(self, p: QPainter, projected, wire: QColor,
                                  hot: QColor) -> None:
@@ -335,8 +355,13 @@ class _HudPaintMixin:
             return
         vol = self._volume
         beat = 0.5 + 0.5 * math.sin(t * self._pal_live["pulse_speed"] * 2.2)
-        r = Rs * (0.36 + 0.26 * vol + 0.08 * self._bass + 0.02 * beat)
-        self._blit(p, "nucleus", cx, cy, r, 0.60 + 0.40 * activity)
+        r = Rs * (0.48 + 0.21 * vol + 0.06 * self._bass + 0.02 * beat)
+        self._blit(p, "nucleus", cx, cy, r, 0.78 + 0.22 * activity)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_rgba(hot, 132 + 90 * activity), 1.0))
+        p.drawEllipse(QPointF(cx, cy), Rs * .125, Rs * .125)
+        p.setPen(QPen(_rgba(hot, 84 + 90 * activity), 1.0))
+        p.drawEllipse(QPointF(cx, cy), Rs * .195, Rs * .195)
         dot = Rs * (0.028 + 0.030 * vol)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(QColor(255, 255, 255, int(150 + 100 * activity))))
@@ -415,6 +440,7 @@ class _HudPaintMixin:
         self._draw_reticle(p, cx, cy, Rs, t, wire, hot, activity)
         self._draw_orb_readouts(p, cx, cy, Rs, wire, hot, activity)
         self._draw_spectrum(p, cx, cy, Rs, core, hot)
+        self._draw_reactor(p, cx, cy, Rs, t, core, hot, activity)
         # 3. Le volume de photons. Les fils elliptiques orbitaux ont été
         # retirés : les anneaux circulaires du noyau et le réticule restent.
         self._draw_neural_orb(p, m, cx, cy, Rs, t, core, halo, wire, hot)

@@ -4,7 +4,7 @@
   "github_backup_projects": [],
   "auto_extension_threshold": 3,
   "auto_extension_window_days": 14,
-  "live_model": "models/gemini-3.8-live",
+  "live_model": "models/gemini-3.1-flash-live-preview",
   "gemini_live_api_version": "v1alpha",
   "live_model_fallback": "models/gemini-2.5-flash-native-audio-latest",
   "live_captions_provider": "gemini_live",
@@ -70,7 +70,6 @@
   "user_country_name": "Guinée",
   "user_lang": "fr",
   "user_city": "Conakry",
-  "live_end_silence_ms": 700,
   "voice_barge_in_enabled": true,
   "full_duplex_aec_enabled": false,
   "full_duplex_aec_validated": false

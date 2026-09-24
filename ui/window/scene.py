@@ -2,20 +2,21 @@ from __future__ import annotations
 
 import threading
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QKeySequence, QShortcut
+from PyQt6.QtCore import QThread, Qt, QTimer
+from PyQt6.QtGui import QFont, QImageReader, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from ui.core.qtflags import QWebEngineView, webengine_enabled
-from ui.paths import _read_full_config
+from ui.paths import _read_full_config, _write_full_config
 from ui.media.camera import _CameraPreview
 from ui.media.gallery import ImageGalleryOverlay
 from ui.media.map_views import NearbyMapPanel
 from ui.media.video_hub import VideoHubOverlay
 from ui.orb.companion import CompanionOrb
 from ui.orb.host import OrbHost
+from ui.orb import registry as orb_registry
 from ui.orb.mini_orb import MiniOrbOverlay
 from ui.orb.radial_waveform import BiDirectionalAudioBridge, CircularFFTEngine
 from ui.panels.rich_card_system import CardManager
@@ -242,6 +243,81 @@ class SceneMixin:
             layer.lower()
         return True
 
+    def control_hud_appearance(self, action: str, orb_style: str | None = None,
+                               background_path: str | None = None) -> str:
+        """Attend la modification réelle dans le thread Qt, sans y toucher depuis l'audio."""
+        if QThread.currentThread() == self.thread():
+            return self._control_hud_appearance_on_gui(action, orb_style, background_path)
+        request = {
+            "action": action, "orb_style": orb_style, "background_path": background_path,
+            "done": threading.Event(), "cancelled": False,
+        }
+        self._hud_appearance_sig.emit(request)
+        if not request["done"].wait(10.0):
+            request["cancelled"] = True
+            raise TimeoutError("le HUD n'a pas répondu ; aucun changement différé ne sera appliqué")
+        if "error" in request:
+            raise request["error"]
+        return request["result"]
+
+    def _on_hud_appearance_request(self, request: dict) -> None:
+        try:
+            if request["cancelled"]:
+                return
+            request["result"] = self._control_hud_appearance_on_gui(
+                request["action"], request["orb_style"], request["background_path"]
+            )
+        except Exception as exc:
+            request["error"] = exc
+        finally:
+            request["done"].set()
+
+    def _control_hud_appearance_on_gui(self, action: str, orb_style: str | None,
+                                       background_path: str | None) -> str:
+        layer = self._background_image
+        if action == "status":
+            spec = orb_registry.get(self.hud.style_id)
+            name = spec.label if spec is not None else self.hud.style_id
+            return (f"Orbe actuel : {name}. "
+                    f"Fond du HUD : {layer.path or 'aucun'}.")
+        if action != "apply":
+            raise ValueError("action HUD inconnue")
+        if orb_style is not None:
+            spec = orb_registry.get(orb_style)
+            if not orb_registry.is_usable(spec):
+                raise ValueError(f"style d'orbe indisponible : {orb_style}")
+        if background_path and not QImageReader(background_path).canRead():
+            raise ValueError(f"image d'arrière-plan illisible : {background_path}")
+
+        previous_style = self.hud.style_id
+        previous_background = layer.path
+        if orb_style is not None and orb_style != previous_style:
+            if not self.set_orb_style(orb_style):
+                raise RuntimeError(f"l'orbe « {orb_style} » n'a pas pu démarrer")
+        if background_path is not None and background_path != previous_background:
+            if not self.set_background_image(background_path):
+                if self.hud.style_id != previous_style:
+                    self.set_orb_style(previous_style)
+                raise ValueError(f"impossible d'afficher le fond : {background_path}")
+
+        current_style = self.hud.style_id
+        current_background = layer.path
+        data = _read_full_config()
+        data["orb_style"] = current_style
+        data["background_image"] = current_background
+        _write_full_config(data)
+        overlay = getattr(self, "_customize_overlay", None)
+        if overlay is not None and overlay.isVisible():
+            overlay.sync_external_appearance(current_background, current_style)
+        current_spec = orb_registry.get(current_style)
+        current_name = current_spec.label if current_spec is not None else current_style
+        self._log.append_log(
+            f"SYS : apparence du HUD appliquée — orbe {current_name}, "
+            f"fond {current_background or 'aucun'}."
+        )
+        return (f"Orbe {current_name} activé. "
+                f"Fond du HUD : {current_background or 'aucun'}. Changement visible et enregistré.")
+
     def _on_audio_pcm(self, pcm: bytes, sample_rate: int, emitted: bool) -> None:
         if emitted:
             self._spectrum_bridge.feed_emitted(pcm, sample_rate)
@@ -422,6 +498,7 @@ class SceneMixin:
         self._accent_sig.connect(self._on_accent_changed)
         self._clock_particles_sig.connect(self._on_clock_particles)
         self._show_sig.connect(self._show_existing_window)
+        self._hud_appearance_sig.connect(self._on_hud_appearance_request)
         self._cam_stop = threading.Event()
 
     def _on_user_transcript(self, text: str, final: bool = False, turn_id: str = "") -> None:

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 # ── Session vocale Live ──────────────────────────────────────────────────────
 # Modèle principal en streaming bidirectionnel temps réel à ultra-faible latence.
-DEFAULT_PRIMARY_MODEL = "models/gemini-3.8-live"
+DEFAULT_PRIMARY_MODEL = "models/gemini-3.1-flash-live-preview"
 DEFAULT_FALLBACK_MODEL = "models/gemini-2.5-flash-native-audio-latest"
 LIVE_EXTENDED_THINKING_MODEL = "models/gemini-3.8-live-extended-thinking"
 

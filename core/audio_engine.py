@@ -123,6 +123,36 @@ _OUTPUT_LATENCY_S = 0.06
 # rafales sans ajouter une attente à chaque bloc. Attente bornée et annulable.
 _OUTPUT_PREFILL_S = 0.08
 
+
+class PcmSilenceCompactor:
+    """Limite les silences numériques de Gemini sans toucher aux syllabes.
+
+    Le serveur peut envoyer plusieurs secondes de PCM muet après une phrase.
+    Le lecteur les jouait entièrement et gardait le micro fermé jusque-là.
+    On conserve 240 ms de pause, y compris entre deux phrases, puis on jette
+    uniquement les tranches dont tous les échantillons sont quasi nuls.
+    """
+
+    def __init__(self, sample_rate: int = RECEIVE_SAMPLE_RATE, channels: int = CHANNELS):
+        self._slice_bytes = int(sample_rate * channels * 2 * _OUTPUT_SLICE_MS / 1000)
+        self._quiet_limit_bytes = int(sample_rate * channels * 2 * 0.24)
+        self._quiet_bytes = 0
+        self.skipped_bytes = 0
+
+    def compact(self, data: bytes):
+        for offset in range(0, len(data), self._slice_bytes):
+            chunk = data[offset:offset + self._slice_bytes]
+            samples = np.frombuffer(chunk[:len(chunk) & ~1], dtype=np.int16)
+            quiet = bool(samples.size and np.max(np.abs(samples.astype(np.int32))) <= 32)
+            if quiet:
+                self._quiet_bytes += len(chunk)
+                if self._quiet_bytes > self._quiet_limit_bytes:
+                    self.skipped_bytes += len(chunk)
+                    continue
+            else:
+                self._quiet_bytes = 0
+            yield chunk
+
 # Durée maximale d'un tour de parole avant fermeture forcée. Le VAD est piloté
 # côté client : si un bruit continu maintenait le portier ouvert, la phrase ne
 # serait jamais remise au modèle. Au-delà, on ferme et on rouvre aussitôt.
@@ -296,7 +326,9 @@ class AudioCallbacks(Protocol):
 
 
 # Silence maximal toléré pendant qu'une réponse est censée sortir.
-STALLED_SPEECH_S = 6.0
+# Une pause réseau ou un appel d'outil peut séparer deux blocs de réponse.
+# Six secondes coupaient une réponse valide, surtout au premier tour à froid.
+STALLED_SPEECH_S = 15.0
 # ~3 s de niveau vocal (blocs de 64 ms) sans qu'un tour s'ouvre = surdité.
 _DEAF_CHUNKS = 45
 
@@ -786,7 +818,10 @@ class AudioEngine:
         if (
             jarvis_speaking
             and queue_empty
+            and not getattr(self, "_is_thinking", False)
+            and not getattr(self, "_active_tool_tasks", None)
             and (now_mono - last_io > STALLED_SPEECH_S)
+            and (now_mono - getattr(self, "_last_server_message_at", 0.0) > STALLED_SPEECH_S)
         ):
             self._last_watchdog_trigger = now_mono
             print(
@@ -1872,10 +1907,11 @@ class AudioEngine:
                 # dans le modèle. C'est exactement le callback half-duplex de
                 # Mark-LII, sans traitement audio dans le thread PortAudio.
                 interrupted = bool(getattr(self, "_interrupted", False))
+                submit_lock = getattr(self, "_turn_submit_lock", None)
                 if speaking or (
                     (getattr(self, "_model_turn_active", False) or getattr(self, "_is_thinking", False))
                     and not interrupted
-                ):
+                ) or (submit_lock is not None and submit_lock.locked()):
                     return
                 # « Stop » vient d'être dit : ce mot-là ne doit pas partir au
                 # modèle (il répondrait « d'accord »). On jette le son jusqu'à

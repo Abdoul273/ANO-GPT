@@ -618,6 +618,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
     _agent_open_app = ToolDispatcher._agent_open_app
     _agent_close_app = ToolDispatcher._agent_close_app
     _agent_computer_settings = ToolDispatcher._agent_computer_settings
+    _agent_hud_appearance = ToolDispatcher._agent_hud_appearance
     _agent_file_search = ToolDispatcher._agent_file_search
     _agent_search_personal_docs = ToolDispatcher._agent_search_personal_docs
     _agent_location = ToolDispatcher._agent_location
@@ -834,6 +835,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
         self._awaiting_server_since = 0.0
         self._last_server_message_at = 0.0
         self._live_unresponsive_reconnect = False
+        self._voice_degraded_reconnect = False
         # Reprise de session : poignée Gemini, rythme des tentatives et
         # décision de se taire ou non sur une coupure brève.
         self._conn          = ConnectionState()
@@ -1610,17 +1612,24 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
 
         freeze_watch.set_alert(_freeze_alert)
 
-        # Initialisation paresseuse des fonctionnalités vision/RAG terminées.
-        # Elles tournent hors de la boucle audio et restent dormantes tant que
-        # l'utilisateur n'active ni caméra ni gestes.
-        try:
-            from core.gesture_control import get_gesture_controller
-            self._gesture_controller = get_gesture_controller(
-                camera_source=self.camera, ui_instance=self.ui, audio_engine=self,
-            )
-            self._gesture_controller.start()
-        except Exception as exc:
-            self.ui.write_log(f"WARN : contrôle gestuel indisponible — {exc}")
+        # L'import vision/caméra prenait plusieurs secondes avant même la
+        # connexion vocale. Les gestes sont initialisés après le démarrage ;
+        # la première demande parlée garde la priorité CPU et réseau.
+        async def _start_gestures_later() -> None:
+            await asyncio.sleep(30.0)
+            while (self._is_speaking or self._model_turn_active or
+                   time.monotonic() - self._last_user_speech < 10.0):
+                await asyncio.sleep(5.0)
+            try:
+                from core.gesture_control import get_gesture_controller
+                self._gesture_controller = get_gesture_controller(
+                    camera_source=self.camera, ui_instance=self.ui, audio_engine=self,
+                )
+                self._gesture_controller.start()
+            except Exception as exc:
+                self.ui.write_log(f"WARN : contrôle gestuel indisponible — {exc}")
+
+        spawn_logged(_start_gestures_later(), name="gesture-startup", ui=self.ui)
 
         def _warm_personal_rag() -> None:
             try:
@@ -1917,12 +1926,11 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
-                    # Morning briefing — fires once per process launch (if enabled)
-                    # L'accueil est désormais une phrase très courte (pas un
-                    # briefing coûteux) : il doit donc se produire à chaque
-                    # premier démarrage, même si l'ancien briefing quotidien
-                    # a été désactivé dans les réglages.
-                    if not self._briefing_sent:
+                    # L'accueil vocal occupe la session au moment où
+                    # l'utilisateur veut commencer à parler. Il reste opt-in.
+                    if (not self._briefing_sent and
+                            _os_early.environ.get("ANOGPT_STARTUP_GREETING", "").strip().lower()
+                            in {"1", "true", "yes", "on"}):
                         self._briefing_sent = True
                         tg.create_task(self._send_startup_briefing())
 
@@ -1973,9 +1981,11 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     # Une reprise conserve la configuration vocale d'origine :
                     # repartir sans poignée garantit l'application du choix.
                     self._conn.forget_session()
-                    self.ui.write_log(
-                        f"SYS : activation de la voix {self._live_voice}…"
-                    )
+                    if self._voice_degraded_reconnect:
+                        self._voice_degraded_reconnect = False
+                        self.ui.write_log("SYS : reconnexion sur le modèle vocal de secours…")
+                    else:
+                        self.ui.write_log(f"SYS : activation de la voix {self._live_voice}…")
                     continue
                 if not quota_error:
                     print(f"[JARVIS] Error ({type(e).__name__}): {e}")

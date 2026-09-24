@@ -204,6 +204,7 @@ def test_watchdog_releases_speech_flag_stuck_without_audio():
     aucun son n'arrive. Le micro doit être rendu au lieu de rester retenu."""
     host = DummyHost()
     host._is_speaking = True
+    host._is_thinking = False
     called = []
     host.reset_audio_and_turn_state = lambda source="unknown": called.append(source)
     host.check_audio_watchdog = AudioEngine.check_audio_watchdog.__get__(host)
@@ -211,8 +212,25 @@ def test_watchdog_releases_speech_flag_stuck_without_audio():
     host._last_model_turn_data_at = 90.0
     assert host.check_audio_watchdog(now=93.0) is False   # 3 s : encore normal
     assert called == []
-    assert host.check_audio_watchdog(now=97.0) is True    # > 6 s sans son
+    assert host.check_audio_watchdog(now=97.0) is False   # pause réseau possible
+    assert host.check_audio_watchdog(now=106.0) is True   # > 15 s sans son
     assert called == ["watchdog_stalled_speech"]
+
+
+def test_watchdog_keeps_speech_during_live_tool_or_recent_server_data():
+    host = DummyHost()
+    host._is_speaking = True
+    host._is_thinking = True
+    host._last_model_turn_data_at = 90.0
+    called = []
+    host.reset_audio_and_turn_state = lambda source="unknown": called.append(source)
+    host.check_audio_watchdog = AudioEngine.check_audio_watchdog.__get__(host)
+
+    assert host.check_audio_watchdog(now=110.0) is False
+    host._is_thinking = False
+    host._last_server_message_at = 108.0
+    assert host.check_audio_watchdog(now=110.0) is False
+    assert called == []
 
 
 def test_watchdog_keeps_speech_flag_while_audio_is_queued():

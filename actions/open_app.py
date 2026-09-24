@@ -1291,6 +1291,82 @@ def _reuse_recent_window(app_name: str, normalized: str,
     return None
 
 
+def _website_url_for_open(app_name: str, command: str, target: str,
+                          description: str) -> Optional[str]:
+    """Sépare une adresse web d'une commande à taper dans une application."""
+    from core.browser_policy import BROWSER_ALIASES
+    from actions.web_control import SHORTCUTS
+
+    app = app_name.strip().casefold()
+    browser = app in BROWSER_ALIASES
+
+    def url_for(value: str) -> Optional[str]:
+        value = value.strip().strip("\"'.,; ")
+        shortcut = SHORTCUTS.get(value.casefold())
+        if shortcut:
+            return shortcut
+        if re.fullmatch(r"https?://[^\s]+", value, re.I):
+            return value
+        if re.fullmatch(r"(?:www\.)?[a-z0-9][a-z0-9.-]*\.(?:com|org|net|io|fr|app|dev)(?:/[^\s]*)?", value, re.I):
+            return "https://" + value
+        return None
+
+    if not app:
+        return url_for(target)
+    try:
+        app_words = shlex.split(app_name)
+    except ValueError:
+        app_words = []
+    if len(app_words) == 2 and Path(app_words[0]).name.casefold() in BROWSER_ALIASES:
+        return url_for(app_words[1])
+    direct = url_for(app_name)
+    native_alias = _APP_ALIASES.get(app, {}).get(_SYSTEM, "").casefold()
+    if direct and not browser and (not native_alias or native_alias in BROWSER_ALIASES):
+        return direct
+    if not browser:
+        return None
+
+    for value in (target, command):
+        if not value:
+            continue
+        try:
+            words = shlex.split(value)
+        except ValueError:
+            words = []
+        if len(words) == 2 and Path(words[0]).name.casefold() in BROWSER_ALIASES:
+            value = words[1]
+        elif len(words) != 1:
+            continue
+        url = url_for(value)
+        if url:
+            return url
+
+    # Le modèle peut fournir « Chrome » sans remplir command alors que sa
+    # description contient le site demandé. Ne jamais taper la phrase entière.
+    if description and re.search(r"\b(?:ouvre|lance|affiche|va\s+sur)\b", description, re.I):
+        for name, url in SHORTCUTS.items():
+            if len(name) >= 4 and re.search(rf"\b{re.escape(name)}\b", description, re.I):
+                return url
+    return None
+
+
+def _open_website_in_chrome(url: str, ws_num: Optional[int]) -> str:
+    from core.browser_policy import open_chrome
+
+    before_addrs: Set[str] = set()
+    if ws_num is not None and _SYSTEM == "Linux" and kit.which("hyprctl"):
+        before_addrs = {c.get("address", "") for c in (_hyprctl_json("clients") or [])}
+        _focus_workspace(ws_num)
+    if not open_chrome(url, env=_linux_env(), new_window=ws_num is not None):
+        return "Impossible de lancer Google Chrome. Aucun autre navigateur n'a été ouvert."
+    if ws_num is None:
+        return f"Site ouvert dans Google Chrome : {url}."
+    if _move_new_window_to_workspace("chrome", ws_num, before_addrs):
+        return f"Site ouvert dans Google Chrome sur le bureau {ws_num} : {url}."
+    return (f"Site ouvert dans Google Chrome : {url}. "
+            f"Placement sur le bureau {ws_num} non confirmé.")
+
+
 @kit.action("open_app")
 def open_app(parameters=None, response=None, player=None, session_memory=None) -> str:
     """
@@ -1386,6 +1462,10 @@ def open_app(parameters=None, response=None, player=None, session_memory=None) -
 
     if not app_name and not target_raw:
         return "Aucune application ou fichier indiqué."
+
+    website_url = _website_url_for_open(app_name, command, target_raw, description)
+    if website_url and not hidden:
+        return _open_website_in_chrome(website_url, ws_num)
 
     app_name = _force_nautilus_for_file_manager(app_name)
 

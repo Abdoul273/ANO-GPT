@@ -17,15 +17,20 @@ class BackgroundImage(QWidget):
         self._pixmap = QPixmap()
         self._scaled = QPixmap()
         self._scaled_for = QSize()
+        self._path = ""
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setStyleSheet("background: transparent;")
         self.set_image(path)
 
     def set_image(self, path: str) -> bool:
-        candidate = Path(str(path or "")).expanduser()
-        pixmap = self._load_pixmap(candidate) if candidate.is_file() else QPixmap()
-        if candidate and not pixmap.isNull():
+        selected = str(path or "").strip()
+        if selected:
+            candidate = Path(selected).expanduser()
+            pixmap = self._load_pixmap(candidate) if candidate.is_file() else QPixmap()
+            if pixmap.isNull():
+                return False
             self._pixmap = pixmap
+            self._path = str(candidate.resolve())
             self._scaled_for = QSize()
             self._refresh_scaled()
             self.update()
@@ -33,8 +38,13 @@ class BackgroundImage(QWidget):
         self._pixmap = QPixmap()
         self._scaled = QPixmap()
         self._scaled_for = QSize()
+        self._path = ""
         self.update()
-        return not str(path or "").strip()
+        return True
+
+    @property
+    def path(self) -> str:
+        return self._path
 
     @property
     def has_image(self) -> bool:

@@ -27,7 +27,7 @@ from core.background_task import spawn_logged
 from core.audio_engine import (
     CHANNELS,
     RECEIVE_SAMPLE_RATE,
-    _OUTPUT_SLICE_MS,
+    PcmSilenceCompactor,
     _MainAttr,
 )
 from core.event_bus import ModelSpeechDeltaEvent
@@ -93,6 +93,19 @@ _STALE_AUDIO_TURN_S = 8.0
 # Silence serveur toléré après une demande (voix, texte, réponse d'outil)
 # avant de tenir la session pour morte et de la rouvrir.
 _LIVE_REPLY_TIMEOUT_S = 15.0
+
+
+def _voice_output_is_degenerate(*, text_chars: int, received: int,
+                                queued: int, silence: int, pcm_rate: int) -> bool:
+    """Vrai si Live a transcrit une phrase, mais presque uniquement émis du silence."""
+    return bool(
+        text_chars >= 35
+        and received >= 3 * pcm_rate
+        and queued < 0.4 * received
+        and silence >= 0.6 * received
+    )
+
+
 _TIME_PARTICLE_RE = re.compile(
     r"\b(?:quelle?\s+heure|heure\s+est.il|l['’]heure|heure\s+actuelle|"
     r"il\s+est(?:\s+actuellement)?\s+\d{1,2}(?:\s*(?:h|:)\s*\d{0,2}|\s+heures?)?|"
@@ -223,6 +236,26 @@ class SessionManager:
     Les méthodes sont liées à l'hôte ``JarvisLive``. L'instance
     ``SessionManager()`` documente le moteur.
     """
+
+    def _finish_silent_turn(self) -> None:
+        """Rend l'écoute après un tour Live achevé sans lecture PCM."""
+        if (not self._is_speaking and self.audio_in_queue.empty()
+                and not self.ui.muted):
+            self.ui.set_state("LISTENING")
+
+    def _fallback_after_bad_voice(self) -> None:
+        """Change de modèle après une réponse transcrite mais presque muette."""
+        policy = self._live_models
+        if policy.using_fallback or policy.primary == policy.fallback:
+            return
+        model = policy.activate_fallback()
+        self._voice_degraded_reconnect = True
+        self._voice_reconnect_requested = True
+        self.ui.write_log(
+            f"SYS : Gemini a envoyé une réponse presque muette — voix basculée vers {model}."
+        )
+        if self._voice_change_event is not None:
+            self._voice_change_event.set()
 
     def _maybe_show_clock_particles(self, text: str) -> None:
         """Déclenche l'horloge sans toucher directement au thread Qt."""
@@ -1171,8 +1204,8 @@ class SessionManager:
             ),
             # Pipeline Mark-LII : Gemini Live reçoit le PCM brut et son VAD
             # serveur gère les bornes de tour. Aucun activity_start/end client.
-            # Le silence de fin de tour est raccourci : c'est lui qui sépare
-            # le dernier mot de l'utilisateur du début de la réponse.
+            # Le VAD serveur garde ses valeurs par défaut comme Mark-LIV,
+            # sauf durée de silence demandée explicitement par l'utilisateur.
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=types.AutomaticActivityDetection(
                     silence_duration_ms=live_end_silence_ms(_cfg),
@@ -1222,6 +1255,10 @@ class SessionManager:
                     muted = (msg.get("_audio_source", "pc") != "phone"
                              and getattr(getattr(self, "ui", None), "muted", False))
                     if (stale or muted or getattr(self, "_is_speaking", False)
+                            or (getattr(self, "_turn_submit_lock", None) is not None
+                                and self._turn_submit_lock.locked())
+                            or (getattr(self, "_model_turn_active", False)
+                                and not getattr(self, "_interrupted", False))
                             or getattr(self, "_interrupted", False)
                             or msg.get("_audio_epoch", epoch) != epoch):
                         continue
@@ -1258,6 +1295,13 @@ class SessionManager:
         from core.elevenlabs_voice import speak_live_turn
         voice_settings = voice_settings_for_mode(_voice_engine_settings())
         use_elevenlabs = voice_settings.get("voice_provider", "gemini") == "elevenlabs"
+        # Bilan audio du tour, écrit dans le journal à chaque turn_complete :
+        # c'est la seule trace qui distingue « Gemini n'a pas envoyé la voix »
+        # de « la voix reçue a été jetée ou coupée localement ».
+        voice_log = logging.getLogger("anogpt.voice")
+        _pcm_rate = RECEIVE_SAMPLE_RATE * CHANNELS * 2
+        tstat = {"rx": 0, "drop": 0, "enq": 0, "silence": 0, "events": []}
+        silence_compactor = PcmSilenceCompactor()
 
         try:
             while True:
@@ -1308,31 +1352,33 @@ class SessionManager:
                         # le tour du modèle n'avait pas encore commencé.
                         if self._noise_turn:
                             self._interrupted = True
+                        tstat["rx"] += len(audio_data)
                         if self.discard_model_audio():
-                            pass  # discard: tour interrompu
+                            tstat["drop"] += len(audio_data)
+                            reason = "interrupted" if self._interrupted else "discard_turn"
+                            if reason not in tstat["events"]:
+                                tstat["events"].append(reason)
                         else:
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
                             if not self._audio_turn_active:
                                 self._reset_speech_sync()
                                 self._audio_turn_active = True
+                                silence_compactor = PcmSilenceCompactor()
                             # Tranches de 20 ms : le lecteur peut interrompre
                             # entre les blocs, avec une réserve matérielle de 60 ms.
                             _audio_data = b"" if use_elevenlabs else audio_data
-                            _SLICE = int(
-                                RECEIVE_SAMPLE_RATE * CHANNELS * 2
-                                * (_OUTPUT_SLICE_MS / 1000.0)
-                            )
-                            for _i in range(0, len(_audio_data), _SLICE):
+                            for chunk in silence_compactor.compact(_audio_data):
                                 if self._interrupted:
                                     break
-                                chunk = _audio_data[_i : _i + _SLICE]
                                 # Appliquer une vraie contre-pression au lieu de
                                 # laisser une file illimitée créer plusieurs
                                 # secondes de retard, ou de faire tomber toute
                                 # la session sur QueueFull.
                                 await self.audio_in_queue.put(chunk)
+                                tstat["enq"] += len(chunk)
                                 self._audio_enqueued_sec += len(chunk) / (RECEIVE_SAMPLE_RATE * CHANNELS * 2)
+                            tstat["silence"] = silence_compactor.skipped_bytes
 
                     if response.server_content:
                         sc = response.server_content
@@ -1361,6 +1407,7 @@ class SessionManager:
                         # Un « interrupted » serveur issu d'un bruit ou d'une
                         # hallucination STT est ignoré.
                         if getattr(sc, "interrupted", False):
+                            tstat["events"].append("server_interrupted")
                             # Le serveur a lui-même coupé le tour précédent :
                             # ce qui suit appartient à un nouveau tour.
                             self._end_discarded_turn()
@@ -1479,6 +1526,31 @@ class SessionManager:
                                     _user_started = True
 
                         if sc.turn_complete:
+                            degenerate_voice = (
+                                not use_elevenlabs
+                                and not self._interrupted
+                                and not self._noise_turn
+                                and _voice_output_is_degenerate(
+                                    text_chars=len("".join(out_buf)),
+                                    received=tstat["rx"],
+                                    queued=tstat["enq"],
+                                    silence=tstat["silence"],
+                                    pcm_rate=_pcm_rate,
+                                )
+                            )
+                            voice_log.info(
+                                "bilan voix du tour",
+                                extra={
+                                    "received_s": round(tstat["rx"] / _pcm_rate, 2),
+                                    "dropped_s": round(tstat["drop"] / _pcm_rate, 2),
+                                    "queued_s": round(tstat["enq"] / _pcm_rate, 2),
+                                    "silence_skipped_s": round(tstat["silence"] / _pcm_rate, 2),
+                                    "played_s": round(getattr(self, "_audio_played_sec", 0.0), 2),
+                                    "text_chars": len("".join(out_buf)),
+                                    "events": ",".join(tstat["events"]),
+                                },
+                            )
+                            tstat = {"rx": 0, "drop": 0, "enq": 0, "silence": 0, "events": []}
                             if use_elevenlabs and out_buf and not self._interrupted:
                                 await speak_live_turn(self, "".join(out_buf), voice_settings)
                             bus = getattr(self, "_event_bus", None)
@@ -1491,6 +1563,11 @@ class SessionManager:
                             self._end_discarded_turn()
                             if self._turn_done_event:
                                 self._turn_done_event.set()
+                            # Un tour terminé sans PCM ne passe jamais par
+                            # set_speaking(True). Le lecteur ne peut donc pas
+                            # déclencher sa transition vers LISTENING ; rendre
+                            # explicitement l'état ici (réponses d'outil muettes).
+                            self._finish_silent_turn()
 
                             if _user_started:
                                 self.ui.write_log("[INLINE_END]")
@@ -1601,6 +1678,9 @@ class SessionManager:
                                     await asyncio.sleep(2.0)
                                     self.ui.stop_camera_stream()
                                 spawn_logged(_cam_close(), name="camera-close")
+
+                            if degenerate_voice and not self._pending_vision:
+                                self._fallback_after_bad_voice()
 
                     if response.tool_call:
                         if self._interrupted or getattr(self, "_noise_turn", False):

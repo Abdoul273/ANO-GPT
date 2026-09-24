@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import actions.desktop_apps as da
 import actions.open_app as oa
+import core.browser_policy as browser_policy
 
 
 def _entry(id_, name, binary, keywords=(), generic=""):
@@ -54,3 +55,37 @@ def test_open_app_essaie_l_alias_binaire_avant_le_nom_brut(monkeypatch):
 
     assert launched[0] == "google-chrome"
     assert "Chrome" in result
+
+
+def test_youtube_on_workspace_opens_url_instead_of_typing_shell_command(monkeypatch):
+    calls = []
+    monkeypatch.setattr(oa, "_SYSTEM", "Linux")
+    monkeypatch.setattr(oa.kit, "which", lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None)
+    monkeypatch.setattr(oa, "_hyprctl_json", lambda *_args: [])
+    monkeypatch.setattr(oa, "_focus_workspace", lambda ws: calls.append(("focus", ws)))
+    monkeypatch.setattr(oa, "_move_new_window_to_workspace",
+                        lambda name, ws, before: calls.append(("move", name, ws)) or True)
+    monkeypatch.setattr(browser_policy, "open_chrome",
+                        lambda url, **kwargs: calls.append(("open", url, kwargs["new_window"])) or True)
+    monkeypatch.setattr(oa, "_type_command_into",
+                        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("saisie interdite")))
+
+    result = oa.open_app({
+        "app_name": "Chrome", "command": "google-chrome-stable youtube.com", "workspace": 3,
+    })
+
+    assert calls == [("focus", 3), ("open", "https://youtube.com", True),
+                     ("move", "chrome", 3)]
+    assert "bureau 3" in result
+
+
+def test_youtube_name_and_description_use_same_url_route(monkeypatch):
+    opened = []
+    monkeypatch.setattr(oa, "_open_website_in_chrome",
+                        lambda url, ws: opened.append((url, ws)) or "YouTube ouvert")
+
+    assert oa.open_app({"app_name": "YouTube", "description": "Ouvre YouTube sur le bureau 3"}) == "YouTube ouvert"
+    assert oa.open_app({"app_name": "Chrome", "description": "Ouvre YouTube sur le bureau 3"}) == "YouTube ouvert"
+    assert oa.open_app({"app_name": "google-chrome-stable youtube.com", "workspace": 3}) == "YouTube ouvert"
+    assert opened == [("https://youtube.com", 3)] * 3
+    assert oa._website_url_for_open("Spotify", "", "", "") is None

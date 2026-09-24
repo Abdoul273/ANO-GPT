@@ -46,6 +46,7 @@ from actions.reminder import reminder
 from actions.computer_settings import computer_settings
 from actions.youtube_video import youtube_video
 from actions.desktop import desktop_control
+from actions.hud_appearance import hud_appearance as hud_appearance_action
 from actions.browser_control import browser_control
 from actions.file_controller import file_controller
 from actions.code_helper import code_helper
@@ -207,6 +208,8 @@ TOOL_DECLARATIONS = [
             "Opens any application on the computer. "
             "Use this whenever the user asks to open, launch, or start any app, "
             "website, or program. Always call this tool — never just say you opened it. "
+            "For a website such as YouTube, pass app_name='YouTube' and the workspace; "
+            "do not put a Chrome shell command in 'command'. The tool opens the URL directly. "
             "If the user wants to run a command or type something into the app (e.g. 'lance kitty et tape codex'), "
             "pass the command in the 'command' parameter and the requested workspace together. "
             "Never use browser tools to type into a terminal. "
@@ -1327,6 +1330,25 @@ TOOL_DECLARATIONS = [
             },
             "required": ["action"]
         }
+    },
+    {
+        "name": "hud_appearance",
+        "description": (
+            "Change en temps réel l'apparence d'ANO-GPT lui-même : le fond d'image "
+            "derrière le HUD et le style de l'orbe, ensemble ou séparément. "
+            "Ce n'est pas le fond d'écran du bureau Linux. Utiliser action='list' "
+            "pour voir les styles et images disponibles, 'status' pour l'état actuel, "
+            "'apply' pour changer. background_image='aucun' retire l'image du HUD."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "list | status | apply (défaut apply)"},
+                "orb_style": {"type": "STRING", "description": "Nom visible dans Personnaliser, par exemple GÉODÉSIQUE, SPECTRE ou IRIS. Utiliser action='list' pour obtenir les choix actuels. L'ID interne est aussi accepté."},
+                "background_image": {"type": "STRING", "description": "Nom d'une image de background/, chemin local, ou 'aucun' pour la retirer"},
+            },
+            "required": [],
+        },
     },
     {
         "name": "desktop_control",
@@ -2464,6 +2486,7 @@ def announce_before_call(declarations: list[dict]) -> list[dict]:
 
 
 _TOOL_LABELS = {
+    "hud_appearance": "Apparence du HUD",
     "consult_brain": "Réflexion",
     "web_search": "Recherche web",
     "image_search": "Recherche d'images",
@@ -4143,6 +4166,11 @@ class ToolDispatcher:
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
                 result = r or "Done."
 
+            elif name == "hud_appearance":
+                result = await loop.run_in_executor(
+                    None, lambda: self._agent_hud_appearance(args)
+                )
+
             elif name == "desktop_control":
                 r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
                 result = r or "Done."
@@ -4574,6 +4602,7 @@ class ToolDispatcher:
                 "close_map": lambda a: (self.ui.close_map(), "Carte fermée.")[1],
                 "camera": self._agent_camera,
                 "show_card": self._agent_show_card,
+                "hud_appearance": self._agent_hud_appearance,
                 # ── voix et état ────────────────────────────────────────────
                 "speak": self._agent_speak,
                 "ask": self._agent_ask,
@@ -5007,6 +5036,9 @@ class ToolDispatcher:
             "confirmed": self._arg(args, "confirmed"),
         }, response=None, player=self.ui,
             session_memory=getattr(self, "_tool_session_memory", {}))
+
+    def _agent_hud_appearance(self, args: dict) -> str:
+        return hud_appearance_action(args, self.ui)
 
     def _agent_file_search(self, args: dict) -> str:
         from actions.file_controller import file_controller

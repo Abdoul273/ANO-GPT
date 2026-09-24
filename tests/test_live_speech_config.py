@@ -8,6 +8,7 @@ from core.live_speech_config import (
     build_output_transcription_config,
     full_duplex_aec_is_validated,
     live_captions_provider,
+    live_end_silence_ms,
     normalise_language_code,
     normalise_live_voice,
 )
@@ -57,6 +58,8 @@ def test_les_voix_live_sont_valides_et_normalisees():
 
 def test_migration_audio_sure_par_defaut():
     assert live_captions_provider({}) == "gemini_live"
+    assert live_end_silence_ms({}) is None
+    assert live_end_silence_ms({"live_end_silence_ms": 700}) == 700
     assert not full_duplex_aec_is_validated({})
     assert not full_duplex_aec_is_validated({
         "voice_barge_in_enabled": True,

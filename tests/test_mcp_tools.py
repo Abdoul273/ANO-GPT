@@ -64,6 +64,9 @@ class _UiVide:
     def write_log(self, *args, **kwargs):
         return None
 
+    def control_hud_appearance(self, *args, **kwargs):
+        return "ok"
+
 
 @pytest.fixture
 def application_minimale(monkeypatch):

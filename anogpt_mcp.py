@@ -158,6 +158,21 @@ def show_card(title: str, body: str, type: str = "info") -> str:
     return _run("show_card", title=title, body=body, type=type)
 
 
+@mcp.tool()
+def hud_appearance(action: str = "apply", orb_style: str = "",
+                   background_image: str = "") -> str:
+    """Change immédiatement le fond et l'orbe du HUD d'ANO-GPT.
+
+    action : list (choix disponibles) | status (apparence actuelle) | apply.
+    orb_style : nom ou ID de l'orbe, par exemple IRIS, NEBULA, SPECTRE.
+    background_image : nom d'une image dans background/, chemin local, ou
+                       'aucun' pour retirer le fond. Les deux peuvent être
+                       changés dans un même appel. Ce n'est pas le fond Linux.
+    """
+    return _run("hud_appearance", action=action, orb_style=orb_style,
+                background_image=background_image)
+
+
 # ── voix et état ────────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -995,7 +1010,7 @@ def _selftest() -> int:
 
 
 _TOOL_NAMES = (
-    "find_nearby", "show_map", "close_map", "camera", "show_card",
+    "find_nearby", "show_map", "close_map", "camera", "show_card", "hud_appearance",
     "speak", "ask_assistant", "assistant_status",
     "email", "calendar", "cloud_integrations", "contacts", "memory_save", "memory_search", "second_brain",
     "weather", "web_search", "image_search", "close_image_gallery", "screenshot", "open_app", "close_app",

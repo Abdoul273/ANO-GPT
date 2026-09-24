@@ -15,6 +15,17 @@ def test_chrome_launch_uses_normal_profile_and_literal_url(monkeypatch):
     assert "shell" not in launch.call_args.kwargs
 
 
+def test_chrome_can_open_url_in_a_new_window_for_workspace_routing(monkeypatch):
+    launch = Mock()
+    monkeypatch.setattr(policy, "chrome_binary", lambda: "/usr/bin/google-chrome-stable")
+    monkeypatch.setattr(policy.subprocess, "Popen", launch)
+
+    assert policy.open_chrome("https://youtube.com", new_window=True)
+    assert launch.call_args.args[0] == [
+        "/usr/bin/google-chrome-stable", "--new-window", "https://youtube.com",
+    ]
+
+
 def test_chrome_failure_never_launches_another_browser(monkeypatch):
     from actions import browser_control, youtube_video
     launch = Mock(side_effect=OSError("unavailable"))

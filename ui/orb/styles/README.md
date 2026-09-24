@@ -12,7 +12,8 @@ changement, les styles non choisis ne sont jamais importés.
 | `ui/orb/registry.py` | Catalogue `OrbSpec`, import paresseux, choix au démarrage |
 | `ui/orb/host.py` | `OrbHost` = `window.hud`, un seul orbe vivant, rejoue l'état, repli |
 | `ui/orb/base.py` | `BaseOrb` : tout le commun (états, volume, palette, cadence, sommeil) |
-| `ui/orb/styles/pulse.py` | Exemple de référence (≈40 lignes) |
+| `ui/orb/styles/pulse.py` | Style PULSE : membrane sonore et échos concentriques |
+| `ui/orb/styles/mark_core.py` | MARK CORE : réacteur circulaire de Mark-LIV |
 
 Config : clé `orb_style` de la configuration (`arc` par défaut).
 

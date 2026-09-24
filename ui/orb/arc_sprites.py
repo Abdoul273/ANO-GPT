@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import math
+import random
+
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
-    QBrush, QColor, QLinearGradient, QPainter, QPen, QPixmap, QRadialGradient,
+    QBrush, QColor, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF,
+    QRadialGradient,
 )
 
 
@@ -12,6 +16,7 @@ class _HudSpritesMixin:
     256² ne coûte rien."""
 
     _SPRITE = 256
+    _REACTOR_SPRITE = 512
 
     @staticmethod
     def _quantize(color: QColor) -> tuple[int, int, int]:
@@ -41,6 +46,54 @@ class _HudSpritesMixin:
         q.setPen(Qt.PenStyle.NoPen)
         q.setBrush(QBrush(gradient))
         q.drawEllipse(0, 0, size, size)
+        q.end()
+        return pm
+
+    def _reactor_sprite(self, core: QColor, hot: QColor) -> QPixmap:
+        """Couronne technique précalculée : aucun segment à recalculer par image."""
+        size = self._REACTOR_SPRITE
+        center = size / 2.0
+        pm = self._new_pm(size, size)
+        q = QPainter(pm)
+        q.setRenderHint(QPainter.RenderHint.Antialiasing)
+        q.setBrush(Qt.BrushStyle.NoBrush)
+
+        def arc(radius: float, start: float, span: float, color: QColor, width: float = 1.0):
+            q.setPen(QPen(color, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            q.drawArc(QRectF(center - radius, center - radius, radius * 2, radius * 2),
+                      int(start * 16), int(span * 16))
+
+        # Trois pistes de longueur différente créent une profondeur mécanique.
+        for i in range(12):
+            angle = i * 30.0 + 4.0
+            arc(211, angle, 21, QColor(core.red(), core.green(), core.blue(), 108), 1.0)
+            arc(203, angle + 3, 15, QColor(hot.red(), hot.green(), hot.blue(), 194), 2.0)
+            arc(187, angle - 2, 26, QColor(core.red(), core.green(), core.blue(), 56), 1.0)
+            arc(163, angle + 1, 19, QColor(core.red(), core.green(), core.blue(), 88), 1.0)
+            if i % 3 == 0:
+                arc(194, angle + 5, 8, QColor(hot.red(), hot.green(), hot.blue(), 216), 2.0)
+        for i in range(48):
+            angle = math.tau * i / 48.0
+            ca, sa = math.cos(angle), math.sin(angle)
+            r0 = 174 if i % 4 else 169
+            q.setPen(QPen(QColor(core.red(), core.green(), core.blue(),
+                                 115 if i % 4 else 188), 1.0))
+            q.drawLine(QPointF(center + ca * r0, center + sa * r0),
+                       QPointF(center + ca * 180, center + sa * 180))
+        # Poussière photonique au second plan : elle tourne très lentement avec
+        # la couronne et profite du même blit, sans coût de peinture additionnel.
+        rng = random.Random(73)
+        dim, bright = [], []
+        for index in range(132):
+            angle = rng.random() * math.tau
+            radius = math.sqrt(rng.random()) * 218
+            point = QPointF(center + math.cos(angle) * radius,
+                            center + math.sin(angle) * radius)
+            (bright if index % 7 == 0 else dim).append(point)
+        q.setPen(QPen(QColor(core.red(), core.green(), core.blue(), 76), 1.0))
+        q.drawPoints(QPolygonF(dim))
+        q.setPen(QPen(QColor(hot.red(), hot.green(), hot.blue(), 128), 1.3))
+        q.drawPoints(QPolygonF(bright))
         q.end()
         return pm
 
@@ -77,7 +130,7 @@ class _HudSpritesMixin:
         if self._background_photo_active:
             q.fillRect(0, 0, W, H, QColor(2, 5, 11, 150))
         else:
-            q.fillRect(0, 0, W, H, QColor(2, 5, 11))
+            q.fillRect(0, 0, W, H, QColor(1, 4, 9))
 
         # Plan holographique très discret, cuit avec le décor. Le point de
         # fuite derrière le noyau donne une profondeur de salle de commande,
@@ -108,5 +161,6 @@ class _HudSpritesMixin:
         q.drawPixmap(QRectF(W / 2.0 - aura, H / 2.0 - aura, aura * 2, aura * 2), glow,
                      QRectF(0, 0, self._SPRITE, self._SPRITE))
         q.end()
-        self._pm = {"glow": glow, "nucleus": nucleus, "photon": photon, "scene": scene}
+        self._pm = {"glow": glow, "nucleus": nucleus, "photon": photon,
+                    "reactor": self._reactor_sprite(core, hot), "scene": scene}
         self._cache_key = self._sprite_key(W, H)

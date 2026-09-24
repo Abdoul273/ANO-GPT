@@ -136,31 +136,6 @@ class InterfaceFrame(QWidget):
             p.setPen(QPen(tint, 1.0))
             p.drawPolyline(path)
 
-        # Marques de calibration aux quatre coins : double niveau et point
-        # d'index magenta. Le langage visuel devient plus précis sans épaissir
-        # les cadres déjà portés par les panneaux.
-        p.setPen(QPen(QColor(0, 212, 255, 52), 1.0))
-        inset, inner_arm = 26.0, 24.0
-        for x, y, sx, sy in ((inset, inset, 1, 1), (W-inset, inset, -1, 1),
-                             (inset, H-inset, 1, -1), (W-inset, H-inset, -1, -1)):
-            p.drawLine(QPointF(x, y), QPointF(x + sx * inner_arm, y))
-            p.drawLine(QPointF(x, y), QPointF(x, y + sy * inner_arm))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(255, 43, 214, 125))
-        p.drawRect(QRectF(W - 88, 15, 22, 2))
-        p.drawRect(QRectF(66, H - 17, 16, 2))
-
-        # Crochets de cadre et micro-graduations dans les coins.
-        p.setPen(QPen(QColor(0, 212, 255, 100), 1.2))
-        margin, arm = 16.0, 42.0
-        for x, y, sx, sy in ((margin, margin, 1, 1), (W-margin, margin, -1, 1),
-                             (margin, H-margin, 1, -1), (W-margin, H-margin, -1, -1)):
-            p.drawLine(QPointF(x, y), QPointF(x + sx * arm, y))
-            p.drawLine(QPointF(x, y), QPointF(x, y + sy * arm))
-            for step in range(10, 38, 9):
-                p.drawLine(QPointF(x + sx * step, y),
-                           QPointF(x + sx * step, y + sy * 4))
-
         # Labels minuscules façon avionique, lisibles mais non envahissants.
         font = QFont("Inter", 6, QFont.Weight.Bold)
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)

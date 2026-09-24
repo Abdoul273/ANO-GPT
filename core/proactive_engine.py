@@ -662,6 +662,9 @@ class ProactiveEngine:
     async def _run_proactive_mode(self) -> None:
         """Attend les événements puis les prononce au premier moment sûr."""
         self._proactive.bind(asyncio.get_running_loop())
+        # Le premier tour appartient à l'utilisateur : les veilles qui
+        # publient dès la connexion ne doivent pas occuper la session Live.
+        startup_ready_at = time.monotonic() + 30.0
         system_watch = asyncio.create_task(
             self._proactive.watch_system_events(), name="proactive-system-events"
         )
@@ -742,6 +745,10 @@ class ProactiveEngine:
                             self._proactive.discard(event)
                             self.ui.write_log("SYS: Annonce réunion ignorée (déjà commencée).")
                             continue
+
+                if time.monotonic() < startup_ready_at:
+                    self._proactive.defer(event, startup_ready_at - time.monotonic())
+                    continue
 
                 # Revérification immédiate : l'utilisateur peut avoir repris
                 # la parole pendant les quelques ms de la sonde bureau.

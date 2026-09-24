@@ -30,14 +30,20 @@ def chrome_binary() -> str | None:
     return next((str(path) for path in paths if path.is_file()), None)
 
 
-def open_chrome(url: str = "", *, env: dict | None = None) -> bool:
+def open_chrome(url: str = "", *, env: dict | None = None,
+                new_window: bool = False) -> bool:
     """Lance Chrome sans shell, avec son profil normal, sans autre navigateur en repli."""
     executable = chrome_binary()
     if not executable:
         return False
     try:
+        argv = [executable]
+        if new_window:
+            argv.append("--new-window")
+        if url:
+            argv.append(url)
         subprocess.Popen(
-            [executable, url] if url else [executable],
+            argv,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, env=env,
         )

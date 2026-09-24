@@ -42,7 +42,7 @@ CORE: frozenset[str] = frozenset({
     # Carte et position
     "show_map", "close_map", "location", "show_country_info",
     # Sa propre interface : « coupe le micro » doit marcher à froid.
-    "interface_control",
+    "interface_control", "hud_appearance",
     # Téléphone (ANO-Remote)
     "phone_call", "phone_hangup", "phone_sms", "phone_contacts",
     # Temps

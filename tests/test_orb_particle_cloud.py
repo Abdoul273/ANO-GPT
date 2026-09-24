@@ -17,12 +17,13 @@ def test_le_corps_est_un_nuage_dense_de_particules_borne(qapp):
     orb = HudCanvas("")
     try:
         assert len(orb._particles) == orb._PARTICLE_N
-        assert orb._PARTICLE_N == 300
+        assert orb._PARTICLE_N == 380
         # Les points restent larges, avec un budget dense mais borné pour ne
         # pas voler le temps CPU nécessaire à la voix.
         assert orb._PARTICLE_POINT_SCALE == 2.20
-        assert orb._IDLE_PARTICLE_BUDGET == 300
+        assert orb._IDLE_PARTICLE_BUDGET == 380
         assert orb._ACTIVE_PARTICLE_BUDGET == 240
+        assert orb._LINK_PARTICLE_BUDGET == 240
         assert all(0.0 < pt["home_r"] <= 1.0 for pt in orb._particles)
         assert all({"x", "y", "z", "vx", "vy", "vz", "phase", "form_phase", "form_u", "lane"} <= pt.keys()
                    for pt in orb._particles)

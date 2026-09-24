@@ -119,28 +119,38 @@ register(OrbSpec(
     target="ui.orb.arc_core:HudCanvas", swatch="#00d4ff",
 ))
 register(OrbSpec(
+    id="mark_core", label="MARK CORE",
+    tagline="Réacteur circulaire original de Mark-LIV, animé par la voix",
+    target="ui.orb.styles.mark_core:MarkCoreOrb", swatch="#00d4ff",
+))
+register(OrbSpec(
     id="glsl", label="HOLO GPU",
     tagline="Sphère plasma en shader, calcul sur la carte graphique",
     target="ui.orb.glsl_orb:GLSLOrbWidget", engine="gpu", swatch="#7a5cff",
 ))
 register(OrbSpec(
     id="pulse", label="PULSE",
-    tagline="Anneaux concentriques minimalistes — le plus léger",
+    tagline="Résonateur sonore et ondes d'écho concentriques",
     target="ui.orb.styles.pulse:PulseOrb", swatch="#00ff9d",
 ))
-# Styles en chantier (ready=False) : passer à True une fois terminés.
+# Chaque style est importé uniquement quand il devient actif.
 register(OrbSpec(
     id="nebula", label="NEBULA",
-    tagline="Nébuleuse de poussière lumineuse en spirale",
-    target="ui.orb.styles.nebula:NebulaOrb", ready=False, swatch="#ff4fd8",
+    tagline="Galaxie inclinée à trois bras de poussière lumineuse",
+    target="ui.orb.styles.nebula:NebulaOrb", ready=True, swatch="#ff4fd8",
 ))
 register(OrbSpec(
     id="wireframe", label="GÉODÉSIQUE",
-    tagline="Sphère filaire géodésique en rotation",
-    target="ui.orb.styles.wireframe:WireframeOrb", ready=False, swatch="#ffb200",
+    tagline="Membrane cristalline triangulée, sculptée par le son",
+    target="ui.orb.styles.wireframe:WireframeOrb", ready=True, swatch="#ffb200",
 ))
 register(OrbSpec(
     id="radial", label="SPECTRE",
-    tagline="Onde radiale pilotée par le spectre audio",
-    target="ui.orb.styles.radial:RadialOrb", ready=False, swatch="#ff3355",
+    tagline="Nuage de photons vivant, sculpté par le son",
+    target="ui.orb.styles.radial:RadialOrb", ready=True, swatch="#42e9ff",
+))
+register(OrbSpec(
+    id="iris", label="IRIS",
+    tagline="Diaphragme holographique à huit lames articulées",
+    target="ui.orb.styles.iris:IrisOrb", ready=True, swatch="#9d7aff",
 ))

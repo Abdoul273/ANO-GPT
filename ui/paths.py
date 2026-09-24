@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication
 
 
@@ -27,7 +28,7 @@ _RIGHT_W = 352
 _cache: dict = {}
 _loaded = False
 _lock = threading.Lock()
-_write_worker: QThread | None = None
+_write_executor: ThreadPoolExecutor | None = None
 
 
 def _load_from_disk() -> dict:
@@ -72,7 +73,7 @@ def _patch_cached_config(patch: dict) -> None:
 
 def _write_full_config(data: dict) -> None:
     """Écrit api_keys.json hors du thread GUI si Qt tourne déjà."""
-    global _cache, _loaded, _write_worker
+    global _cache, _loaded, _write_executor
     payload = dict(data)
     with _lock:
         _cache = payload
@@ -81,7 +82,9 @@ def _write_full_config(data: dict) -> None:
     def _dump() -> None:
         try:
             API_FILE.parent.mkdir(parents=True, exist_ok=True)
-            API_FILE.write_text(json.dumps(payload, indent=4), encoding="utf-8")
+            temporary = API_FILE.with_name(API_FILE.name + ".tmp")
+            temporary.write_text(json.dumps(payload, indent=4), encoding="utf-8")
+            os.replace(temporary, API_FILE)
         except Exception:
             pass
 
@@ -89,10 +92,7 @@ def _write_full_config(data: dict) -> None:
         _dump()
         return
 
-    class _Writer(QThread):
-        def run(self):
-            _dump()
-
-    worker = _Writer()
-    _write_worker = worker
-    worker.start()
+    with _lock:
+        if _write_executor is None:
+            _write_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ui-config-write")
+        _write_executor.submit(_dump)

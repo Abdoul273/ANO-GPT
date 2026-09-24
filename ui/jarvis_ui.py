@@ -6,12 +6,46 @@ import sys
 import time
 import traceback
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QRadialGradient
 from PyQt6.QtWidgets import QApplication, QSplashScreen
 
 from ui.main_window import MainWindow
 from ui.styles.qss import get_global_style
-from ui.styles.theme import C, load_custom_font, qcol
+from ui.styles.theme import load_custom_font
+
+
+def _startup_splash_pixmap() -> QPixmap:
+    """Première image cohérente avec l'accueil, dessinée une seule fois."""
+    pixmap = QPixmap(520, 280)
+    pixmap.fill(QColor(2, 7, 16))
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    glow = QRadialGradient(QPointF(260, 113), 120)
+    glow.setColorAt(0, QColor(24, 121, 171, 92))
+    glow.setColorAt(1, QColor(2, 7, 16, 0))
+    p.fillRect(0, 0, 520, 280, glow)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    for radius, alpha in ((48, 52), (62, 115), (78, 53)):
+        p.setPen(QPen(QColor(111, 220, 247, alpha), 1))
+        p.drawEllipse(QPointF(260, 113), radius, radius)
+    p.setPen(QPen(QColor(136, 229, 250, 205), 2))
+    for start in (22, 112, 202, 292):
+        p.drawArc(QRectF(198, 51, 124, 124), start * 16, 53 * 16)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(239, 253, 255))
+    p.drawEllipse(QPointF(260, 113), 4, 4)
+    p.setFont(QFont("Inter", 19, QFont.Weight.Black))
+    p.setPen(QColor(239, 250, 255))
+    p.drawText(QRectF(30, 194, 460, 34), Qt.AlignmentFlag.AlignCenter, "ANO-GPT")
+    p.setFont(QFont("JetBrains Mono", 8, QFont.Weight.DemiBold))
+    p.setPen(QColor(121, 207, 232))
+    p.drawText(QRectF(30, 233, 460, 20), Qt.AlignmentFlag.AlignCenter,
+               "INITIALISATION DE L'INTERFACE")
+    p.setPen(QPen(QColor(70, 165, 197, 90), 1))
+    p.drawLine(28, 266, 492, 266)
+    p.end()
+    return pixmap
 
 
 class _RootShim:
@@ -43,9 +77,7 @@ class JarvisUI:
         self._app.setFont(font)
         self._app.setStyleSheet(get_global_style())
 
-        splash = QSplashScreen()
-        splash.setStyleSheet(f"background: {C.BG}; color: {C.PRI};")
-        splash.showMessage("ANO-GPT  —  Chargement...", Qt.AlignmentFlag.AlignCenter, qcol(C.PRI))
+        splash = QSplashScreen(_startup_splash_pixmap())
         splash.show()
         QApplication.processEvents()
 
@@ -65,6 +97,10 @@ class JarvisUI:
 
     def show_window(self) -> None:
         self._win.request_show()
+
+    def control_hud_appearance(self, action: str, orb_style: str | None = None,
+                               background_path: str | None = None) -> str:
+        return self._win.control_hud_appearance(action, orb_style, background_path)
 
     @muted.setter
     def muted(self, v: bool):

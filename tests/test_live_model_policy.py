@@ -8,7 +8,7 @@ from core.live_model_policy import (
 def test_le_modele_live_historique_est_le_moteur_principal():
     policy = LiveModelPolicy()
     assert policy.current == DEFAULT_PRIMARY_MODEL
-    assert policy.current == "models/gemini-3.8-live"
+    assert policy.current == "models/gemini-3.1-flash-live-preview"
 
 
 def test_un_modele_indisponible_active_le_repli_historique():
