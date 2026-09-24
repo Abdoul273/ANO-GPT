@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import webbrowser
@@ -18,16 +17,11 @@ BROWSER_ALIASES = frozenset({
 
 
 def chrome_binary() -> str | None:
-    for name in ("google-chrome-stable", "google-chrome", "chrome", "chrome.exe"):
+    for name in ("google-chrome-stable", "google-chrome", "chrome"):
         found = shutil.which(name)
         if found:
             return found
-    paths = [Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")]
-    for variable in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"):
-        root = os.environ.get(variable)
-        if root:
-            paths.append(Path(root) / "Google/Chrome/Application/chrome.exe")
-    return next((str(path) for path in paths if path.is_file()), None)
+    return None
 
 
 def open_chrome(url: str = "", *, env: dict | None = None) -> bool:
