@@ -155,6 +155,11 @@ register(OrbSpec(
     target="ui.orb.styles.iris:IrisOrb", ready=True, swatch="#9d7aff",
 ))
 register(OrbSpec(
+    id="portrait", label="HUMAIN",
+    tagline="Vrai visage photo : regard, paupières et lèvres animés par la voix",
+    target="ui.orb.styles.portrait:PortraitOrb", swatch="#d9a07a",
+))
+register(OrbSpec(
     id="face", label="VISAGE",
     tagline="Visage holographique : regard vivant, bouche portée par la voix",
     target="ui.orb.styles.face:FaceOrb", swatch="#5ab8f0",

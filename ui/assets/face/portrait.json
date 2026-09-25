@@ -1,0 +1,13 @@
+{
+  "image": "portrait.png",
+  "pivot": [512, 720],
+  "face_center": [515, 560],
+  "nose": [517, 600],
+  "eyes": [
+    {"cx": 395, "cy": 463, "half_width": 50, "up": 18, "down": 23, "band": 17, "iris": 22, "inner": 1},
+    {"cx": 636, "cy": 463, "half_width": 50, "up": 16, "down": 21, "band": 17, "iris": 22, "inner": -1}
+  ],
+  "brows": [[392, 408], [640, 408]],
+  "mouth": {"cx": 515, "y": 723, "half_width": 87, "upper": 22, "lower": 41},
+  "chin": 855
+}
