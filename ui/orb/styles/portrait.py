@@ -77,8 +77,6 @@ LASH_PX = 4.0           # liseré de cils gardé intact au bord de la paupière
 LASH_TIPS = 11.0        # hauteur des pointes de cils, jamais étirées
 WIDEN_PX = 3.2          # recul de la paupière supérieure (attention)
 CHEEK_PX = 5.0          # montée de la paupière inférieure au vrai sourire
-# Limites entre dents (fraction de la demi-largeur de bouche).
-_TOOTH_EDGES = (0.0, .19, .35, .50, .63)
 
 
 def _smoothstep(e0: float, e1: float, x: np.ndarray) -> np.ndarray:
@@ -567,40 +565,59 @@ class PortraitOrb(BaseOrb):
         top = y0 - (.25 * j + 2.5 * fric) * lens
         bottom = y0 + j * lens
         depth = np.minimum(qy - top, bottom - qy)
-        aa = np.clip(depth / 1.3 + .5, 0.0, 1.0) * (lens > .02)
+        aa = np.clip(depth / 1.6 + .45, 0.0, 1.0) * (lens > .02)
         if not aa.any():
             return
         rel = qy - top
-        height = np.maximum(bottom - top, 1.0)
-        frac = rel / height
-        # Fond : noir sous les dents, langue rosée en bas ; ombre aux bords.
-        dark = .55 + .45 * np.clip(depth / 5.0, 0.0, 1.0)
-        tongue = _smoothstep(.55, 1.0, frac) * min(1.0, j / 20.0) * (1.0 - .6 * fric)
-        r = (26.0 + 92.0 * tongue) * dark
-        g = (9.0 + 30.0 * tongue) * dark
-        b = (11.0 + 34.0 * tongue) * dark
-        gaps = sum(np.exp(-((au - edge) / .02)**2) for edge in _TOOTH_EDGES)
-        teeth_x = np.clip((.75 - au) / .15, 0.0, 1.0)
-        shade_x = (.80 + .20 * np.clip(1.0 - au * 1.3, 0.0, 1.0)) * (1.0 - .18 * gaps)
-        # Dents du haut : bande ivoire accrochée à la lèvre, ombrée sous la lèvre.
+        relb = bottom - qy
+        frac = rel / np.maximum(bottom - top, 1.0)
+        # Fond de bouche : jamais noir pur, plus sombre au fond et vers les
+        # coins (la joue le cache), langue rosée en bas.
+        corner = _smoothstep(.35, .95, au)
+        dark = (.45 + .55 * np.clip(depth / 6.0, 0.0, 1.0)) * (1.0 - .45 * corner)
+        tongue = (_smoothstep(.55, 1.0, frac) * min(1.0, j / 20.0) * (1.0 - .6 * fric)
+                  * (1.0 - corner))
+        r = (40.0 + 100.0 * tongue) * dark
+        g = (15.0 + 36.0 * tongue) * dark
+        b = (17.0 + 38.0 * tongue) * dark
+        # Face interne humide des lèvres : liseré rouge sombre sur les bords
+        # de la lèvre du bas, qui fond la cavité dans la photo.
+        wet = .7 * np.clip(1.0 - relb / 3.0, 0.0, 1.0) ** 1.5
+        r += wet * (122.0 - r)
+        g += wet * (52.0 - g)
+        b += wet * (54.0 - b)
+        # Dents : une par une (bord libre arrondi, interstices doux), plus
+        # courtes et plus sombres en suivant l'arcade vers les coins.
+        pos = np.interp(au, (0.0, .19, .35, .50, .63, .75, .87), (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0))
+        f = pos - np.floor(pos)
+        edge_c = (2.0 * f - 1.0) ** 4           # 1 entre deux dents, 0 au milieu
+        gaps = np.exp(-(np.minimum(f, 1.0 - f) / .06) ** 2)
+        arch = 1.0 - .55 * _smoothstep(.2, .85, au)
+        tone = (.72 + .28 * min(1.0, j / 14.0)) * (1.0 - .22 * gaps) * (1.0 - .8 * corner)
+        teeth_x = np.clip((.82 - au) / .2, 0.0, 1.0)
         teeth_h = min(10.0, .5 * j + 4.0 * fric)
-        tooth = np.clip((teeth_h - rel) / 1.2, 0.0, 1.0) * teeth_x
-        shade = shade_x * (.62 + .38 * np.clip(rel / 4.0, 0.0, 1.0))
-        r += tooth * (208.0 * shade - r)
-        g += tooth * (198.0 * shade - g)
-        b += tooth * (184.0 * shade - b)
+        if teeth_h > .3:
+            h = teeth_h * arch - 1.4 * edge_c
+            tooth = np.clip((h - rel) / 1.1, 0.0, 1.0) * teeth_x
+            v = np.clip(rel / np.maximum(h, 1.0), 0.0, 1.0)
+            # Ombre portée de la lèvre en haut, bord libre un peu translucide.
+            shade = tone * (.50 + .50 * _smoothstep(0.0, .45, v)) * (1.0 - .14 * _smoothstep(.7, 1.0, v))
+            r += tooth * (226.0 * shade - r)
+            g += tooth * (214.0 * shade - g)
+            b += tooth * (194.0 * shade - b)
         # Dents du bas : plus en retrait, plus sombres, cachées par la lèvre
         # tant que la bouche n'est pas bien ouverte (sauf sur les sifflantes).
-        low_h = min(7.0, max(0.0, .25 * j - 5.0) + 3.5 * fric)
+        low_h = min(6.0, max(0.0, .3 * j - 9.0) + 3.5 * fric)
         if low_h > .3:
-            relb = bottom - qy
-            low = (np.clip((low_h + 2.5 - relb) / 1.5, 0.0, 1.0)
-                   * np.clip((relb - 1.5) / 1.5, 0.0, 1.0)
-                   * np.clip((.55 - au) / .15, 0.0, 1.0))
-            lshade = shade_x * .62
-            r += low * (200.0 * lshade - r)
-            g += low * (190.0 * lshade - g)
-            b += low * (176.0 * lshade - b)
+            hb = low_h * arch - 1.0 * edge_c
+            lip = 2.5                             # la lèvre du bas les recouvre
+            low = (np.clip((hb + lip - relb) / 1.1, 0.0, 1.0)
+                   * _smoothstep(lip - 1.0, lip + 1.0, relb)
+                   * np.clip((.6 - au) / .18, 0.0, 1.0))
+            lshade = tone * .58 * (.7 + .3 * np.clip((relb - lip) / np.maximum(hb, 1.0), 0.0, 1.0))
+            r += low * (216.0 * lshade - r)
+            g += low * (204.0 * lshade - g)
+            b += low * (186.0 * lshade - b)
         out = z["buf"][z["c_rows"], z["c_cols"]]
         a = aa[..., None]
         color = np.stack((r, g, b, np.full_like(r, 255.0)), axis=-1)
