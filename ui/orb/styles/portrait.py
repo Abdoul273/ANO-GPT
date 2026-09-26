@@ -128,6 +128,8 @@ class PortraitOrb(BaseOrb):
         self._press = 0.0
         self._level = 0.0
         self._emph = 0.0
+        self._peak = .15
+        self._floor = 0.0
         # Yeux.
         self._blink = 0.0
         self._blink_t = -1.0
@@ -309,7 +311,18 @@ class PortraitOrb(BaseOrb):
     def _advance_mouth(self, dt: float, speaking: bool) -> None:
         bands = self.bands
         volume = self.volume
-        level = min(1.0, max(0.0, volume - .03) * 2.8) ** .7 if speaking else 0.0
+        # Le volume reçu reste haut pendant toute une phrase (il est gonflé
+        # par le spectre) : la mâchoire suit donc surtout sa dynamique — creux
+        # et pics récents — pour se refermer entre les syllabes.
+        self._peak = max(volume, .15, self._peak * math.exp(-dt / 1.2))
+        if volume < self._floor:
+            self._floor = volume
+        else:
+            self._floor += (volume - self._floor) * (1.0 - math.exp(-dt * 2.0))
+        level = 0.0
+        if speaking and volume > .03:
+            norm = (volume - self._floor) / max(.05, self._peak - self._floor)
+            level = _clamp(.88 * norm + .12 * min(1.0, volume * 2.0)) ** .85
         prev = self._level
         self._level = level
         onset = max(0.0, level - prev)
