@@ -70,7 +70,7 @@ _EXPRESSIONS = {
 # Micro-expressions spontanées : amplitude par type.
 _MICRO = {"smile": .16, "press": .7, "brow": .45, "squint": .22}
 
-JAW_MAX = 34.0          # ouverture maximale de la mâchoire (px source)
+JAW_MAX = 38.0          # ouverture maximale de la mâchoire (px source)
 YAW_PX = 16.0           # déplacement du visage à lacet = 1 (px source)
 GAZE_PX = (9.0, 5.0)    # course de l'iris (px source)
 LASH_PX = 4.0           # liseré de cils gardé intact au bord de la paupière
@@ -309,7 +309,7 @@ class PortraitOrb(BaseOrb):
     def _advance_mouth(self, dt: float, speaking: bool) -> None:
         bands = self.bands
         volume = self.volume
-        level = min(1.0, max(0.0, volume - .04) * 1.7) ** .8 if speaking else 0.0
+        level = min(1.0, max(0.0, volume - .03) * 2.8) ** .7 if speaking else 0.0
         prev = self._level
         self._level = level
         onset = max(0.0, level - prev)
@@ -320,10 +320,10 @@ class PortraitOrb(BaseOrb):
             sib = .5 * (bands[6] + bands[7])
             voiced = lo + mid + hi + 1e-3
             # Sifflante : l'aigu domine → dents presque jointes, lèvres tirées.
-            fric = float(_smoothstep(.28, .55, sib / (voiced + sib)))
+            fric = float(_smoothstep(.35, .65, sib / (voiced + sib)))
             front = hi / (mid + hi + 1e-3)       # i/é (haut) contre o/ou (bas)
             opening = mid / voiced               # a : premier formant haut
-            jaw = level * (.55 + .75 * opening) * (1.0 - .75 * fric)
+            jaw = level * (.8 + .6 * opening) * (1.0 - .55 * fric)
             wide = level * max(-.4, min(1.0, (front - .45) * 2.6)) + .45 * fric
             rnd = level * _clamp((.42 - front) * 3.0) * (1.0 - .8 * opening) * (1.0 - fric)
         # Attaque vive, relâche plus douce : la bouche ne « flotte » pas.
