@@ -111,7 +111,7 @@ class PortraitOrb(BaseOrb):
         self._face = self._src.copy()
         # Peau de paupière : photo adoucie surtout à l'horizontale, pour
         # qu'une bande étirée ne montre pas de traînées colonne par colonne.
-        self._lid_src = cv2.GaussianBlur(self._src, (0, 0), sigmaX=4.0, sigmaY=1.2)
+        self._lid_src = cv2.GaussianBlur(self._src, (0, 0), sigmaX=2.5, sigmaY=1.0)
         self._build_eyes()
         self._build_mouth()
         self._rng = random.Random()
@@ -203,12 +203,17 @@ class PortraitOrb(BaseOrb):
             # du centre de l'œil.
             cheek = (np.exp(-(((qx-cx)/(hw*1.1))**2 + ((qy-(cy+eye["down"]+4))/13.0)**2))
                      * _smoothstep(cy, cy + eye["down"], qy))
+            # Cœur de l'œil : seule partie où paupière, iris et pupille bougent
+            # (marge pour le sourcil qui soulève la paupière).
+            core = (slice(max(0, int(cy - eye["up"] - eye["band"] - 12 - y0)),
+                          min(y1 - y0, int(cy + eye["down"] + 6 - y0))),
+                    slice(max(0, int(cx - hw - 3 - x0)), min(x1 - x0, int(cx + hw + 3 - x0))))
             self._eyes.append(dict(
-                eye=eye, rows=slice(y0, y1), cols=slice(x0, x1), qx=qx, qy=qy,
+                eye=eye, rows=slice(y0, y1), cols=slice(x0, x1), qx=qx, qy=qy, core=core,
                 brow=np.exp(-(((qx-bx)/75.0)**2 + ((qy-by)/32.0)**2)),
                 sad_y=8.0 * gin, sad_x=-eye["inner"] * 4.0 * gin,
                 lid_up=lid_up.astype(np.float32), cheek=cheek.astype(np.float32),
-                u=u, y_up=y_up, cover=(eye["up"] + eye["down"]) * env,
+                u=u[core], y_up=y_up[core], cover=((eye["up"] + eye["down"]) * env)[core],
                 buf=np.empty((y1 - y0, x1 - x0, 4), np.uint8),
             ))
 
@@ -489,6 +494,9 @@ class PortraitOrb(BaseOrb):
             # liseré de cils (LASH_PX) glisse sans se déformer. Plus elle ferme,
             # plus la peau vient d'au-dessus des pointes de cils (jamais
             # étirées) et d'une version adoucie de la photo (pas de traînées).
+            # Paupière et iris ne touchent que le cœur de l'œil : vues sur qx/qy.
+            core = z["core"]
+            cqx, cqy = qx[core], qy[core]
             lid = None
             if close > .01:
                 band = float(eye["band"])
@@ -496,39 +504,42 @@ class PortraitOrb(BaseOrb):
                 cover = close * z["cover"]
                 k = _smoothstep(0.0, 14.0, cover)
                 length = band + cover
-                rel = qy - top
+                rel = cqy - top
                 inside = (rel > 0.0) & (rel < length)
                 skin = band - LASH_PX - (LASH_TIPS - LASH_PX) * k
                 edge = length - LASH_PX
                 on_skin = rel < edge
                 stretched = np.where(on_skin, top + rel * skin / np.maximum(edge, 1e-3),
                                      z["y_up"] - (length - rel))
-                np.copyto(qy, stretched.astype(np.float32), where=inside)
-                lid = (inside & on_skin) * k * .8 * _smoothstep(0.0, 7.0, rel)
+                np.copyto(cqy, stretched.astype(np.float32), where=inside)
+                lid = (inside & on_skin) * k * .65 * _smoothstep(0.0, 7.0, rel)
                 depth = np.clip(rel / np.maximum(edge, 1e-3), 0.0, 1.0)
-                lid_shade = 1.0 - .14 * depth * depth
+                # Paupière bombée : pli d'ombre en haut, reflet au milieu,
+                # s'assombrit vers les cils.
+                lid_shade = ((1.0 - .16 * depth * depth) * (1.0 + .07 * np.sin(np.pi * depth))
+                             * (1.0 - .12 * np.exp(-((rel - 3.0) / 2.5) ** 2) * k))
             # Iris et pupille : ils glissent dans l'ouverture, les paupières
             # restent en place ; la pupille s'ouvre en agrandissant le centre.
             if abs(gx) + abs(gy) > .05 or abs(pupil) > .01:
                 cx, cy = eye["cx"], eye["cy"]
-                dx, dy = qx - (cx + gx), qy - (cy + gy)
+                dx, dy = cqx - (cx + gx), cqy - (cy + gy)
                 ri = float(eye["iris"])
                 r = np.sqrt(dx*dx + dy*dy)
                 w = np.clip(1.0 - (r - ri) / (ri * .8), 0.0, 1.0)
-                vy = (qy - cy) / np.where(qy < cy, eye["up"], eye["down"])
+                vy = (cqy - cy) / np.where(cqy < cy, eye["up"], eye["down"])
                 w *= np.clip((1.0 - (z["u"]**2 + vy*vy)) / .35, 0.0, 1.0)
                 dil = pupil * np.clip(1.0 - r / (ri * .8), 0.0, 1.0) ** 1.5 * w
-                qx = qx - gx * w - dx * dil
-                qy = qy - gy * w - dy * dil
-            qx = qx.astype(np.float32, copy=False)
-            qy = qy.astype(np.float32, copy=False)
+                cqx -= gx * w + dx * dil
+                cqy -= gy * w + dy * dil
             cv2.remap(self._src, qx, qy, cv2.INTER_LINEAR, dst=z["buf"])
             if lid is not None and lid.any():
-                soft = cv2.remap(self._lid_src, qx, qy, cv2.INTER_LINEAR)
+                soft = cv2.remap(self._lid_src, np.ascontiguousarray(cqx),
+                                 np.ascontiguousarray(cqy), cv2.INTER_LINEAR)
                 m = lid[..., None]
                 shade = np.ones_like(soft, dtype=np.float32)
                 shade[..., :3] = lid_shade[..., None]
-                z["buf"][...] = (z["buf"] * (1.0 - m) + soft * shade * m).astype(np.uint8)
+                out = z["buf"][core]
+                out[...] = (out * (1.0 - m) + soft * shade * m).astype(np.uint8)
             self._face[z["rows"], z["cols"]] = z["buf"]
 
     def _render_mouth(self) -> None:
@@ -541,10 +552,20 @@ class PortraitOrb(BaseOrb):
         wide = self._wide - .15 * min(0.0, smile)
         j = self._jaw * JAW_MAX * (1.0 - .8 * press)
         pos = max(0.0, smile)
-        qx = (z["qx"] + z["wide_x"] * wide + z["round_x"] * rnd
-              + (z["smile_xl"] * (1.0 + a) - z["smile_xr"] * (1.0 - a)) * pos)
-        qs = (z["qy"] + (z["smile_yl"] * (1.0 + a) + z["smile_yr"] * (1.0 - a)) * smile
-              + z["pout_y"] * (.26 * rnd - .40 * press))
+        # Seuls les termes actifs sont calculés (zone de ~100 000 px).
+        qx = z["qx"] + z["wide_x"] * wide if abs(wide) > .005 else z["qx"].copy()
+        if rnd > .005:
+            qx += z["round_x"] * rnd
+        if pos > .005:
+            qx += z["smile_xl"] * ((1.0 + a) * pos)
+            qx -= z["smile_xr"] * ((1.0 - a) * pos)
+        qs = z["qy"].copy()
+        if abs(smile) > .005:
+            qs += z["smile_yl"] * ((1.0 + a) * smile)
+            qs += z["smile_yr"] * ((1.0 - a) * smile)
+        pout = .26 * rnd - .40 * press
+        if abs(pout) > .005:
+            qs += z["pout_y"] * pout
         qy = qs + z["jaw_y"] * j if j > .4 else qs
         cv2.remap(self._src, qx.astype(np.float32, copy=False),
                   qy.astype(np.float32, copy=False), cv2.INTER_LINEAR, dst=z["buf"])
@@ -566,8 +587,13 @@ class PortraitOrb(BaseOrb):
         bottom = y0 + j * lens
         depth = np.minimum(qy - top, bottom - qy)
         aa = np.clip(depth / 1.6 + .45, 0.0, 1.0) * (lens > .02)
-        if not aa.any():
+        # Tout le reste ne se calcule que sur le cadre où la bouche est ouverte.
+        rows = np.flatnonzero(aa.any(axis=1))
+        if not rows.size:
             return
+        cols = np.flatnonzero(aa.any(axis=0))
+        box = (slice(rows[0], rows[-1] + 1), slice(cols[0], cols[-1] + 1))
+        qy, au, top, bottom, depth, aa = (arr[box] for arr in (qy, au, top, bottom, depth, aa))
         rel = qy - top
         relb = bottom - qy
         frac = rel / np.maximum(bottom - top, 1.0)
@@ -618,7 +644,7 @@ class PortraitOrb(BaseOrb):
             r += low * (216.0 * lshade - r)
             g += low * (204.0 * lshade - g)
             b += low * (186.0 * lshade - b)
-        out = z["buf"][z["c_rows"], z["c_cols"]]
+        out = z["buf"][z["c_rows"], z["c_cols"]][box]
         a = aa[..., None]
         color = np.stack((r, g, b, np.full_like(r, 255.0)), axis=-1)
         out[...] = (out * (1.0 - a) + color * a).astype(np.uint8)
