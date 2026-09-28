@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from core import tool_packs as tp
+from core.session_manager import SessionManager
 from core.tool_dispatcher import TOOL_DECLARATIONS
 
 
@@ -48,6 +49,19 @@ def test_le_telephone_repond_toujours_sans_reconnexion():
         assert tp.resolve(phrase) == frozenset(), phrase
 
 
+def test_fermer_camera_est_disponible_sans_reconnexion():
+    from types import SimpleNamespace
+
+    assert "close_camera" in tp.CORE
+    host = SimpleNamespace(
+        _active_tool_packs=frozenset(),
+        _toolkit_reconnect_requested=False,
+        _loop=None,
+    )
+    assert SessionManager._extend_toolkit(host, "Ferme la caméra") is False
+    assert host._toolkit_reconnect_requested is False
+
+
 def test_chaque_domaine_ouvre_son_paquet():
     attendus = {
         "mets un peu de musique": "musique",
@@ -55,6 +69,7 @@ def test_chaque_domaine_ouvre_son_paquet():
         "ouvre la caméra frontale": "camera",
         "où est la pharmacie la plus proche": "navigation",
         "fais un commit et pousse sur GitHub": "dev",
+        "active le preset coding": "dev",
         "cherche le fichier rapport.pdf": "fichiers",
         "génère une image de chat": "images",
         "préviens-moi dès que j'arrive à la maison": "assistanat",

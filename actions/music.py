@@ -42,7 +42,6 @@ session_memory entre deux tours.
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 import re
@@ -414,8 +413,7 @@ def _is_confident_local_match(results: List[Dict[str, Any]]) -> bool:
 # Recherche & résolution YouTube (sans téléchargement)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class YoutubeUnavailable(RuntimeError):
-    """Recherche impossible (yt-dlp absent, réseau coupé, YouTube injoignable)."""
+from core.youtube_service import YouTubeUnavailable as YoutubeUnavailable
 
 
 def search_youtube(query: str, limit: int = 5) -> List[Dict[str, Any]]:
@@ -425,59 +423,12 @@ def search_youtube(query: str, limit: int = 5) -> List[Dict[str, Any]]:
     l'appelant distingue « aucun résultat » de « réseau indisponible » —
     sinon l'assistant annonce à tort que le morceau n'existe pas.
     """
-    if not kit.which("yt-dlp"):
-        raise YoutubeUnavailable(
-            "yt-dlp n'est pas installé (sudo pacman -S yt-dlp).")
-    r = kit.run(
-        ["yt-dlp", f"ytsearch{limit}:{query}", "--flat-playlist",
-         "--dump-json", "--no-warnings", "--no-playlist",
-         "--socket-timeout", "10"], timeout=35,
-    )
-    if r.timed_out:
-        raise YoutubeUnavailable("la recherche YouTube a expiré.")
-    if r.not_found:
-        raise YoutubeUnavailable(r.reason())
+    from core.youtube_service import search_youtube as search_videos
 
-    if r.returncode != 0 and not (r.stdout or "").strip():
-        err = (r.stderr or "").strip().splitlines()
-        detail = err[-1][:160] if err else "cause inconnue"
-        raise YoutubeUnavailable(f"YouTube est injoignable — {detail}")
-
-    out: List[Dict[str, Any]] = []
-    for line in (r.stdout or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            d = json.loads(line)
-        except Exception:
-            continue
-        vid = d.get("id")
-        if not vid:
-            continue
-        dur = d.get("duration") or 0
-        try:
-            dur = int(dur)
-        except (TypeError, ValueError):
-            dur = 0
-        views = d.get("view_count") or 0
-        try:
-            views = int(views)
-        except (TypeError, ValueError):
-            views = 0
-        uploader = d.get("uploader") or d.get("channel") or ""
-        out.append({
-            "id": vid,
-            "title": d.get("title", "sans titre"),
-            "url": f"https://www.youtube.com/watch?v={vid}",
-            "duration": f"{dur // 60}:{dur % 60:02d}" if dur else "",
-            "uploader": uploader,
-            "channel": uploader,
-            "views": views,
-            "thumbnail_url": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
-            "source": "youtube",
-        })
-    return out
+    return [
+        {**video.to_dict(), "uploader": video.channel, "source": "youtube"}
+        for video in search_videos(query, limit=limit)
+    ]
 
 
 def resolve_stream_url(watch_url: str, timeout: int = 15) -> Optional[str]:

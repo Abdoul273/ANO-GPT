@@ -80,18 +80,20 @@ class Hud:
         p = QPainter(pixmap)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        p.setPen(QPen(Hud._mix(Hud.CYAN, 22), 6))
+        tone = (accent.red(), accent.green(), accent.blue())
+        p.setPen(QPen(Hud._mix(tone, 22), 6))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(body)
 
         base = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        base.setColorAt(0.0, QColor(14, 28, 42, fill_alpha))
-        base.setColorAt(0.55, QColor(9, 19, 31, fill_alpha))
-        base.setColorAt(1.0, QColor(14, 17, 32, fill_alpha))
+        for stop, color in ((0.0, C.PANEL2), (0.55, C.PANEL), (1.0, C.BG)):
+            shade = QColor(color)
+            shade.setAlpha(fill_alpha)
+            base.setColorAt(stop, shade)
 
         border = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
         border.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 125))
-        border.setColorAt(0.58, Hud._mix(Hud.MAGENTA, 55))
+        border.setColorAt(0.58, Hud._mix(tone, 85))
         border.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 70))
 
         p.setBrush(QBrush(base))
@@ -103,7 +105,7 @@ class Hud:
             # mise en cache, pour un mouvement que personne ne remarque.
             p.save()
             p.setClipPath(body)
-            p.setPen(QPen(Hud._mix(Hud.CYAN, 12), 1))
+            p.setPen(QPen(Hud._mix(tone, 12), 1))
             x = rect.left()
             while x < rect.right():
                 p.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
@@ -117,7 +119,7 @@ class Hud:
         hi = QLinearGradient(rect.left(), 0, rect.right(), 0)
         hi.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 175))
         hi.setColorAt(0.55, QColor(accent.red(), accent.green(), accent.blue(), 40))
-        hi.setColorAt(1.0, Hud._mix(Hud.MAGENTA, 105))
+        hi.setColorAt(1.0, Hud._mix(tone, 105))
         p.setPen(QPen(QBrush(hi), 1.3))
         p.drawLine(QPointF(rect.left() + (cut or Hud.CUT) + 6, rect.top()),
                    QPointF(rect.right() - 18, rect.top()))
@@ -193,15 +195,17 @@ class Hud:
         p.drawLine(QPointF(rect.right(), rect.top()), QPointF(rect.right(), rect.top() + k))
         p.drawLine(QPointF(rect.left(), rect.bottom() - k), QPointF(rect.left(), rect.bottom()))
         p.drawLine(QPointF(rect.left(), rect.bottom()), QPointF(rect.left() + k, rect.bottom()))
-        p.setPen(QPen(Hud._mix(Hud.MAGENTA, 150), 1.6))
+        p.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 150), 1.6))
         p.drawLine(QPointF(rect.left(), rect.top() + c), QPointF(rect.left() + c, rect.top()))
         p.drawLine(QPointF(rect.right() - c, rect.bottom()), QPointF(rect.right(), rect.bottom() - c))
 
     @staticmethod
-    def tick(p: QPainter, rect: QRectF, x_from_right: float = 52.0) -> None:
-        """Petit repère magenta sur le bord supérieur : la marque de fabrique."""
+    def tick(p: QPainter, rect: QRectF, x_from_right: float = 52.0,
+             accent: QColor | None = None) -> None:
+        """Petit repère dans la couleur active sur le bord supérieur."""
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(Hud._mix(Hud.MAGENTA, 120))
+        color = accent or qcol(C.PRI)
+        p.setBrush(QColor(color.red(), color.green(), color.blue(), 120))
         p.drawRect(QRectF(rect.right() - x_from_right, rect.top() + 1, 26, 2))
 
     @staticmethod

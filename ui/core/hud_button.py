@@ -52,6 +52,11 @@ class HudButton(QPushButton):
         self._rebuild_icon()
         self.update()
 
+    def set_primary(self, primary: bool) -> None:
+        self._primary = bool(primary)
+        self._rebuild_icon()
+        self.update()
+
     def set_hover_accent(self, accent: str | None) -> None:
         self._hover_accent = qcol(accent) if accent else None
         self._rebuild_icon()

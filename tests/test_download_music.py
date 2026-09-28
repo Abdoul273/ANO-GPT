@@ -25,6 +25,60 @@ def test_clean_query_retire_le_verbe_telecharge():
     assert dl.clean_query("download blinding lights mp3") == "blinding lights"
 
 
+def test_derniere_sortie_resout_un_titre_exact_avant_youtube(monkeypatch, tmp_path):
+    searched = []
+    shown = []
+
+    class UI:
+        def show_music_download(self, payload):
+            shown.append(dict(payload))
+
+    monkeypatch.setattr(dl.shutil, "which", lambda _name: "/usr/bin/yt-dlp")
+    monkeypatch.setattr(dl, "music_dir", lambda: tmp_path)
+    monkeypatch.setattr(dl, "resolve_latest_single", lambda _artist: {
+        "artist": "Saifond", "title": "Welaylan", "date": "2026-09-11",
+        "source": "https://www.deezer.com/album/123",
+    })
+    monkeypatch.setattr(dl, "_already_have", lambda _query: None)
+    from actions.music import YoutubeUnavailable
+
+    def unavailable(query):
+        searched.append(query)
+        raise YoutubeUnavailable("réseau inaccessible")
+
+    monkeypatch.setattr(dl, "_search", unavailable)
+    result = dl.download_music({"query": "télécharge la dernière musique de saifon"}, player=UI())
+    assert searched == ["Saifond Welaylan"]
+    assert "Welaylan" in result and "Aucun fichier téléchargé" in result
+    assert shown[-1]["status"] == "error"
+
+
+def test_dernier_single_compare_les_fiches_homonymes(monkeypatch):
+    import requests
+
+    class Response:
+        def __init__(self, data):
+            self.data = data
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return self.data
+
+    def get(_self, url, params=None, timeout=None):
+        if url.endswith("search/artist"):
+            return Response({"data": [{"id": 1, "name": "Saifond"},
+                                      {"id": 2, "name": "Saifond "}]})
+        if url.endswith("/1/albums"):
+            return Response({"data": [{"id": 11, "title": "Welaylan",
+                                      "record_type": "single", "release_date": "2026-09-11"}]})
+        return Response({"data": [{"id": 22, "title": "Ancien",
+                                  "record_type": "single", "release_date": "2021-11-08"}]})
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    assert dl.latest_artist("télécharge la dernière musique de saifon") == "saifon"
+    assert dl.resolve_latest_single("saifon")["title"] == "Welaylan"
+
+
 def test_youtube_url_normalise_les_formes_usuelles():
     assert dl.youtube_url("dQw4w9wgGcQ") == "https://www.youtube.com/watch?v=dQw4w9wgGcQ"
     assert "watch?v=" in dl.youtube_url("https://youtu.be/dQw4w9wgGcQ")

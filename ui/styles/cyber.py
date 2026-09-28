@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ui.styles.theme import C
+from ui.styles.theme import C, tint_accent_css
 
 # ── Icônes ───────────────────────────────────────────────────────────────────
 _SVG = {
@@ -44,7 +44,7 @@ def cyber_qss() -> str:
     Le fond du panneau reste transparent : c'est `Hud.chassis` qui le peint,
     et deux fonds superposés annuleraient le biseau.
     """
-    return f"""
+    return tint_accent_css(f"""
     QWidget {{
         background: transparent;
         color: {C.TEXT};
@@ -213,7 +213,7 @@ def cyber_qss() -> str:
             stop:0.8 rgba(0, 212, 255, 0.25), stop:1 transparent);
         border: none;
     }}
-    """
+    """)
 
 
 def apply_cyber_style(widget: QWidget) -> None:

@@ -43,12 +43,16 @@ CORE: frozenset[str] = frozenset({
     "show_map", "close_map", "location", "show_country_info",
     # Sa propre interface : « coupe le micro » doit marcher à froid.
     "interface_control", "hud_appearance",
+    # Fermer une caméra est une commande immédiate, même si son paquet n'a
+    # jamais été ouvert sur cette session.
+    "close_camera",
     # Téléphone (ANO-Remote)
     "phone_call", "phone_hangup", "phone_sms", "phone_contacts",
     # Temps
     "reminder", "timer", "weather_report",
     # Machine
     "system_status", "open_app", "close_app", "shell_exec", "computer_control", "undo_action",
+    "agent_process_monitor",
     # Cadre de session
     "report_capability_gap", "shutdown_jarvis", "voice_style",
     "capability_guide",
@@ -116,7 +120,7 @@ PACKS: Mapping[str, ToolPack] = {
     ),
     "camera": ToolPack(
         label="caméra",
-        tools=frozenset({"camera_control", "close_camera"}),
+        tools=frozenset({"camera_control"}),
         triggers=_triggers(
             r"\b(camera|appareil photo|webcam|selfie|objectif)\b",
             r"\b(prends[- ]?moi en photo|filme|filmer|enregistre une video)\b",
@@ -156,6 +160,8 @@ PACKS: Mapping[str, ToolPack] = {
             "hypr_orchestrator", "computer_settings",
         }),
         triggers=_triggers(
+            r"\b(preset|mode)\s+(coding|code|devsecops)\b",
+            r"\bantigravity(?:[- ]ide)?\b",
             r"\b(git|github|commit|branche|pull request|depot|repo)\b",
             r"\b(docker|kubernetes|serveur|deploiement|deploie|pipeline|ci)\b",
             r"\b(bug|erreur|stack ?trace|traceback|compile|build|test unitaire)\b",

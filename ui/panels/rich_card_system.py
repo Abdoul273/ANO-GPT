@@ -51,6 +51,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from ui.core.hud_button import HudButton
 
 # ── Import du thème ANO-GPT ou palette de secours autonome ───────────────────
 try:
@@ -673,8 +674,8 @@ class GlassCard(QFrame):
         self.card_type = category.lower()
         self.card_title = title
         self.icon_name = icon_name
-        self.accent_color = accent_color
-        self._accent = qcol(accent_color)
+        self.accent_color = Theme.PRI
+        self._accent = qcol(self.accent_color)
         self.auto_dismiss_s = max(0.0, float(auto_dismiss_s))
         self._dismiss_remaining = self.auto_dismiss_s
         self._hovered = False
@@ -744,7 +745,6 @@ class GlassCard(QFrame):
         f_cat = QFont("Inter", 6, QFont.Weight.Bold)
         f_cat.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.8)
         self._cat_label.setFont(f_cat)
-        self._cat_label.setStyleSheet("color: rgba(0, 212, 255, 0.75); background: transparent;")
         title_box.addWidget(self._cat_label)
 
         self._title_label = QLabel(self.card_title[:40], self)
@@ -765,38 +765,49 @@ class GlassCard(QFrame):
         header_row.addWidget(self._time_label, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         # 5. Bouton de fermeture stylisé
-        self._close_btn = QPushButton(self)
+        self._close_btn = HudButton(icon="x", accent=Theme.TEXT_DIM,
+                                    hover_accent=Theme.PRI, size=12, parent=self)
         self._close_btn.setFixedSize(22, 22)
-        self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._close_btn.setIcon(QIcon(render_icon("x", Theme.TEXT_DIM, 12)))
-        self._close_btn.setIconSize(QSize(12, 12))
-        self._close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(255, 255, 255, 0.04);
-                border: 1px solid rgba(255, 255, 255, 0.09);
-                border-radius: 4px;
-            }}
-            QPushButton:hover {{
-                background: rgba(255, 51, 85, 0.25);
-                border: 1px solid {Theme.RED};
-            }}
-        """)
         self._close_btn.clicked.connect(self.dismiss)
         header_row.addWidget(self._close_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self._main_layout.addLayout(header_row)
 
         # Séparateur subtil néon
-        sep = QFrame(self)
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(
+        self._separator = QFrame(self)
+        self._separator.setFixedHeight(1)
+        self._main_layout.addWidget(self._separator)
+        self._refresh_accent_widgets()
+
+    def _refresh_accent_widgets(self) -> None:
+        tone = self._accent
+        rgb = f"{tone.red()}, {tone.green()}, {tone.blue()}"
+        self._icon_label.setPixmap(render_icon(self.icon_name, self.accent_color, 16))
+        self._icon_label.setStyleSheet(
+            f"background: rgba({rgb}, 0.16); border: 1px solid rgba({rgb}, 0.45);"
+            "border-radius: 5px;"
+        )
+        self._cat_label.setStyleSheet(f"color: rgba({rgb}, 0.75); background: transparent;")
+        self._separator.setStyleSheet(
             "background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
-            f" stop:0 {self.accent_color},"
-            " stop:0.4 rgba(143, 92, 255, 0.45),"
-            " stop:0.8 rgba(0, 212, 255, 0.25),"
+            f" stop:0 {self.accent_color}, stop:0.6 rgba({rgb}, 0.35),"
             " stop:1 transparent); border: none;"
         )
-        self._main_layout.addWidget(sep)
+        self._live_indicator._color = QColor(tone)
+        self._close_btn.set_hover_accent(self.accent_color)
+
+    def normalize_accent(self) -> None:
+        """Applique l'accent choisi aux styles littéraux des contenus spécialisés."""
+        from ui.styles.theme import C, tint_accent_css
+        for widget in [self, *self.findChildren(QWidget)]:
+            css = widget.styleSheet()
+            if css:
+                tinted = tint_accent_css(css)
+                if tinted != css:
+                    widget.setStyleSheet(tinted)
+            if isinstance(widget, HudButton):
+                widget.set_accent(C.PRI)
+                widget.set_hover_accent(C.PRI)
 
     def add_widget(self, widget: QWidget):
         """Ajoute un sous-composant dans le corps de la carte."""
@@ -860,18 +871,12 @@ class GlassCard(QFrame):
             self.card_type = category.lower()
             self._cat_label.setText(category.upper())
         if accent_color is not None:
-            self.accent_color = accent_color
-            self._accent = qcol(accent_color)
-            self._live_indicator._color = qcol(accent_color)
+            self.accent_color = Theme.PRI
+            self._accent = qcol(self.accent_color)
         if icon_name is not None:
             self.icon_name = icon_name
         if icon_name is not None or accent_color is not None:
-            self._icon_label.setPixmap(render_icon(self.icon_name, self.accent_color, 16))
-            self._icon_label.setStyleSheet(
-                f"background: rgba({self._accent.red()}, {self._accent.green()}, {self._accent.blue()}, 0.16);"
-                f"border: 1px solid rgba({self._accent.red()}, {self._accent.green()}, {self._accent.blue()}, 0.45);"
-                "border-radius: 5px;"
-            )
+            self._refresh_accent_widgets()
         self.update()
 
     def start_auto_dismiss(self, seconds: float) -> None:
@@ -924,116 +929,26 @@ class GlassCard(QFrame):
         self.dismiss_requested.emit()
 
     def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = float(self.width()), float(self.height())
-        if w < 16 or h < 16:
-            p.end()
-            return
-        rect = QRectF(2.0, 2.0, w - 4.0, h - 4.0)
+        from ui.core.hud_paint import Hud
 
-        # Contour chanfreiné cybernétique
-        cut = 11.0
-        path = QPainterPath()
-        path.moveTo(rect.left() + cut, rect.top())
-        path.lineTo(rect.right() - cut, rect.top())
-        path.lineTo(rect.right(), rect.top() + cut)
-        path.lineTo(rect.right(), rect.bottom() - cut)
-        path.lineTo(rect.right() - cut, rect.bottom())
-        path.lineTo(rect.left() + cut, rect.bottom())
-        path.lineTo(rect.left(), rect.bottom() - cut)
-        path.lineTo(rect.left(), rect.top() + cut)
-        path.closeSubpath()
-
-        # 1. Double passe : Ombre portée diffuse d'occlusion + Halo néon d'ambiance projeté
-        p.setPen(QPen(QColor(0, 0, 0, 140), 3.5))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(path)
-
-        glow_col = QColor(self._accent)
-        glow_col.setAlpha(65 if not self._hovered else 115)
-        p.setPen(QPen(glow_col, 2.2 if not self._hovered else 3.2))
-        p.drawPath(path)
-
-        # 2. Fond noir translucide dégradé riche (Glassmorphism OLED)
-        p.setPen(Qt.PenStyle.NoPen)
-        bg_grad = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        bg_grad.setColorAt(0.0, QColor(14, 23, 36, int(0.92 * 255)))
-        bg_grad.setColorAt(0.4, QColor(10, 17, 27, int(0.93 * 255)))
-        bg_grad.setColorAt(1.0, QColor(5, 10, 17, int(0.96 * 255)))
-        p.setBrush(QBrush(bg_grad))
-        p.drawPath(path)
-
-        # 3. Micro-texture holographique discrète (scanlines cyber)
-        p.save()
-        p.setClipPath(path)
-        p.setPen(QPen(QColor(0, 212, 255, 5), 1))
-        scan_y = rect.top() + 4.0
-        while scan_y < rect.bottom() - 4.0:
-            p.drawLine(QPointF(rect.left(), scan_y), QPointF(rect.right(), scan_y))
-            scan_y += 6.0
-        p.restore()
-
-        # 4. Reflet spéculaire supérieur (Physical glass highlight)
-        spec = QLinearGradient(rect.left() + cut, rect.top(), rect.right() - cut, rect.top())
-        spec.setColorAt(0.0, QColor(255, 255, 255, 0))
-        spec.setColorAt(0.2, QColor(255, 255, 255, 55))
-        spec.setColorAt(0.5, QColor(220, 250, 255, 150))
-        spec.setColorAt(0.8, QColor(255, 255, 255, 55))
-        spec.setColorAt(1.0, QColor(255, 255, 255, 0))
-        p.setPen(QPen(QBrush(spec), 1.2))
-        p.drawLine(QPointF(rect.left() + cut + 2, rect.top() + 1),
-                   QPointF(rect.right() - cut - 2, rect.top() + 1))
-
-        # 5. Bordure néon avec dégradé cybernétique
-        border_grad = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        if self._hovered:
-            border_grad.setColorAt(0.0, qcol(self.accent_color, 255))
-            border_grad.setColorAt(0.45, qcol(Theme.NEON_PINK, 220))
-            border_grad.setColorAt(0.8, qcol(Theme.NEON_VIO, 200))
-            border_grad.setColorAt(1.0, qcol(self.accent_color, 160))
-            p.setPen(QPen(QBrush(border_grad), 1.35))
-        else:
-            border_grad.setColorAt(0.0, qcol(self.accent_color, 195))
-            border_grad.setColorAt(0.4, Theme.GLASS_BORDER_MID)
-            border_grad.setColorAt(0.8, Theme.GLASS_BORDER_BOT)
-            border_grad.setColorAt(1.0, qcol(self.accent_color, 100))
-            p.setPen(QPen(QBrush(border_grad), 1.1))
-
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(path)
-
-        # 6. Équerres d'angles Sci-Fi HUD haute précision
-        p.setPen(QPen(qcol(self.accent_color, 220 if not self._hovered else 255), 1.8))
-        # Angle supérieur gauche (tick)
-        p.drawLine(QPointF(rect.left() + cut, rect.top()), QPointF(rect.left(), rect.top() + cut))
-        # Angle supérieur droit (bracket HUD complet)
-        p.drawLine(QPointF(rect.right() - cut, rect.top()), QPointF(rect.right(), rect.top() + cut))
-        p.drawLine(QPointF(rect.right() - cut - 5, rect.top()), QPointF(rect.right() - cut, rect.top()))
-        # Angle inférieur gauche (bracket HUD complet)
-        p.drawLine(QPointF(rect.left() + cut, rect.bottom()), QPointF(rect.left(), rect.bottom() - cut))
-        p.drawLine(QPointF(rect.left() + cut + 5, rect.bottom()), QPointF(rect.left(), rect.bottom() - cut))
-        # Angle inférieur droit (tick)
-        p.drawLine(QPointF(rect.right() - cut, rect.bottom()), QPointF(rect.right(), rect.bottom() - cut))
-
-        # 7. Barre de compte à rebours auto-dismiss
-        if self.auto_dismiss_s > 0 and self._dismiss_remaining > 0:
-            ratio = max(0.0, min(1.0, self._dismiss_remaining / self.auto_dismiss_s))
-            prog_w = (rect.width() - cut * 2) * ratio
-            if prog_w > 1:
-                p.setPen(Qt.PenStyle.NoPen)
-                prog_grad = QLinearGradient(rect.left() + cut, 0, rect.left() + cut + prog_w, 0)
-                prog_grad.setColorAt(0.0, qcol(self.accent_color, 220))
-                prog_grad.setColorAt(0.7, qcol(Theme.PRI, 220))
-                prog_grad.setColorAt(1.0, qcol(Theme.WHITE, 255))
-                p.setBrush(QBrush(prog_grad))
-                p.drawRoundedRect(QRectF(rect.left() + cut, rect.bottom() - 3.0, prog_w, 2.5), 1.2, 1.2)
-                p.setBrush(QBrush(qcol(Theme.WHITE)))
-                p.drawEllipse(QPointF(rect.left() + cut + prog_w, rect.bottom() - 1.75), 2.2, 2.2)
-
-        p.end()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(2, 2, self.width() - 4, self.height() - 4)
+        if rect.width() > 8 and rect.height() > 8:
+            # Même châssis, fond et accent que les autres cartes du HUD.
+            Hud.chassis(painter, rect, accent=self._accent, brackets=True)
+            Hud.tick(painter, rect, 46, accent=self._accent)
+            if self.auto_dismiss_s > 0 and self._dismiss_remaining > 0:
+                ratio = max(0.0, min(1.0, self._dismiss_remaining / self.auto_dismiss_s))
+                width = max(0.0, (rect.width() - 28) * ratio)
+                if width > 1:
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    tone = QColor(self._accent)
+                    tone.setAlpha(205)
+                    painter.setBrush(tone)
+                    painter.drawRect(QRectF(rect.left() + 14, rect.bottom() - 3, width, 2))
+        painter.end()
         super().paintEvent(event)
-
 
 # ── Cartes spécialisées modulaires ───────────────────────────────────────────
 
@@ -1968,7 +1883,7 @@ class DownloadCard(GlassCard):
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 4, 0, 0)
         btn_row.addStretch()
-        self._action_btn = QPushButton("Annuler", self)
+        self._action_btn = HudButton("Annuler", accent=Theme.PRI, parent=self)
         self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._action_btn.setFont(QFont("Inter", 8, QFont.Weight.Bold))
         self._action_btn.setFixedHeight(26)
@@ -1981,33 +1896,8 @@ class DownloadCard(GlassCard):
         self._cancel_callback = self._cancel_download
 
     def _style_action_btn(self, *, primary: bool):
-        if primary:
-            self._action_btn.setStyleSheet(f"""
-                QPushButton {{
-                    color: #020c14;
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 {Theme.PRI}, stop:1 {Theme.NEON_PINK});
-                    border: none; border-radius: 5px; padding: 4px 12px;
-                }}
-                QPushButton:hover {{
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #6ce8ff, stop:1 #ff5ce5);
-                }}
-            """)
-        else:
-            self._action_btn.setStyleSheet(f"""
-                QPushButton {{
-                    color: {Theme.TEXT};
-                    background: rgba(255, 255, 255, 0.06);
-                    border: 1px solid rgba(0, 212, 255, 0.3);
-                    border-radius: 5px; padding: 4px 12px;
-                }}
-                QPushButton:hover {{
-                    background: rgba(0, 212, 255, 0.18);
-                    border-color: {Theme.PRI};
-                    color: {Theme.WHITE};
-                }}
-            """)
+        self._action_btn.set_accent(Theme.PRI)
+        self._action_btn.set_primary(primary)
 
     def _paint_cover(self, event):
         p = QPainter(self._cover_box)
@@ -2017,7 +1907,8 @@ class DownloadCard(GlassCard):
         p.setBrush(QBrush(QColor(8, 16, 26)))
         p.drawRoundedRect(rect, 8, 8)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor(0, 212, 255, 40), 1))
+        tone = qcol(Theme.PRI, 40)
+        p.setPen(QPen(tone, 1))
         p.drawEllipse(rect.center(), 12, 12)
         p.drawEllipse(rect.center(), 6, 6)
         icon = "check" if self._status in {"done", "exists"} else (
@@ -2291,51 +2182,12 @@ class CardManager(QWidget):
                 row.setSpacing(6)
                 row.addStretch()
                 for action in actions:
-                    button = QPushButton(str(action.get("label") or "Action"), card)
-                    button.setCursor(Qt.CursorShape.PointingHandCursor)
-                    button.setFont(QFont("Inter", 8, QFont.Weight.Bold))
                     primary = bool(action.get("primary"))
-                    if primary:
-                        button.setStyleSheet(f"""
-                            QPushButton {{
-                                color: #020c14;
-                                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                                    stop:0 {card.accent_color}, stop:1 {Theme.NEON_PINK});
-                                border: none;
-                                border-radius: 5px;
-                                padding: 6px 14px;
-                                font-weight: 700;
-                            }}
-                            QPushButton:hover {{
-                                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                                    stop:0 #6ce8ff, stop:1 #ff5ce5);
-                            }}
-                            QPushButton:disabled {{
-                                color: rgba(255, 255, 255, 0.4);
-                                background: rgba(255, 255, 255, 0.1);
-                                border: 1px solid rgba(255, 255, 255, 0.1);
-                            }}
-                        """)
-                    else:
-                        button.setStyleSheet(f"""
-                            QPushButton {{
-                                color: {Theme.TEXT};
-                                background: rgba(255, 255, 255, 0.06);
-                                border: 1px solid rgba(0, 212, 255, 0.3);
-                                border-radius: 5px;
-                                padding: 6px 12px;
-                            }}
-                            QPushButton:hover {{
-                                background: rgba(0, 212, 255, 0.18);
-                                border-color: {Theme.PRI};
-                                color: {Theme.WHITE};
-                            }}
-                            QPushButton:disabled {{
-                                color: rgba(255, 255, 255, 0.4);
-                                background: rgba(255, 255, 255, 0.1);
-                                border: 1px solid rgba(255, 255, 255, 0.1);
-                            }}
-                        """)
+                    button = HudButton(str(action.get("label") or "Action"),
+                                       primary=primary, accent=card.accent_color,
+                                       parent=card)
+                    button.setMinimumHeight(28)
+                    button.setMinimumWidth(84)
 
                     def _make_handler(btn, act, is_prim):
                         def _handler(_checked=False):
@@ -2355,6 +2207,7 @@ class CardManager(QWidget):
             target = unpinned[0] if unpinned else self._cards[0]
             self.dismiss_card(target)
 
+        card.normalize_accent()
         card.setParent(self)
         card.dismiss_requested.connect(lambda c=card: self.dismiss_card(c))
 
@@ -2455,6 +2308,7 @@ class CardManager(QWidget):
         existing = self._download_cards.get(dl_id) if dl_id else None
         if existing is not None and existing in self._cards:
             existing.apply_payload(payload or {})
+            existing.normalize_accent()
             self._reorganize_remaining_cards()
             return existing
         card = DownloadCard(payload or {}, parent=self)

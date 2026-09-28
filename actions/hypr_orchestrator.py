@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from core import action_kit as kit
+from actions.window_instances import dispatch_hyprland, move_window_to_workspace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,6 +33,8 @@ from typing import Any, Dict, List, Optional
 
 DEFAULT_WORKSPACE_ROLES: Dict[str, int] = {
     # Workspace 1 : Dev & IDE
+    "antigravity-ide": 1,
+    "antigravity": 1,
     "code": 1,
     "code-oss": 1,
     "codium": 1,
@@ -147,20 +151,6 @@ def _hyprctl_json(command: str) -> Any:
     return kit.hypr_json(*command.split(), default=None)
 
 
-def _hyprctl_dispatch(dispatcher: str, args: str = "") -> bool:
-    """Exécute un dispatcher Hyprland.
-
-    Le code de sortie ne suffit pas : Hyprland rend 0 en écrivant « unknown
-    dispatcher ». Un agenceur qui croit avoir déplacé une fenêtre alors que
-    rien n'a bougé enchaîne des ordres sur un état imaginaire.
-    """
-    res = kit.hypr("dispatch", dispatcher, *([args] if args else []))
-    if not res.ok:
-        return False
-    out = res.out.lower()
-    return not any(bad in out for bad in ("error", "unknown", "invalid"))
-
-
 # ════════════════════════════════════════════════════════════════════════════
 # Classification & Résolution des fenêtres
 # ════════════════════════════════════════════════════════════════════════════
@@ -229,7 +219,7 @@ class HyprOrchestrator:
             return "Aucune fenêtre ouverte détectée sous Hyprland."
 
         moved_count = 0
-        details: List[str] = []
+        failed: List[str] = []
         workspace_summary: Dict[int, List[str]] = {1: [], 2: [], 3: [], 4: [], 5: [], 6: []}
 
         for c in clients:
@@ -238,18 +228,32 @@ class HyprOrchestrator:
             app_class = c.get("class") or "App"
             current_ws = c.get("workspace", {}).get("id", 1)
             target_ws = cls.classify_window(c)
+            actual = current_ws
 
             # Nom court lisible
 
             if current_ws != target_ws:
-                # Déplacement silencieux (sans voler le focus)
-                success = _hyprctl_dispatch("movetoworkspacesilent", f"{target_ws},address:{addr}")
-                if success:
+                # Hyprland 0.56 emploie le dispatcher Lua. Relire l'adresse
+                # après l'ordre : son code 0 n'atteste pas le déplacement.
+                sent = bool(addr) and move_window_to_workspace(
+                    f"address:{addr}", target_ws, follow=False,
+                )
+                if sent:
+                    for _ in range(4):
+                        fresh = next((w for w in cls.get_clients()
+                                      if w.get("address") == addr), None)
+                        actual = (fresh or {}).get("workspace", {}).get("id")
+                        if actual == target_ws:
+                            break
+                        time.sleep(0.1)
+                if sent and actual == target_ws:
                     moved_count += 1
-                    details.append(f"• {app_class} → Bureau {target_ws}")
+                else:
+                    failed.append(f"{app_class} (bureau {current_ws} → {target_ws})")
             
-            if target_ws in workspace_summary:
-                workspace_summary[target_ws].append(app_class)
+            reported_ws = current_ws if (current_ws != target_ws and actual != target_ws) else target_ws
+            if reported_ws in workspace_summary:
+                workspace_summary[reported_ws].append(app_class)
 
         # Construction du rapport
         role_labels = {
@@ -262,6 +266,9 @@ class HyprOrchestrator:
         }
 
         report = [f"🚀 Organisation dynamique terminée ({moved_count} fenêtre(s) replacée(s)) :\n"]
+        if failed:
+            report[0] = f"Organisation incomplète ({moved_count} déplacée(s), {len(failed)} échec(s)) :\n"
+            report.append("  Déplacements non confirmés : " + ", ".join(failed))
         for ws_num in sorted(workspace_summary.keys()):
             apps = workspace_summary[ws_num]
             if apps:
@@ -271,74 +278,115 @@ class HyprOrchestrator:
         return "\n".join(report)
 
     @classmethod
+    def _focus_workspace(cls, number: int) -> bool:
+        sent = dispatch_hyprland(
+            legacy_cmd="workspace", legacy_args=str(number),
+            lua_cmd=f'hl.dsp.focus({{ workspace = "{number}" }})',
+        )
+        return bool(sent and cls.get_active_workspace() == number)
+
+    @classmethod
+    def _ensure_coding_ide(cls) -> bool:
+        def present() -> bool:
+            return any("antigravity" in str(c.get("class") or "").casefold()
+                       for c in cls.get_clients())
+
+        if present():
+            return True
+        if not kit.which("antigravity-ide") or kit.spawn(["antigravity-ide"]) is None:
+            return False
+        for _ in range(20):
+            if present():
+                return True
+            time.sleep(0.25)
+        return False
+
+    @classmethod
     def apply_preset(cls, preset_name: str) -> str:
         """Applique un preset d'agencement de bureau."""
         preset = preset_name.lower().strip()
         
         if any(w in preset for w in ["devsecops", "dev", "code", "coding"]):
-            # Preset DevSecOps : Reclassement + Focus sur Workspace 1 (Code)
+            # Le preset coding ouvre l'IDE réellement utilisé sur cette machine.
+            ide_open = cls._ensure_coding_ide()
             org_res = cls.organize_workspaces()
-            _hyprctl_dispatch("workspace", "1")
-            return f"Preset DevSecOps activé.\n{org_res}\nFocus basculé sur le Bureau 1 (Dev & IDE)."
+            focused = cls._focus_workspace(1)
+            status = "Focus sur le Bureau 1 confirmé." if focused else "Focus sur le Bureau 1 non confirmé."
+            ide_status = ("Antigravity IDE détecté." if ide_open
+                          else "Antigravity IDE n'a pas pu être ouvert ; aucune fenêtre IDE à placer.")
+            outcome = ("Preset coding appliqué" if focused and ide_open and "incomplète" not in org_res
+                       else "Preset coding incomplet")
+            return f"{outcome}. {status} {ide_status}\n{org_res}"
 
         if any(w in preset for w in ["monitoring", "ops", "system"]):
-            cls.organize_workspaces()
-            _hyprctl_dispatch("workspace", "6")
-            return "Preset Monitoring activé. Focus sur le Bureau 6 (Ops & Monitoring)."
+            org_res = cls.organize_workspaces()
+            focused = cls._focus_workspace(6)
+            return f"Preset Monitoring : focus {'confirmé' if focused else 'non confirmé'} sur le Bureau 6.\n{org_res}"
 
         if any(w in preset for w in ["web", "docs", "recherche"]):
-            cls.organize_workspaces()
-            _hyprctl_dispatch("workspace", "2")
-            return "Preset Recherche & Docs activé. Focus sur le Bureau 2 (Web)."
+            org_res = cls.organize_workspaces()
+            focused = cls._focus_workspace(2)
+            return f"Preset Recherche & Docs : focus {'confirmé' if focused else 'non confirmé'} sur le Bureau 2.\n{org_res}"
 
         if any(w in preset for w in ["comms", "chat", "message"]):
-            cls.organize_workspaces()
-            _hyprctl_dispatch("workspace", "4")
-            return "Preset Communication activé. Focus sur le Bureau 4 (Comms)."
+            org_res = cls.organize_workspaces()
+            focused = cls._focus_workspace(4)
+            return f"Preset Communication : focus {'confirmé' if focused else 'non confirmé'} sur le Bureau 4.\n{org_res}"
 
         return cls.organize_workspaces()
 
     @classmethod
     def move_window_to_ws(cls, target_query: str, workspace: int | str) -> str:
         """Déplace une fenêtre spécifique vers un workspace donné."""
-        clients = cls.get_clients()
-        if not clients:
-            return "Aucune fenêtre trouvée."
-
-        # Résolution du workspace cible
-        target_ws_int = 1
+        # Un bureau inconnu ne doit jamais se transformer silencieusement en 1.
         try:
             target_ws_int = int(workspace)
         except (ValueError, TypeError):
-            # Ordinaux / mots
             w_str = str(workspace).lower()
             ord_map = {"premier": 1, "deuxieme": 2, "deuxième": 2, "troisieme": 3, "troisième": 3,
                        "quatrieme": 4, "quatrième": 4, "cinquieme": 5, "cinquième": 5, "sixieme": 6, "sixième": 6}
-            for k, v in ord_map.items():
-                if k in w_str:
-                    target_ws_int = v
+            target_ws_int = next((v for k, v in ord_map.items() if k in w_str), 0)
+        if target_ws_int < 1:
+            return f"Bureau invalide : {workspace}."
+
+        query_clean = (target_query or "").lower().strip()
+        clients = cls.get_clients()
+        if not clients:
+            return "Aucune fenêtre trouvée."
+        matched = None
+        current_window = query_clean in ("", "cette fenêtre", "cette fenetre", "la fenêtre",
+                                         "la fenetre", "fenêtre", "fenetre", "active", "actuelle")
+        if current_window:
+            active = _hyprctl_json("activewindow")
+            address = active.get("address") if isinstance(active, dict) else None
+            matched = next((c for c in clients if c.get("address") == address), None)
+        else:
+            for c in clients:
+                app_class = (c.get("class") or "").lower()
+                title = (c.get("title") or "").lower()
+                if query_clean in app_class or query_clean in title:
+                    matched = c
                     break
 
-        query_clean = target_query.lower().strip()
-        matched = None
-
-        for c in clients:
-            app_class = (c.get("class") or "").lower()
-            title = (c.get("title") or "").lower()
-            if query_clean in app_class or query_clean in title:
-                matched = c
-                break
-
         if not matched:
-            return f"Aucune fenêtre ne correspond à '{target_query}'."
+            return ("Aucune fenêtre active à déplacer." if current_window else
+                    f"Aucune fenêtre ne correspond à '{target_query}'.")
 
         addr = matched.get("address", "")
-        app_name = matched.get("class", target_query)
-        ok = _hyprctl_dispatch("movetoworkspace", f"{target_ws_int},address:{addr}")
-        
-        if ok:
-            return f"Fenêtre {app_name} déplacée vers le Bureau {target_ws_int}."
-        return f"Échec du déplacement de {app_name}."
+        if not addr:
+            return "Adresse de fenêtre introuvable ; déplacement annulé."
+        app_name = matched.get("title") or matched.get("class") or "active"
+        before = (matched.get("workspace") or {}).get("id")
+        if str(before) == str(target_ws_int):
+            return f"Fenêtre «{app_name}» déjà sur le bureau {target_ws_int}."
+        sent = move_window_to_workspace(f"address:{addr}", target_ws_int, follow=False)
+        if sent:
+            for _ in range(7):
+                current = next((c for c in cls.get_clients() if c.get("address") == addr), None)
+                if current and str((current.get("workspace") or {}).get("id")) == str(target_ws_int):
+                    return f"Déplacement confirmé : fenêtre «{app_name}» sur le bureau {target_ws_int}."
+                time.sleep(0.1)
+        return f"Déplacement non confirmé pour «{app_name}» vers le bureau {target_ws_int}."
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -363,9 +411,13 @@ def parse_hypr_orchestrator_intent(text: str) -> Optional[Dict[str, Any]]:
         return {"action": "preset", "preset": "devsecops"}
 
     # 3. Déplacement dynamique d'une fenêtre vers un workspace
-    m_move = re.search(r"(?:d[ée]place|envoie|mets?|bouge)\s+(?:la\s+fen[êe]tre\s+)?([a-zA-Z0-9_\-\.\s]+?)\s+(?:sur|vers|au|dans)\s+(?:le\s+)?(?:bureau|workspace|ws|espace)\s+(\d+|[a-zA-Z]+)", text_clean)
+    m_move = re.search(r"(?:d[ée]place|envoie|mets?|bouge)\s+(.+?)\s+(?:sur|vers|au|dans)\s+(?:le\s+)?(?:bureau|workspace|ws|espace)\s+(\d+|[a-zA-Zéèê]+)", text_clean)
     if m_move:
         target_app = m_move.group(1).strip()
+        if target_app.lower() in ("cette fenêtre", "cette fenetre", "la fenêtre", "la fenetre", "fenêtre", "fenetre"):
+            target_app = ""
+        elif target_app.lower().startswith("la fenêtre ") or target_app.lower().startswith("la fenetre "):
+            target_app = target_app.split(" ", 2)[2]
         target_ws = m_move.group(2).strip()
         return {"action": "move_window", "target": target_app, "workspace": target_ws}
 

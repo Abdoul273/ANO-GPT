@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ui.styles.theme import C
+from ui.styles.theme import C, tint_accent_css
 
 def get_global_style() -> str:
     """QSS global.
@@ -10,7 +10,7 @@ def get_global_style() -> str:
     qu'à ce qui est actif ou survolé — c'est ce qui rend l'ensemble vif sans
     être bruyant.
     """
-    return f"""
+    return tint_accent_css(f"""
     /* --- Global --- */
     QWidget {{
         background: {C.BG};
@@ -164,4 +164,4 @@ def get_global_style() -> str:
     QSplitter::handle:hover {{
         background: {C.PRI_GHO};
     }}
-    """
+    """)

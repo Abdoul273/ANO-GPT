@@ -405,6 +405,11 @@ class SessionManager:
         les derniers tours locaux avec la demande en attente.
         """
         wanted = tool_packs.resolve(text)
+        from core.continuous_vision import is_vision_deactivation_phrase
+        if is_vision_deactivation_phrase(text):
+            # close_camera est dans le noyau : une fermeture ne doit jamais
+            # provoquer une reconnexion et perdre la réponse en cours.
+            wanted -= {"camera"}
         active = getattr(self, "_active_tool_packs", frozenset())
         fresh = wanted - active
         if not fresh:
@@ -1096,6 +1101,25 @@ class SessionManager:
             parts.append(mem_str)
         if recall_str:
             parts.append(recall_str)
+        # Une reconnexion sans poignée ouvre une conversation vierge côté Live.
+        # Les tours locaux doivent être connus dès le premier « oui » ou « fais-le »,
+        # même si aucune question n'était en attente au moment de la coupure.
+        if self._conn.resume_handle() is None:
+            recent = list(getattr(self, "_recent_live_turns", ())[-4:])
+            if recent:
+                lines = []
+                for user_text, assistant_text in recent:
+                    if user_text:
+                        lines.append(f"Utilisateur : {user_text[:500]}")
+                    if assistant_text:
+                        lines.append(f"ANO-GPT : {assistant_text[:500]}")
+                parts.append(
+                    "[DERNIERS ÉCHANGES AVANT RECONNEXION]\n"
+                    + "\n".join(lines)
+                    + "\nContinue cet échange. Une réponse courte comme « oui » "
+                    "accepte la dernière proposition de l'assistant. "
+                    "N'annonce une action qu'après l'avoir effectuée avec l'outil."
+                )
 
         # Injection de la posture vocale et du contexte prosodique
         prosody_ctx = self.get_prosody_context_instruction()
@@ -1295,6 +1319,7 @@ class SessionManager:
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
         out_buf, in_buf = [], []
+        camera_close_feedback = ""
         _speaking_started = False
         _user_started = False
         from core.elevenlabs_voice import speak_live_turn
@@ -1512,6 +1537,16 @@ class SessionManager:
                                     )
                                 self._live_user_text = merged
                                 self._last_user_speech = time.monotonic()
+                                # Fermer la caméra dès que la demande est reconnue.
+                                # Attendre le turn_complete laisse le studio ouvert
+                                # si Gemini réfléchit puis termine sans réponse.
+                                from core.continuous_vision import is_vision_deactivation_phrase
+                                if (not camera_close_feedback
+                                        and is_vision_deactivation_phrase(merged)):
+                                    camera_close_feedback = await asyncio.to_thread(
+                                        self.close_all_cameras
+                                    )
+                                    self.ui.write_log(f"SYS : {camera_close_feedback}")
                                 # Avant que le modèle ne réponde : si la phrase
                                 # touche un domaine fermé, la session repart
                                 # aussitôt avec les outils qu'il faut.
@@ -1597,7 +1632,10 @@ class SessionManager:
                                 self.ui.set_user_transcript(full_in, final=True)
 
                                 # Contrôle vocal ergonomique de la vision continue ("regarde ce que je te montre" / "arrête la caméra")
-                                vision_feedback = self.check_continuous_vision_voice_trigger(full_in)
+                                vision_feedback = (
+                                    None if camera_close_feedback
+                                    else self.check_continuous_vision_voice_trigger(full_in)
+                                )
                                 if vision_feedback:
                                     self.ui.write_log(f"SYS : {vision_feedback}")
 
@@ -1643,6 +1681,18 @@ class SessionManager:
                             self._foreign_noise_turn = False
 
                             full_out = " ".join(out_buf).strip()
+                            if camera_close_feedback and not full_out:
+                                # Le premier tour peut être muet après un appel
+                                # d'outil : redemander l'accusé vocal une seule fois.
+                                feedback = camera_close_feedback
+                                spawn_logged(
+                                    self._submit_text_turn(
+                                        f"La commande locale est terminée : {feedback} "
+                                        "Confirme-le oralement en une phrase."
+                                    ),
+                                    name="camera-close-feedback", ui=self.ui,
+                                )
+                            camera_close_feedback = ""
                             # Mémoire : le tour est complet, on peut le
                             # raconter plus tard et chercher ce qu'il évoque.
                             if full_in or full_out:

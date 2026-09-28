@@ -37,6 +37,8 @@ class PendingConfirmation:
     # extérieur (réparer le code d'ANO-GPT) : un SMS ou une commande shell
     # exigent toujours un clic ou un texte tapé.
     voice_ok: bool = False
+    # Les réglages d'état (radios) peuvent être redemandés après un échec.
+    dedupe: bool = True
 
 
 _pending: PendingConfirmation | None = None
@@ -79,7 +81,7 @@ def _fingerprint(pending: PendingConfirmation) -> tuple[str, str, str]:
 def request(key: str, title: str, detail: str,
             callback: Callable[[], str | None], *,
             on_decline: Callable[[], str | None] | None = None,
-            voice_ok: bool = False) -> str:
+            voice_ok: bool = False, dedupe: bool = True) -> str:
     """Affiche une demande et gare l'action jusqu'au clic humain."""
     global _pending
     if not callable(callback):
@@ -96,6 +98,7 @@ def request(key: str, title: str, detail: str,
         created_at=time.monotonic(),
         on_decline=on_decline,
         voice_ok=voice_ok,
+        dedupe=dedupe,
     )
     superseded: str | None = None
     with _lock:
@@ -103,7 +106,7 @@ def request(key: str, title: str, detail: str,
         for stale in [f for f, at in _recent.items()
                       if now - at > REPLAY_WINDOW_SECONDS]:
             _recent.pop(stale, None)
-        if _fingerprint(pending) in _recent:
+        if dedupe and _fingerprint(pending) in _recent:
             # Exactement la même opération vient d'aboutir : la relancer
             # doublerait l'appel ou le message aux yeux du destinataire.
             return (
@@ -190,8 +193,9 @@ def resolve(token: str, accepted: bool, *, source: str = "interface") -> bool:
     from core.personality_modes import user_address
     _send_notify(f"Confirmation validée, j'exécute la commande immédiatement, {user_address()}.")
 
-    with _lock:
-        _recent[_fingerprint(pending)] = time.monotonic()
+    if pending.dedupe:
+        with _lock:
+            _recent[_fingerprint(pending)] = time.monotonic()
 
     def _run() -> None:
         try:

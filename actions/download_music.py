@@ -14,6 +14,8 @@ from __future__ import annotations
 import math
 import os
 import re
+from datetime import date
+from difflib import SequenceMatcher
 import select
 import shutil
 import subprocess
@@ -58,6 +60,7 @@ _DEST_RE = re.compile(r"Destination:\s+(.+)$")
 _MIN_ACCEPT_TITLE = 0.42
 _MIN_ACCEPT_SCORE = 48.0
 _ALREADY_HAVE = 0.90
+_LATEST_RE = re.compile(r"\b(?:dernier|derniere|dernière|nouveau|nouvelle|latest|newest)\b", re.I)
 
 _ACTIVE: dict[str, dict[str, Any]] = {}
 _ACTIVE_LOCK = threading.Lock()
@@ -92,6 +95,56 @@ def clean_query(raw: str) -> str:
     tokens = re.findall(r"[A-Za-z0-9éèêëàâäùûüôöçÉÈÊÀÂÙÛÔÇ+'._-]+", folded)
     kept = [tok for tok in tokens if tok.casefold() not in _QUERY_STOP]
     return " ".join(kept).strip() or text.strip()
+
+
+def latest_artist(raw: str) -> str:
+    """Extrait l'artiste d'une demande de dernière sortie, sans deviner le titre."""
+    if not _LATEST_RE.search(raw or ""):
+        return ""
+    query = clean_query(raw)
+    query = _LATEST_RE.sub(" ", query)
+    return re.sub(r"\s+", " ", query).strip(" ,.-")
+
+
+def resolve_latest_single(artist_query: str) -> dict[str, str]:
+    """Résout le titre d'un single publié via les dates du catalogue Deezer."""
+    import requests
+
+    session = requests.Session()
+    def get_json(url: str, **params: Any) -> dict[str, Any]:
+        response = session.get(url, params=params, timeout=8)
+        response.raise_for_status()
+        return response.json()
+
+    found = get_json("https://api.deezer.com/search/artist", q=artist_query, limit=15).get("data", [])
+    wanted = artist_query.casefold().strip()
+    matches = [artist for artist in found if SequenceMatcher(
+        None, wanted, str(artist.get("name") or "").casefold().strip()
+    ).ratio() >= 0.84]
+    if not matches:
+        raise ValueError(f"Artiste « {artist_query} » introuvable dans le catalogue musical.")
+    # Un même artiste peut avoir plusieurs fiches ; comparer leurs sorties.
+    best_name = str(matches[0].get("name") or "").strip()
+    same_artist = [artist for artist in matches
+                   if str(artist.get("name") or "").casefold().strip() == best_name.casefold()]
+    artist_name = best_name
+    albums = []
+    for artist in same_artist[:4]:
+        albums.extend(get_json(f"https://api.deezer.com/artist/{artist['id']}/albums",
+                               limit=100).get("data", []))
+    today = date.today().isoformat()
+    singles = [item for item in albums
+               if item.get("record_type") == "single"
+               and str(item.get("release_date") or "") <= today
+               and str(item.get("release_date") or "") >= "1900-01-01"]
+    if not singles:
+        raise ValueError(f"Aucun single daté trouvé pour « {artist_name} ».")
+    newest = max(singles, key=lambda item: (str(item.get("release_date")), int(item.get("id") or 0)))
+    title = str(newest.get("title") or "").strip()
+    if not title:
+        raise ValueError(f"Le dernier single de « {artist_name} » n'a pas de titre exploitable.")
+    return {"artist": artist_name, "title": title,
+            "date": str(newest["release_date"]), "source": str(newest.get("link") or "")}
 
 
 def is_youtube_url(value: str) -> bool:
@@ -738,6 +791,10 @@ def _download_job(
             return
 
         path = _final_path(declared_path, dest, stem)
+        if path is None:
+            _push(player, state, status="error", message="yt-dlp n'a produit aucun fichier audio")
+            _announce(speak, phrase_for("error", display))
+            return
         _push(
             player, state,
             status="done",
@@ -855,6 +912,25 @@ def download_music(parameters: dict | None = None, player=None, speak=None, **_k
             _unregister(download_id)
             return phrase_for("cancelled", query or raw)
 
+        release = None
+        artist_request = latest_artist(raw)
+        if artist_request and not is_youtube_url(raw):
+            try:
+                release = resolve_latest_single(artist_request)
+            except (ValueError, OSError, TimeoutError) as exc:
+                _push(player, state, status="error", message=str(exc))
+                _unregister(download_id)
+                return f"Je ne peux pas identifier la dernière sortie de « {artist_request} » : {exc} Aucun téléchargement lancé."
+            except Exception as exc:
+                _push(player, state, status="error", message=str(exc)[:180])
+                _unregister(download_id)
+                return f"Le catalogue musical ne répond pas pour « {artist_request} ». Aucun téléchargement lancé."
+            query = f"{release['artist']} {release['title']}"
+            rec["query"] = query
+            rec["title"] = query
+            _push(player, state, title=release["title"], artist=release["artist"],
+                  release_date=release["date"], source=release["source"])
+
         if is_youtube_url(raw) or is_youtube_url(query):
             url = youtube_url(query if is_youtube_url(query) else raw)
             track = {
@@ -887,9 +963,14 @@ def download_music(parameters: dict | None = None, player=None, speak=None, **_k
             except YoutubeUnavailable as exc:
                 _push(player, state, status="error", message=str(exc))
                 _unregister(download_id)
-                return f"Je n'ai pas pu chercher sur YouTube : {exc}"
+                if release:
+                    return (f"Le dernier single référencé de {release['artist']} est « {release['title']} » "
+                            f"({release['date']}). YouTube est inaccessible : {exc} Aucun fichier téléchargé.")
+                return f"Je n'ai pas pu chercher sur YouTube : {exc} Aucun fichier téléchargé."
 
             track = pick_best_track(query, candidates)
+            if release and track and intelligent_score(release["title"], str(track.get("title") or "")) < 0.55:
+                track = None
             if track is None:
                 _push(player, state, status="error", message="aucun match fiable")
                 _unregister(download_id)

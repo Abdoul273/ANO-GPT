@@ -227,14 +227,14 @@ def search_youtube(
         command = [
             "yt-dlp", f"ytsearch{limit}:{query}", "--flat-playlist",
             "--dump-json", "--no-warnings", "--no-playlist",
-            "--socket-timeout", "12",
+            "--socket-timeout", "6", "--retries", "0",
         ]
         # yt-dlp est le plus fiable mais met souvent 4 à 8 s ; le scraping de
         # la page de résultats répond en une seconde. On lance yt-dlp, et si
         # il traîne au-delà de _HEDGE_AFTER_S le scraping part en parallèle :
         # le premier lot exploitable gagne.
         pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="yt-search")
-        ytdlp_future = pool.submit(runner, command, capture_output=True, text=True, timeout=35)
+        ytdlp_future = pool.submit(runner, command, capture_output=True, text=True, timeout=16)
         scrape_future = None
         try:
             try:
@@ -343,4 +343,3 @@ def resolve_result(results: list[dict[str, Any]], value: Any) -> dict[str, Any] 
         if lowered in str(result.get("title", "")).casefold():
             return result
     return None
-

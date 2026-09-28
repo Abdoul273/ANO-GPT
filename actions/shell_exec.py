@@ -926,14 +926,16 @@ def hypr_control(parameters=None, player=None, **_kwargs) -> str:
                 if changed and active else
                 "Navigation envoyée, mais le changement de bureau n'est pas confirmé.")
     if action == "move_to_workspace":
-        requested = ws_value or value or "1"
+        requested = ws_value
+        if not requested or not str(requested).isdigit() or int(requested) < 1:
+            return f"Bureau invalide : {value or 'non indiqué'}."
         active = _hypr_active_window()
         address = str(active.get("address") or "")
         if not address:
             return "Déplacement annulé : aucune fenêtre active identifiable à déplacer."
         result = _hyprctl_dispatch(
-            "movetoworkspace", requested,
-            f'hl.dsp.window.move({{ workspace = "{requested}" }})')
+            "movetoworkspacesilent", f"{requested},address:{address}",
+            f'hl.dsp.window.move({{ workspace = "{requested}", window = "address:{address}", follow = false }})')
         if not _ok(result):
             return result
         if _confirm_window_workspace(address, str(requested)):
@@ -1056,6 +1058,8 @@ def _parse_shell_request_locally(text: str) -> Optional[Dict[str, Any]]:
         if action == "next_workspace":
             word = (m.group(1) or "").lower()
             value = "e-1" if re.search(r"pr[ée]c[ée]dent", word) else "e+1"
+        elif action == "move_to_workspace":
+            value = _parse_workspace_value(m.group(0))
         elif m.groups() and m.group(1):
             value = m.group(1).strip()
         if action == "screenshot":

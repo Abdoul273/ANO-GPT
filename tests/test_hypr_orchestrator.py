@@ -5,6 +5,12 @@ from actions.hypr_orchestrator import (
     parse_hypr_orchestrator_intent,
     hypr_orchestrator_control,
 )
+from core.tool_dispatcher import _preset_requested
+
+
+def test_unrelated_transcript_does_not_replay_coding_preset():
+    assert _preset_requested("organise mon espace, preset coding")
+    assert not _preset_requested("Präsentkönig")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -30,6 +36,42 @@ def test_parse_hypr_orchestrator_phrases():
     assert p_move["action"] == "move_window"
     assert "vs code" in p_move["target"].lower()
     assert p_move["workspace"] == "1"
+    assert parse_hypr_orchestrator_intent("déplace cette fenêtre sur le bureau 1") == {
+        "action": "move_window", "target": "", "workspace": "1"}
+
+
+def test_move_active_window_uses_its_address_and_confirms(monkeypatch):
+    clients = [
+        {"address": "0xother", "class": "kitty", "title": "Autre", "workspace": {"id": 2}},
+        {"address": "0xactive", "class": "kitty", "title": "Courante", "workspace": {"id": 2}},
+    ]
+    calls = []
+    monkeypatch.setattr(HyprOrchestrator, "get_clients", lambda: clients)
+    monkeypatch.setattr("actions.hypr_orchestrator._hyprctl_json",
+                        lambda command: {"address": "0xactive"} if command == "activewindow" else None)
+    def move(selector, workspace, follow=False):
+        calls.append((selector, workspace, follow))
+        clients[1]["workspace"]["id"] = workspace
+        return True
+    monkeypatch.setattr("actions.hypr_orchestrator.move_window_to_workspace", move)
+
+    result = HyprOrchestrator.move_window_to_ws("", 1)
+    assert calls == [("address:0xactive", 1, False)]
+    assert "Déplacement confirmé" in result
+    assert clients[0]["workspace"]["id"] == 2
+
+
+def test_move_window_never_claims_unconfirmed_success(monkeypatch):
+    clients = [{"address": "0xactive", "class": "kitty", "title": "Courante",
+                "workspace": {"id": 2}}]
+    monkeypatch.setattr(HyprOrchestrator, "get_clients", lambda: clients)
+    monkeypatch.setattr("actions.hypr_orchestrator._hyprctl_json",
+                        lambda command: {"address": "0xactive"})
+    monkeypatch.setattr("actions.hypr_orchestrator.move_window_to_workspace",
+                        lambda *args, **kwargs: True)
+    monkeypatch.setattr("actions.hypr_orchestrator.time.sleep", lambda *_: None)
+    assert "non confirmé" in HyprOrchestrator.move_window_to_ws("", 1)
+    assert "invalide" in HyprOrchestrator.move_window_to_ws("", "n'importe quoi")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -41,6 +83,7 @@ def test_hypr_window_classification():
     assert HyprOrchestrator.classify_window({"class": "Code", "title": "main.py - ANO-GPT"}) == 1
     assert HyprOrchestrator.classify_window({"class": "neovide", "title": "init.lua"}) == 1
     assert HyprOrchestrator.classify_window({"class": "zed", "title": "Rust project"}) == 1
+    assert HyprOrchestrator.classify_window({"class": "antigravity-ide", "title": "ANO-GPT"}) == 1
 
     # Web & Docs -> Workspace 2
     assert HyprOrchestrator.classify_window({"class": "firefox", "title": "GitHub - Google DeepMind"}) == 2
@@ -81,10 +124,13 @@ def test_hypr_organize_workspaces(monkeypatch):
     dispatched_moves = []
 
     monkeypatch.setattr(HyprOrchestrator, "get_clients", lambda: mock_clients)
-    monkeypatch.setattr(
-        "actions.hypr_orchestrator._hyprctl_dispatch",
-        lambda disp, args: dispatched_moves.append((disp, args)) or True
-    )
+    def move(selector, workspace, follow=False):
+        dispatched_moves.append((selector, workspace, follow))
+        address = selector.removeprefix("address:")
+        next(c for c in mock_clients if c["address"] == address)["workspace"]["id"] = workspace
+        return True
+
+    monkeypatch.setattr("actions.hypr_orchestrator.move_window_to_workspace", move)
 
     summary = HyprOrchestrator.organize_workspaces()
     assert "Organisation dynamique terminée" in summary
@@ -93,13 +139,25 @@ def test_hypr_organize_workspaces(monkeypatch):
     assert "Bureau 5 [🎨 Média & Création]" in summary
 
     # Code (0x123) était sur WS 3 -> doit aller sur WS 1
-    assert ("movetoworkspacesilent", "1,address:0x123") in dispatched_moves
+    assert ("address:0x123", 1, False) in dispatched_moves
     # Firefox (0x456) était sur WS 1 -> doit aller sur WS 2
-    assert ("movetoworkspacesilent", "2,address:0x456") in dispatched_moves
+    assert ("address:0x456", 2, False) in dispatched_moves
     # Kitty (0x789) était déjà sur WS 3 -> pas besoin de déplacement
-    assert ("movetoworkspacesilent", "3,address:0x789") not in dispatched_moves
+    assert ("address:0x789", 3, False) not in dispatched_moves
     # Spotify (0xabc) était sur WS 1 -> doit aller sur WS 5
-    assert ("movetoworkspacesilent", "5,address:0xabc") in dispatched_moves
+    assert ("address:0xabc", 5, False) in dispatched_moves
+
+
+def test_hypr_organizer_reports_unmoved_window(monkeypatch):
+    clients = [{"address": "0x123", "class": "antigravity-ide",
+                "title": "Antigravity", "workspace": {"id": 3}}]
+    monkeypatch.setattr(HyprOrchestrator, "get_clients", lambda: clients)
+    monkeypatch.setattr("actions.hypr_orchestrator.move_window_to_workspace",
+                        lambda *args, **kwargs: True)
+    result = HyprOrchestrator.organize_workspaces()
+    assert "Organisation incomplète" in result
+    assert "Déplacements non confirmés" in result
+    assert "Bureau 3" in result
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -108,13 +166,32 @@ def test_hypr_organize_workspaces(monkeypatch):
 
 def test_hypr_orchestrator_presets(monkeypatch):
     monkeypatch.setattr(HyprOrchestrator, "organize_workspaces", lambda: "Organisation OK")
-    monkeypatch.setattr("actions.hypr_orchestrator._hyprctl_dispatch", lambda *a, **k: True)
+    monkeypatch.setattr(HyprOrchestrator, "_focus_workspace", lambda number: True)
+    monkeypatch.setattr(HyprOrchestrator, "_ensure_coding_ide", lambda: True)
 
     res_dev = hypr_orchestrator_control({"preset": "devsecops"})
-    assert "Preset DevSecOps activé" in res_dev
+    assert "Preset coding" in res_dev
+    assert "confirmé" in res_dev
 
     res_mon = hypr_orchestrator_control({"preset": "monitoring"})
-    assert "Preset Monitoring activé" in res_mon
+    assert "Preset Monitoring : focus confirmé" in res_mon
+
+
+def test_coding_preset_opens_antigravity_ide_when_missing(monkeypatch):
+    clients = []
+    launched = []
+    monkeypatch.setattr(HyprOrchestrator, "get_clients", lambda: clients)
+    monkeypatch.setattr("actions.hypr_orchestrator.kit.which",
+                        lambda name: "/usr/bin/antigravity-ide" if name == "antigravity-ide" else None)
+
+    def spawn(cmd):
+        launched.append(cmd)
+        clients.append({"class": "antigravity-ide", "workspace": {"id": 1}})
+        return 123
+
+    monkeypatch.setattr("actions.hypr_orchestrator.kit.spawn", spawn)
+    assert HyprOrchestrator._ensure_coding_ide()
+    assert launched == [["antigravity-ide"]]
 
 
 def test_hypr_orchestrator_control_empty_args():

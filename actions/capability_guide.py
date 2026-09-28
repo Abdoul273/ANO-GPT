@@ -185,11 +185,11 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Musique et YouTube",
         "Je cherche dans tes fichiers, je lance, je mets en pause, je passe "
         "la piste. Si le morceau n'est pas en local, je propose YouTube dans "
-        "le lecteur intégré — jamais une fenêtre de navigateur.",
+        "le lecteur intégré. Si YouTube ne répond pas, j'ouvre la recherche dans Chrome.",
         "La recherche tolère les accents et les fautes de dictée. YouTube a "
         "son propre outil : recherche, lecture, volume, vitesse, sous-titres, "
-        "mini-lecteur. « Télécharge cette chanson » enregistre le MP3 dans "
-        "~/Musique, sans le confondre avec une simple lecture.",
+        "mini-lecteur. « Télécharge cette chanson » enregistre l'audio dans "
+        "~/Musique. Pour la dernière sortie, je vérifie d'abord le titre daté dans Deezer.",
         (
             "joue Daft Punk",
             "lance ma vidéo Claude",
@@ -391,12 +391,15 @@ CAPABILITIES: tuple[Capability, ...] = (
         "quand tu arrives quelque part.",
         "Le sous-agent Antigravity (`agy`) a accès à mes outils. Je confirme "
         "la mise en file et je continue de parler. L'annonce arrive toute "
-        "seule à la fin. Je ne compose jamais une URL GitHub de tête.",
+        "seule à la fin. Je peux aussi vérifier les tours de Codex et Claude Code "
+        "dans leurs journaux locaux et surveiller la fin de leurs processus CLI.",
         (
             "analyse ce dépôt et préviens-moi",
             "clone X dans Téléchargements",
             "préviens-moi si le prix baisse",
             "rappelle-moi quand j'arrive à la maison",
+            "Codex a fini ?",
+            "surveille Claude et préviens-moi quand il finit",
         ),
     ),
     Capability(

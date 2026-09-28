@@ -30,7 +30,7 @@ def test_structured_search_parses_and_deduplicates(monkeypatch):
 
     def runner(command, **kwargs):
         assert command[1] == "ytsearch4:python robuste"
-        assert kwargs["timeout"] == 35
+        assert kwargs["timeout"] == 16
         return SimpleNamespace(
             returncode=0,
             stdout="\n".join(json.dumps(row) for row in rows),
@@ -240,7 +240,7 @@ def test_stop_youtube_returns_to_results_in_native_player():
     assert "résultats restent affichés" in response
 
 
-def test_search_never_opens_browser_when_structured_backend_times_out(monkeypatch):
+def test_search_opens_chrome_when_structured_backend_times_out(monkeypatch):
     monkeypatch.setattr(
         youtube_action,
         "search_youtube_structured",
@@ -249,19 +249,19 @@ def test_search_never_opens_browser_when_structured_backend_times_out(monkeypatc
         ),
     )
     opened = []
-    monkeypatch.setattr(youtube_action, "_open_url", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("core.browser_policy.open_chrome", lambda url: opened.append(url) or True)
     memory = {}
 
     response = youtube_action.youtube_video(
         {"action": "search", "query": "robotique"}, session_memory=memory
     )
 
-    assert "aucun navigateur externe" in response.lower()
-    assert opened == []
+    assert "chrome" in response.lower()
+    assert opened == ["https://www.youtube.com/results?search_query=robotique"]
     assert memory["youtube_last_query"] == "robotique"
 
 
-def test_search_failure_never_opens_browser_when_native_ui_exists(monkeypatch):
+def test_search_failure_opens_chrome_when_native_ui_exists(monkeypatch):
     monkeypatch.setattr(
         youtube_action,
         "search_youtube_structured",
@@ -270,7 +270,7 @@ def test_search_failure_never_opens_browser_when_native_ui_exists(monkeypatch):
         ),
     )
     opened = []
-    monkeypatch.setattr(youtube_action, "_open_url", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("core.browser_policy.open_chrome", lambda url: opened.append(url) or True)
 
     class Player:
         def write_log(self, _text):
@@ -283,8 +283,8 @@ def test_search_failure_never_opens_browser_when_native_ui_exists(monkeypatch):
         player=Player(), session_memory={},
     )
 
-    assert opened == []
-    assert "aucun navigateur externe" in response.lower()
+    assert opened == ["https://www.youtube.com/results?search_query=robotique"]
+    assert "chrome" in response.lower()
 
 
 def test_local_parser_extracts_numbered_selection():

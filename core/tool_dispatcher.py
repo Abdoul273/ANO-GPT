@@ -66,6 +66,7 @@ from core.multimodal_vision import inspect_screen_live
 from actions.capture import capture_control
 from actions.music import music_control
 from actions.download_music import download_music
+from actions.agent_process_monitor import agent_process_monitor
 from actions.find_nearby import find_nearby
 from actions.email import email_control
 from actions.calendar import calendar_control
@@ -1254,7 +1255,8 @@ TOOL_DECLARATIONS = [
                         "scroll_up | scroll_down | scroll_top | scroll_bottom | page_up | page_down | "
                         "copy | paste | cut | undo | redo | select_all | save | enter | escape | "
                         "screenshot | lock_screen | open_settings | file_explorer | open_run | "
-                        "dark_mode | toggle_wifi | wifi_status | toggle_bluetooth | bluetooth_status | "
+                        "dark_mode | toggle_wifi | wifi_status | bluetooth_on | bluetooth_off | "
+                        "toggle_bluetooth | bluetooth_status | "
                         "airplane_mode | mic_toggle | power_profile | restart | shutdown | suspend | "
                         "type_text | press_key | reload_n. For volume_set, pass value as an integer "
                         "0-100 (e.g. 10 for 10%). For power_profile, value is performance | balanced | "
@@ -1464,7 +1466,9 @@ TOOL_DECLARATIONS = [
                         "switch_workspace switches only the currently visible workspace; it must be used for "
                         "‘va/navigue au bureau N’ and must never move a window. "
                         "move_to_workspace moves a window to workspace given in 'workspace' and is allowed "
-                        "only when the user explicitly says to move/send a window. "
+                        "only when the user explicitly says to move/send a window. Omit title for "
+                        "'cette fenêtre': target the current active window. Report success only if "
+                        "Hyprland confirms that exact window's destination workspace. "
                         "list_windows lists all open windows with their workspace number. "
                         "system_status is a lightweight local CPU/RAM/focus snapshot. "
                         "clipboard_status never exposes clipboard contents. "
@@ -1481,11 +1485,11 @@ TOOL_DECLARATIONS = [
                 "direction":   {"type": "STRING", "description": "up | down | left | right"},
                 "amount":      {"type": "INTEGER", "description": "Scroll amount (default: 3)"},
                 "seconds":     {"type": "NUMBER",  "description": "Seconds to wait"},
-                "title":       {"type": "STRING",  "description": "Window title for focus_window / move_to_workspace / close (partial match)"},
+                "title":       {"type": "STRING",  "description": "Window title for focus_window / move_to_workspace / close (partial match); omit for current active window"},
                 "workspace":   {"type": "INTEGER", "description": "Target workspace/bureau number for move_to_workspace / switch_workspace"},
                 "value":       {"type": "INTEGER", "description": "Brightness or volume percentage, 0 to 100"},
                 "mode":        {"type": "STRING", "description": "For volume_mute: toggle | on | off"},
-                "description": {"type": "STRING",  "description": "Element description for screen_find/screen_click"},
+                "description": {"type": "STRING",  "description": "Visible UI target for screen_find/screen_click. Use screen_click for named buttons: it captures the full monitor before clicking. Never guess x/y."},
                 "type":        {"type": "STRING",  "description": "Data type for random_data"},
                 "field":       {"type": "STRING",  "description": "Field for user_data: name|email|city"},
                 "clear_first": {"type": "BOOLEAN", "description": "Clear field before typing (default: true)"},
@@ -1751,7 +1755,7 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "action": {"type": "STRING", "description": "Action: organize | preset | move_window | list"},
                 "preset": {"type": "STRING", "description": "Nom du preset: devsecops | coding | monitoring | web | comms"},
-                "target": {"type": "STRING", "description": "Nom ou classe de l'application à déplacer"},
+                "target": {"type": "STRING", "description": "Nom ou classe de l'application à déplacer ; omettre pour « cette fenêtre » (fenêtre active)"},
                 "workspace": {"type": "STRING", "description": "Numéro ou nom du workspace cible (1 à 6, 'dev', 'web', etc.)"},
                 "description": {"type": "STRING", "description": "Description en langage naturel (ex: 'organise mon espace de travail', 'preset devsecops')"},
             },
@@ -2239,6 +2243,20 @@ _RETIRED_TOOLS = {
 }
 TOOL_DECLARATIONS = [t for t in TOOL_DECLARATIONS if t["name"] not in _RETIRED_TOOLS]
 TOOL_DECLARATIONS.append({
+    "name": "agent_process_monitor",
+    "description": (
+        "Vérifie réellement les agents et autres programmes en terminal (Codex, Claude Code, agy, npm, pytest, etc.) et leurs journaux "
+        "de fin de tour. À utiliser pour « Codex a fini ? », « que fait Claude ? », "
+        "« surveille agy et préviens-moi quand il finit ». status donne l'état observé ; "
+        "watch surveille en arrière-plan et notifie une fin enregistrée ou une sortie ; "
+        "stop arrête la surveillance. Un processus actif seul ne prouve jamais qu'une tâche travaille."
+    ),
+    "parameters": {"type": "OBJECT", "properties": {
+        "action": {"type": "STRING", "description": "status | watch | stop"},
+        "agent": {"type": "STRING", "description": "codex | claude | agy | all, ou nom exact d'un processus terminal"},
+    }, "required": []},
+})
+TOOL_DECLARATIONS.append({
     "name": "undo_action",
     "description": (
         "Annule la dernière modification réversible effectuée par ANO-GPT "
@@ -2387,7 +2405,9 @@ def _is_destructive(name: str, args: dict) -> bool:
     return name in _DESTRUCTIVE_TOOLS
 
 
-_FAILURE_MARKERS = ("failed", "échec", "echec", "a échoué", "erreur", "error:", "impossible", "introuvable")
+_FAILURE_MARKERS = ("failed", "échec", "echec", "a échoué", "erreur", "error:",
+                    "impossible", "introuvable", "clic annulé", "aucun clic effectué",
+                    "je n'ai pas trouvé")
 
 
 def _looks_like_failure(result: Any) -> bool:
@@ -2395,6 +2415,42 @@ def _looks_like_failure(result: Any) -> bool:
     return head.startswith(("tool '", "erreur", "échec", "echec")) or any(
         m in head[:60] for m in _FAILURE_MARKERS
     )
+
+
+def _click_target_from_request(request: str) -> str:
+    """Repère une cible nommée pour empêcher un clic sur des coordonnées devinées."""
+    match = re.search(
+        r"\b(?:clique|cliquer|click)\s+(?:sur\s+)?(.+)$",
+        str(request or "").strip(), re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    target = re.sub(
+        r"\s+(?:sur|dans)\s+(?:mon|l['’]|le)\s*[ée]cran\s*$",
+        "", match.group(1).strip(" .!?"), flags=re.IGNORECASE,
+    ).strip(" .!?")
+    if re.fullmatch(r"\d+\s*[,;]\s*\d+", target):
+        return ""
+    return target
+
+
+def _bluetooth_action_from_request(request: str) -> str:
+    text = str(request or "").casefold()
+    if ("bluetooth" not in text
+            and not re.search(r"\b(?:rallume|r[ée]active|[ée]teins|d[ée]sactive)[- ]le\b", text)):
+        return ""
+    if re.search(r"\b(d[ée]sactive|[ée]teins|coupe|arr[êe]te)\b", text):
+        return "bluetooth_off"
+    if re.search(r"\b(active|allume|rallume|r[ée]active|mets en marche)\b", text):
+        return "bluetooth_on"
+    return ""
+
+
+def _preset_requested(request: str) -> bool:
+    return bool(re.search(
+        r"\b(?:preset|mode\s+(?:coding|code|dev|devsecops|monitoring|web|focus))\b",
+        str(request or ""), re.IGNORECASE,
+    ))
 
 
 def _task_result_excerpt(result: Any, limit: int = 220) -> str:
@@ -2507,6 +2563,7 @@ _TOOL_LABELS = {
     "music_recognition": "Reconnaissance musicale",
     "music_control": "Musique",
     "download_music": "Téléchargement musique",
+    "agent_process_monitor": "Surveillance des agents",
     "proactive_mode": "Mode proactif",
     "background_tasks": "Tâche de fond",
     "calendar_control": "Agenda",
@@ -3643,6 +3700,11 @@ class ToolDispatcher:
                 )
                 result = r or "Done."
 
+            elif name == "agent_process_monitor":
+                result = await loop.run_in_executor(
+                    None, lambda: agent_process_monitor(
+                        parameters=args, player=self.ui, speak=self.speak))
+
             elif name == "screen_process":
                 import time as _t_mod
                 _now = _t_mod.monotonic()
@@ -4180,7 +4242,22 @@ class ToolDispatcher:
                 )
 
             elif name == "computer_settings":
-                r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
+                settings_args = dict(args)
+                if str(settings_args.get("action") or "").casefold() in {
+                    "toggle_bluetooth", "bluetooth", "toggle_bt",
+                }:
+                    explicit = _bluetooth_action_from_request(
+                        str(getattr(self, "_live_user_text", "") or "")
+                        or str(settings_args.get("description") or "")
+                    )
+                    if explicit:
+                        settings_args["action"] = explicit
+                r = await loop.run_in_executor(
+                    None, lambda: computer_settings(
+                        parameters=settings_args, response=None, player=self.ui,
+                        session_memory=self._tool_session_memory,
+                    )
+                )
                 result = r or "Done."
 
             elif name == "hud_appearance":
@@ -4271,7 +4348,19 @@ class ToolDispatcher:
                 result = r or "Done."
 
             elif name == "computer_control":
-                r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
+                control_args = dict(args)
+                if (str(control_args.get("action") or "").casefold() in {"click", "screen_click"}
+                        and not control_args.get("description")):
+                    target = _click_target_from_request(
+                        getattr(self, "_live_user_text", "")
+                    )
+                    if target:
+                        control_args["description"] = target
+                        control_args.pop("x", None)
+                        control_args.pop("y", None)
+                r = await loop.run_in_executor(
+                    None, lambda: computer_control(parameters=control_args, player=self.ui)
+                )
                 result = r or "Done."
 
             elif name == "game_updater":
@@ -4536,8 +4625,17 @@ class ToolDispatcher:
                 result = r or "Opération DevSecOps effectuée."
 
             elif name == "hypr_orchestrator":
-                r = await loop.run_in_executor(None, lambda: hypr_orchestrator_control(parameters=args, player=self.ui))
-                result = r or "Organisation Hyprland terminée."
+                heard = str(getattr(self, "_live_user_text", "") or "")
+                preset_call = str(args.get("action") or "").casefold() in {
+                    "preset", "apply_preset",
+                }
+                if preset_call and heard and not _preset_requested(heard):
+                    result = "Preset ignoré : aucune demande de preset reconnue dans cette phrase."
+                else:
+                    r = await loop.run_in_executor(
+                        None, lambda: hypr_orchestrator_control(parameters=args, player=self.ui)
+                    )
+                    result = r or "Organisation Hyprland terminée."
 
             elif name == "shutdown_jarvis":
                 requested = str(getattr(self, "_live_user_text", "") or "").casefold()
@@ -4661,6 +4759,8 @@ class ToolDispatcher:
                 "youtube": self._agent_youtube,
                 "reminder": self._agent_reminder,
                 "system_status": self._agent_system_status,
+                "agent_process_monitor": lambda a: agent_process_monitor(
+                    parameters=a, player=self.ui, speak=self.speak),
                 "music": self._agent_music,
                 "download_music": self._agent_download_music,
                 "routine": self._agent_routine,

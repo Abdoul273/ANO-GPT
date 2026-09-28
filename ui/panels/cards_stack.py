@@ -33,6 +33,7 @@ class _HexGlyph(QWidget):
 
     def __init__(self, icon_name: str, color: str, parent=None):
         super().__init__(parent)
+        self._icon_name = icon_name
         self.setFixedSize(self._SIZE, self._SIZE)
         self._color = qcol(color)
         # Le QSS global donne un fond à tout QWidget : sans cette règle, ce
@@ -116,6 +117,7 @@ class RichCardWidget(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         icon_name, icon_col = self.CARD_ICONS.get(self.card_type, ("info", C.PRI))
+        icon_col = C.PRI
         self._accent = qcol(icon_col)
         self._scan = random.random() * Hud.SCAN_PERIOD
         self._pulse = random.random() * math.tau

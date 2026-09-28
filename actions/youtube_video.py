@@ -724,15 +724,15 @@ def youtube_video(
                     query, limit, session_memory, player
                 )
             except YouTubeUnavailable:
-                # Le lecteur ANO-GPT est le seul rendu autorisé : ne jamais
-                # remplacer une carte de résultats par un onglet Chrome.
                 if session_memory is not None:
                     session_memory[_YT_RESULTS_KEY] = []
                     session_memory["youtube_last_query"] = query
-                return (
-                    f"La recherche vidéo intégrée est momentanément indisponible pour « {query} ». "
-                    "Réessaie dans un instant ; aucun navigateur externe n'a été ouvert."
-                )
+                from core.browser_policy import open_chrome
+                from urllib.parse import quote_plus
+                search_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+                if open_chrome(search_url):
+                    return f"La recherche intégrée ne répond pas. J'ai ouvert les résultats pour « {query} » dans Chrome."
+                return f"Recherche YouTube indisponible pour « {query} » ; Chrome n'a pas pu être ouvert."
             return formatted if results else f"Aucun résultat YouTube pour « {query} »."
 
         if action in {"select", "play"}:
@@ -767,10 +767,12 @@ def youtube_video(
             try:
                 results, _ = _search_and_remember(query, 6, session_memory, player)
             except YouTubeUnavailable:
-                return (
-                    f"La recherche vidéo intégrée est momentanément indisponible pour « {query} ». "
-                    "Réessaie dans un instant ; aucun navigateur externe n'a été ouvert."
-                )
+                from core.browser_policy import open_chrome
+                from urllib.parse import quote_plus
+                search_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+                if open_chrome(search_url):
+                    return f"Je n'ai pas pu sélectionner une vidéo fiable. J'ai ouvert la recherche « {query} » dans Chrome."
+                return f"Recherche YouTube indisponible pour « {query} » ; Chrome n'a pas pu être ouvert."
             if not results:
                 return f"Aucune vidéo YouTube trouvée pour « {query} »."
             return _open_selected(results[0], session_memory, player, results, browser=browser)

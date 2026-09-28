@@ -8,6 +8,11 @@ def test_shell_parser_recognises_navigate_to_workspace_locally():
     assert parsed == {"target": "hypr", "action": "workspace", "value": "1"}
 
 
+def test_shell_parser_extracts_move_destination():
+    assert shell_exec._parse_shell_request_locally("déplace cette fenêtre sur le bureau 1") == {
+        "target": "hypr", "action": "move_to_workspace", "value": "1"}
+
+
 def test_computer_parser_recognises_navigate_to_workspace_locally():
     parsed = computer_control._parse_control_locally("navigue vers le bureau 1")
     assert parsed == {
@@ -56,6 +61,18 @@ def test_move_to_workspace_needs_an_identifiable_active_window(monkeypatch):
     result = shell_exec.hypr_control({"action": "move_to_workspace", "value": "1"})
 
     assert "Déplacement annulé" in result
+
+
+def test_shell_move_targets_exact_active_address_and_checks_result(monkeypatch):
+    dispatched = []
+    monkeypatch.setattr(shell_exec, "_hypr_active_window", lambda: {"address": "0xactive"})
+    monkeypatch.setattr(shell_exec, "_hyprctl_dispatch",
+                        lambda action, value, lua: dispatched.append((action, value, lua)) or "ok")
+    monkeypatch.setattr(shell_exec, "_confirm_window_workspace", lambda addr, ws: False)
+    result = shell_exec.hypr_control({"action": "move_to_workspace", "value": "1"})
+    assert dispatched[0][0:2] == ("movetoworkspacesilent", "1,address:0xactive")
+    assert 'address:0xactive' in dispatched[0][2]
+    assert "n'a pas été confirmée" in result
 
 
 def test_compound_workspace_launch_is_verified_then_detached(monkeypatch):

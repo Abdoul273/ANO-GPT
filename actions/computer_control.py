@@ -733,10 +733,21 @@ def _click(x=None, y=None, button="left", clicks=1) -> str:
     if _WAYLAND and _have("ydotool"):
         try:
             if x is not None and y is not None:
-                mv = _run(["ydotool", "mousemove", "-a",
-                           str(int(x)), str(int(y))], timeout=2)
-                if not mv:
-                    raise RuntimeError(mv.reason())
+                # ydotool en absolu dépend de l'accélération du pointeur :
+                # Hyprland connaît les coordonnées réelles du bureau.
+                moved = _move(int(x), int(y))
+                if not moved.startswith("Souris →"):
+                    return f"Clic annulé : {moved}"
+                cursor = _run(["hyprctl", "cursorpos", "-j"], timeout=2,
+                              env=_hypr_env()) if _have("hyprctl") else None
+                try:
+                    position = json.loads(cursor.stdout) if cursor and cursor.returncode == 0 else {}
+                    actual_x, actual_y = float(position["x"]), float(position["y"])
+                except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+                    return "Clic annulé : position du curseur invérifiable."
+                if abs(actual_x - int(x)) > 4 or abs(actual_y - int(y)) > 4:
+                    return (f"Clic annulé : curseur à ({actual_x:.0f},{actual_y:.0f}) "
+                            f"au lieu de ({int(x)},{int(y)}).")
             mask = _YDOTOOL_BTN.get(button, "0xC0")
             for _ in range(clicks):
                 ck = _run(["ydotool", "click", mask], timeout=2)
@@ -932,6 +943,10 @@ def _move_to_workspace(title: str, workspace) -> str:
     if _WAYLAND and _have("hyprctl"):
         try:
             target = None
+            title = str(title or "").strip()
+            if title.lower() in ("cette fenêtre", "cette fenetre", "la fenêtre", "la fenetre",
+                                 "fenêtre", "fenetre", "active", "actuelle"):
+                title = ""
             if title:
                 needle = title.lower().strip()
                 for c in (_hyprctl_json("clients") or []):
@@ -953,10 +968,12 @@ def _move_to_workspace(title: str, workspace) -> str:
                 return "Aucune fenêtre active à déplacer."
             addr = target.get("address")
             if _HAS_WINDOW_INSTANCES:
-                _hypr_move_window_to_workspace(f"address:{addr}", ws, follow=False)
+                dispatched = _hypr_move_window_to_workspace(f"address:{addr}", ws, follow=False)
             else:
-                _hypr_dispatch("movetoworkspacesilent", f"{ws},address:{addr}")
+                dispatched = _hypr_dispatch("movetoworkspacesilent", f"{ws},address:{addr}")
             label = target.get("title") or target.get("class") or "active"
+            if not dispatched:
+                return f"Échec de la commande Hyprland pour «{label}» vers le bureau {ws}."
             if _confirm_window_workspace(str(addr), ws):
                 return f"Déplacement confirmé : fenêtre «{label}» sur le bureau {ws}."
             return (f"Déplacement envoyé pour «{label}» vers le bureau {ws}, "
@@ -1311,6 +1328,17 @@ def _screen_find(description: str) -> Optional[Tuple[int, int]]:
     return int(round(center_x)), int(round(center_y))
 
 
+def _click_screen_target(description: str, button: str = "left", clicks: int = 1) -> str:
+    """Capture et cible l'écran avant de cliquer ; ne confirme que le clic réel."""
+    coords = _screen_find(description)
+    if coords is None:
+        return f"Je n'ai pas trouvé «{description}» à l'écran ; aucun clic effectué."
+    outcome = _click(x=coords[0], y=coords[1], button=button, clicks=clicks)
+    if not re.match(r"^Clic (?:left|right|middle) à ", outcome):
+        return f"{outcome} Cible «{description}» repérée à {coords}."
+    return f"Clic envoyé sur «{description}» à {coords}."
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Parsing local des commandes de contrôle
 # ════════════════════════════════════════════════════════════════════════════
@@ -1333,11 +1361,17 @@ def _parse_control_locally(text: str) -> Optional[Dict[str, Any]]:
                   r"(?:le\s+)?(?:bureau|workspace)\s+(\S+)", t)
     if m:
         return {"action": "switch_workspace", "params": {"workspace": m.group(1)}}
-    m = re.search(r"d[ée]place\s+(?:la\s+fen[êe]tre\s+|cette\s+fen[êe]tre\s+)?"
-                  r"(.+?)\s+(?:vers|au|sur)\s+(?:le\s+)?(?:bureau|workspace)\s+(\S+)", t)
+    m = re.search(r"(?:d[ée]place|envoie|mets?)\s+(.+?)\s+(?:vers|au|sur|dans)\s+"
+                  r"(?:le\s+)?(?:bureau|workspace)\s+(\S+)", t)
     if m:
+        target = m.group(1).strip()
+        if target in ("cette fenêtre", "cette fenetre", "la fenêtre", "la fenetre",
+                      "fenêtre", "fenetre", "la fenêtre actuelle", "la fenetre actuelle"):
+            target = ""
+        else:
+            target = re.sub(r"^(?:la\s+fen[êe]tre\s+)", "", target).strip()
         return {"action": "move_to_workspace",
-                "params": {"title": m.group(1).strip(), "workspace": m.group(2)}}
+                "params": {"title": target, "workspace": m.group(2)}}
 
     # Fenêtrage : Plein écran / Flottant / Centrer / Fermer
     if re.search(r"\b(?:plein\s+[ée]cran|fullscreen)\b", t):
@@ -1638,12 +1672,11 @@ def computer_control(parameters: dict, **kwargs) -> str:
             return "Contenu copié."
         elif action == "click":
             if params.get("description"):
-                desc = params["description"]
-                coords = _screen_find(desc)
-                if coords:
-                    _click(x=coords[0], y=coords[1])
-                    return f"J'ai cliqué sur «{desc}» aux coordonnées {coords}."
-                return f"Je n'ai pas trouvé «{desc}» à l'écran."
+                return _click_screen_target(
+                    str(params["description"]),
+                    button=str(params.get("button") or "left"),
+                    clicks=int(params.get("clicks", 1)),
+                )
             x = params.get("x")
             y = params.get("y")
             button = params.get("button", "left")
@@ -1696,11 +1729,7 @@ def computer_control(parameters: dict, **kwargs) -> str:
             desc = params.get("description", "")
             if not desc:
                 return "Aucune description fournie."
-            coords = _screen_find(desc)
-            if coords:
-                _click(x=coords[0], y=coords[1])
-                return f"J'ai cliqué sur «{desc}» aux coordonnées {coords}."
-            return f"Je n'ai pas trouvé «{desc}» à l'écran."
+            return _click_screen_target(str(desc))
         elif action == "move_to_workspace":
             ws = params.get("workspace", params.get("value"))
             if ws is None:

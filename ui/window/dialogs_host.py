@@ -206,6 +206,8 @@ class DialogsHostMixin:
         old = current_palette()
         if apply_ui_accent(hex_color):
             retheme_all_widgets(old, current_palette())
+            if getattr(self, "hud", None) and hasattr(self.hud, "set_accent_color"):
+                self.hud.set_accent_color(hex_color)
 
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = "",
                            background_image: str = "", orb_style: str = ""):
@@ -227,6 +229,8 @@ class DialogsHostMixin:
             if apply_ui_accent(ui_color):
                 retheme_all_widgets(old, current_palette())
                 color_changed = old["PRI"] != C.PRI
+                if getattr(self, "hud", None) and hasattr(self.hud, "set_accent_color"):
+                    self.hud.set_accent_color(ui_color)
         try:
             data = _read_full_config()
             data["assistant_name"] = self._assistant_name

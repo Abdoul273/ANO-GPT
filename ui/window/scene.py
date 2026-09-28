@@ -54,6 +54,9 @@ class SceneMixin:
         self.hud = OrbHost(
             face_path, display_name, _read_full_config().get("orb_style", ""), central,
         )
+        saved_accent = str(_read_full_config().get("ui_color") or "").strip()
+        if saved_accent and hasattr(self.hud, "set_accent_color"):
+            self.hud.set_accent_color(saved_accent)
         if hasattr(self.hud, "set_background_image_active"):
             self.hud.set_background_image_active(self._background_image.has_image)
         layout.add_fill(self.hud)

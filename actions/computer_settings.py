@@ -1005,20 +1005,52 @@ def wifi_status() -> str:
     return "Wi-Fi activé." if state else "Wi-Fi désactivé."
 
 
-def toggle_bluetooth():
-    if _OS != "Linux":
-        return "Bluetooth non pilotable sur ce système."
-    if kit.which("bluetoothctl"):
-        res = run(["bluetoothctl", "show"], timeout=5)
-        powered = "Powered: yes" in res.out
-        if run(["bluetoothctl", "power", "off" if powered else "on"], timeout=8):
-            return "Bluetooth désactivé." if powered else "Bluetooth activé."
-    if kit.which("rfkill"):
-        state = _rfkill_state("bluetooth")
-        if state is not None and run(["rfkill", "unblock" if not state else "block",
-                                      "bluetooth"], timeout=5):
-            return "Bluetooth désactivé." if state else "Bluetooth activé."
-    return "Impossible de basculer le Bluetooth (bluetoothctl ou rfkill requis)."
+def _bluetooth_powered() -> Optional[bool]:
+    if _OS != "Linux" or not kit.which("bluetoothctl"):
+        return None
+    result = run(["bluetoothctl", "show"], timeout=5, env=_C_LOCALE)
+    if not result.ok:
+        return None
+    match = re.search(r"(?m)^\s*Powered:\s*(yes|no)\b", str(result.out), re.I)
+    return match.group(1).lower() == "yes" if match else None
+
+
+def set_bluetooth(enabled: bool) -> str:
+    """Fixe l'état demandé et relit le contrôleur avant de confirmer."""
+    if _OS != "Linux" or not kit.which("bluetoothctl"):
+        return "Impossible de piloter le Bluetooth : bluetoothctl indisponible."
+    current = _bluetooth_powered()
+    if current is enabled:
+        return "Bluetooth déjà activé." if enabled else "Bluetooth déjà désactivé."
+    if enabled and _rfkill_state("bluetooth") is False:
+        unblocked = run(["rfkill", "unblock", "bluetooth"], timeout=5)
+        if not unblocked:
+            return "Impossible d'activer le Bluetooth : rfkill bloque la radio."
+    command = run(["bluetoothctl", "power", "on" if enabled else "off"], timeout=8)
+    for _ in range(4):
+        actual = _bluetooth_powered()
+        if actual is enabled:
+            return "Bluetooth activé." if enabled else "Bluetooth désactivé."
+        time.sleep(0.25)
+    actual = _bluetooth_powered()
+    state = "désactivé" if actual is False else "activé" if actual is True else "inconnu"
+    reason = f" ({command.reason()})" if not command else ""
+    return f"Échec : Bluetooth toujours {state} après la commande{reason}."
+
+
+def bluetooth_on() -> str:
+    return set_bluetooth(True)
+
+
+def bluetooth_off() -> str:
+    return set_bluetooth(False)
+
+
+def toggle_bluetooth() -> str:
+    current = _bluetooth_powered()
+    if current is None:
+        return "Impossible de basculer le Bluetooth : état actuel inconnu."
+    return set_bluetooth(not current)
 
 
 def bluetooth_status() -> str:
@@ -1027,7 +1059,7 @@ def bluetooth_status() -> str:
     res = run(["bluetoothctl", "show"], timeout=5)
     if not res.ok:
         return "Impossible de lire l'état du Bluetooth."
-    if "Powered: yes" not in res.out:
+    if _bluetooth_powered() is not True:
         return "Bluetooth désactivé."
     devices = run(["bluetoothctl", "devices", "Connected"], timeout=5).out
     names = [ln.split(" ", 2)[2] for ln in devices.splitlines()
@@ -1369,6 +1401,8 @@ ACTION_MAP: Dict[str, Callable] = {
     "toggle_wifi": toggle_wifi,
     "wifi_status": wifi_status,
     "toggle_bluetooth": toggle_bluetooth,
+    "bluetooth_on": bluetooth_on,
+    "bluetooth_off": bluetooth_off,
     "bluetooth_status": bluetooth_status,
     "airplane_mode": airplane_mode,
     "mic_toggle": mic_toggle,
@@ -1390,6 +1424,7 @@ _ACTION_ALIASES: Dict[str, str] = {
     "quit_app": "close_app", "kill_app": "close_app",
     "wifi": "toggle_wifi", "toggle_wi_fi": "toggle_wifi",
     "bluetooth": "toggle_bluetooth", "toggle_bt": "toggle_bluetooth",
+    "enable_bluetooth": "bluetooth_on", "disable_bluetooth": "bluetooth_off",
     "bt_status": "bluetooth_status", "wifi_state": "wifi_status",
     "airplane": "airplane_mode", "mode_avion": "airplane_mode",
     "flight_mode": "airplane_mode",
@@ -1407,7 +1442,7 @@ _ACTION_ALIASES: Dict[str, str] = {
 }
 
 _DANGEROUS_ACTIONS = {"restart", "shutdown", "suspend", "toggle_wifi",
-                      "toggle_bluetooth", "airplane_mode"}
+                      "toggle_bluetooth", "bluetooth_on", "bluetooth_off", "airplane_mode"}
 _TRUTHY = {"yes", "true", "1", "confirm", "oui", "confirme", "ok"}
 
 
@@ -1460,6 +1495,12 @@ def computer_settings(parameters: dict = None, response=None, player=None,
     if not action:
         return "Aucune action n'a pu être déterminée."
 
+    if action in {"bluetooth_on", "bluetooth_off"}:
+        current = _bluetooth_powered()
+        desired = action == "bluetooth_on"
+        if current is desired:
+            return "Bluetooth déjà activé." if desired else "Bluetooth déjà désactivé."
+
     print(f"[Settings] Action: {action}  Value: {value}  OS: {_OS}")
     if player:
         try:
@@ -1476,12 +1517,15 @@ def computer_settings(parameters: dict = None, response=None, player=None,
             "suspend": "Mettre l'ordinateur en veille",
             "toggle_wifi": "Modifier l'état du Wi-Fi",
             "toggle_bluetooth": "Modifier l'état du Bluetooth",
+            "bluetooth_on": "Activer le Bluetooth",
+            "bluetooth_off": "Désactiver le Bluetooth",
             "airplane_mode": "Basculer le mode avion",
         }
         return human_confirmation.request(
             f"computer:{action}", titles[action],
             "Cette opération peut interrompre ANO-GPT ou la connexion avec AnoRemote.",
-            lambda f=func, title=titles[action]: (f(), f"{title} : commande envoyée.")[1],
+            lambda f=func: str(f() or "Aucun résultat confirmé."),
+            dedupe=action not in {"bluetooth_on", "bluetooth_off", "toggle_bluetooth"},
         )
 
     # ── Exécution ────────────────────────────────────────────────────────

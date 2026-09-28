@@ -83,7 +83,9 @@ _HUE_LINKED = (
     "BG", "PANEL", "PANEL2", "SURFACE", "SURFACE2", "BORDER", "BORDER_B", "BORDER_A",
     "PRI", "PRI_DIM", "PRI_GHO", "TEXT", "TEXT_DIM", "TEXT_MED",
     "WHITE", "DARK", "BAR_BG", "BORDER_GLASS",
-    "CHROME", "ELEV1", "ELEV2",
+    "CHROME", "ELEV1", "ELEV2", "PRI_GLOW", "ACC", "ACC2", "INFO",
+    "NEON_PINK", "NEON_VIO", "NEON_AMBER", "GRID", "SCANLINE",
+    "HAIRLINE", "HAIRLINE_S", "ACCENT_GRAD",
 )
 _PALETTE_DEFAULTS: dict[str, str] = {k: getattr(C, k) for k in _HUE_LINKED}
 
@@ -122,6 +124,34 @@ def apply_ui_accent(accent_hex: str) -> bool:
         r, g, b = colorsys.hsv_to_rgb((h + dh) % 1.0, s, v)
         setattr(C, key, "#{:02x}{:02x}{:02x}".format(
             int(r * 255 + 0.5), int(g * 255 + 0.5), int(b * 255 + 0.5)))
+    C.PRI = accent_hex
+    ar, ag, ab = (int(accent_hex[i:i + 2], 16) for i in (1, 3, 5))
+    for key in ("ACC", "ACC2", "INFO", "NEON_PINK", "NEON_VIO", "NEON_AMBER"):
+        setattr(C, key, accent_hex)
+    C.PRI_GLOW = f"rgba({ar}, {ag}, {ab}, 0.25)"
+    C.BORDER_GLASS = f"rgba({ar}, {ag}, {ab}, 0.15)"
+    C.HAIRLINE = f"rgba({ar}, {ag}, {ab}, 0.10)"
+    C.HAIRLINE_S = f"rgba({ar}, {ag}, {ab}, 0.18)"
+    C.GRID = f"rgba({ar}, {ag}, {ab}, 0.07)"
+    C.SCANLINE = f"rgba({ar}, {ag}, {ab}, 0.045)"
+    C.ACCENT_GRAD = ("qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+                     f"stop:0 {accent_hex}, stop:1 {C.PRI_DIM})")
+    # ui/__init__.py peut avoir chargé les cartes avant la configuration de
+    # l'interface. Leur palette de classe doit suivre aussi le premier choix.
+    import sys
+    cards = sys.modules.get("ui.panels.rich_card_system")
+    theme = getattr(cards, "Theme", None) if cards is not None else None
+    if theme is not None:
+        for key in ("BG", "PANEL", "SURFACE", "SURFACE2", "PRI", "PRI_DIM",
+                    "PRI_GLOW", "NEON_PINK", "NEON_VIO", "NEON_AMBER", "ACC",
+                    "WHITE", "TEXT", "TEXT_MED", "TEXT_DIM"):
+            setattr(theme, key, getattr(C, key))
+        theme.GREEN = C.PRI
+        theme.BORDER_HAIR = f"rgba({ar}, {ag}, {ab}, 0.16)"
+        theme.BORDER_BRIGHT = f"rgba({ar}, {ag}, {ab}, 0.45)"
+        theme.GLASS_BORDER_TOP = QColor(ar, ag, ab, 210)
+        theme.GLASS_BORDER_MID = QColor(ar, ag, ab, 140)
+        theme.GLASS_BORDER_BOT = QColor(ar, ag, ab, 75)
     return True
 
 
@@ -129,24 +159,65 @@ def current_palette() -> dict[str, str]:
     return {k: getattr(C, k) for k in _HUE_LINKED}
 
 
+def tint_accent_css(css: str) -> str:
+    """Recolore les anciens néons littéraux des styles créés après le réglage."""
+    import re
+    red, green, blue = QColor(C.PRI).getRgb()[:3]
+    css = re.sub(r"rgba\(\s*(?:0,\s*212,\s*255|143,\s*92,\s*255|255,\s*43,\s*214)\s*,",
+                 f"rgba({red}, {green}, {blue},", css, flags=re.I)
+    for old in ("#00d4ff", "#8f5cff", "#ff2bd6", "#ff6b00", "#ffcc00"):
+        css = re.sub(re.escape(old), C.PRI, css, flags=re.I)
+    return css
+
+
 def retheme_all_widgets(old: dict[str, str], new: dict[str, str]) -> None:
+    import re
     mapping = {old[k].lower(): new[k].lower()
                for k in old if old[k].lower() != new.get(k, old[k]).lower()}
+    for key in ("PRI", "PRI_DIM", "ACC", "ACC2", "INFO", "NEON_PINK", "NEON_VIO",
+                "NEON_AMBER", "PRI_GLOW", "GRID", "SCANLINE", "HAIRLINE", "HAIRLINE_S"):
+        mapping.setdefault(_PALETTE_DEFAULTS[key].lower(), new[key].lower())
     if not mapping:
         return
     app = QApplication.instance()
     if app is None:
         return
+    # Les cartes riches gardent une copie de la palette lors de leur import.
+    from ui.panels.rich_card_system import Theme
+    for key in ("BG", "PANEL", "SURFACE", "SURFACE2", "PRI", "PRI_DIM",
+                "PRI_GLOW", "NEON_PINK", "NEON_VIO", "NEON_AMBER", "ACC",
+                "WHITE", "TEXT", "TEXT_MED", "TEXT_DIM"):
+        setattr(Theme, key, getattr(C, key))
+    Theme.GREEN = C.PRI
+    red, green, blue = QColor(C.PRI).getRgb()[:3]
+    for old_rgb in ("0, 212, 255", "143, 92, 255", "255, 43, 214"):
+        # Plusieurs cartes ont encore une couleur néon RGBA écrite en dur.
+        mapping[f"rgba({old_rgb},"] = f"rgba({red}, {green}, {blue},"
+    Theme.BORDER_HAIR = f"rgba({red}, {green}, {blue}, 0.16)"
+    Theme.BORDER_BRIGHT = f"rgba({red}, {green}, {blue}, 0.45)"
+    Theme.GLASS_BORDER_TOP = QColor(red, green, blue, 210)
+    Theme.GLASS_BORDER_MID = QColor(red, green, blue, 140)
+    Theme.GLASS_BORDER_BOT = QColor(red, green, blue, 75)
+    # Un passage regex unique empêche les remplacements en cascade.
+    pattern = re.compile("|".join(re.escape(k) for k in sorted(mapping, key=len, reverse=True)), re.I)
     for w in app.allWidgets():
         try:
             ss = w.styleSheet()
             if ss:
-                s2 = ss
-                for o, n in mapping.items():
-                    if o in s2:
-                        s2 = s2.replace(o, n)
+                s2 = tint_accent_css(pattern.sub(lambda match: mapping[match.group(0).lower()], ss))
                 if s2 != ss:
                     w.setStyleSheet(s2)
+            if hasattr(w, "set_header") and hasattr(w, "accent_color"):
+                w.set_header(accent_color=C.PRI)
+            elif w.__class__.__name__ == "RichCardWidget":
+                w._accent = QColor(C.PRI)
+                glyph = getattr(w, "_glyph", None)
+                if glyph is not None:
+                    glyph._color = QColor(C.PRI)
+                    glyph._pix = make_svg_icon(getattr(w, "_icon_name", "info"), C.PRI, 13).pixmap(13, 13)
+                    glyph.update()
+            elif hasattr(w, "_accent") and w.__class__.__name__ == "SparklineGraph":
+                w._accent = QColor(C.PRI)
             w.update()
         except Exception:
             pass

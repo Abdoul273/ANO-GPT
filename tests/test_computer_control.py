@@ -17,6 +17,27 @@ from actions.computer_control import (
     _parse_control_locally,
 )
 import actions.computer_control as cc
+from core.tool_dispatcher import _click_target_from_request
+
+
+def test_move_current_window_parsing_and_readback(monkeypatch):
+    assert _parse_control_locally("déplace cette fenêtre sur le bureau 1") == {
+        "action": "move_to_workspace", "params": {"title": "", "workspace": "1"}}
+    clients = [{"address": "0xother", "title": "Autre", "workspace": {"id": 2}},
+               {"address": "0xactive", "title": "Courante", "workspace": {"id": 2}}]
+    monkeypatch.setattr(cc, "_WAYLAND", True)
+    monkeypatch.setattr(cc, "_have", lambda name: name == "hyprctl")
+    monkeypatch.setattr(cc, "_hyprctl_json", lambda name: {
+        "clients": clients, "activewindow": {"address": "0xactive", "title": "Courante"}}
+        .get(name))
+    calls = []
+    monkeypatch.setattr(cc, "_HAS_WINDOW_INSTANCES", True)
+    monkeypatch.setattr(cc, "_hypr_move_window_to_workspace",
+                        lambda selector, ws, follow=False: calls.append(selector) or True)
+    monkeypatch.setattr(cc, "_confirm_window_workspace", lambda addr, ws: False)
+    result = cc._move_to_workspace("cette fenêtre", "1")
+    assert calls == ["address:0xactive"]
+    assert "ne l'a pas confirmé" in result
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -446,10 +467,14 @@ def test_existing_switch_workspace(monkeypatch):
 def test_existing_click_actions(monkeypatch):
     run_cmds = []
     monkeypatch.setattr(cc, '_WAYLAND', True)
-    monkeypatch.setattr(cc, '_have', lambda cmd: cmd == 'ydotool')
+    monkeypatch.setattr(cc, '_have', lambda cmd: cmd in ('ydotool', 'hyprctl'))
+    monkeypatch.setattr(cc, '_move', lambda x, y: f'Souris → ({x},{y})')
 
     def mock_run(cmd, *args, **kwargs):
         run_cmds.append(cmd)
+        if cmd[:2] == ['hyprctl', 'cursorpos']:
+            x, y = (100, 200) if len([c for c in run_cmds if c[:2] == ['hyprctl', 'cursorpos']]) == 1 else (300, 400)
+            return cc.kit.ProcResult(cmd=tuple(cmd), code=0, out=f'{{"x":{x},"y":{y}}}')
         return cc.kit.ProcResult(cmd=tuple(cmd), code=0)
 
     monkeypatch.setattr(cc.kit, 'run', mock_run)
@@ -461,6 +486,37 @@ def test_existing_click_actions(monkeypatch):
     # Clic droit
     res_right = computer_control({'action': 'right_click', 'x': 300, 'y': 400})
     assert 'Clic right à (300,400)' in res_right
+
+
+def test_visual_click_never_claims_success_when_mouse_did_not_click(monkeypatch):
+    monkeypatch.setattr(cc, '_screen_find', lambda description: (100, 200))
+    monkeypatch.setattr(cc, '_click', lambda **kwargs: 'Clic annulé : curseur mal placé')
+    result = computer_control({'action': 'screen_click', 'description': 'bouton Wi-Fi'})
+    assert 'Clic envoyé' not in result
+    assert 'annulé' in result
+
+
+def test_wayland_click_aborts_when_cursor_misses_target(monkeypatch):
+    commands = []
+    monkeypatch.setattr(cc, '_WAYLAND', True)
+    monkeypatch.setattr(cc, '_have', lambda cmd: cmd in ('ydotool', 'hyprctl'))
+    monkeypatch.setattr(cc, '_move', lambda x, y: 'Souris → (100,200)')
+
+    def mock_run(cmd, *args, **kwargs):
+        commands.append(cmd)
+        return cc.kit.ProcResult(cmd=tuple(cmd), code=0, out='{"x":150,"y":250}')
+
+    monkeypatch.setattr(cc, '_run', mock_run)
+    result = cc._click(100, 200)
+    assert 'Clic annulé' in result
+    assert not any(cmd[:2] == ['ydotool', 'click'] for cmd in commands)
+
+
+def test_spoken_named_click_keeps_target_and_discards_guessed_coordinates():
+    assert _click_target_from_request(
+        'Clique sur le bouton du Wi-Fi sur mon écran.'
+    ) == 'le bouton du Wi-Fi'
+    assert _click_target_from_request('Clique sur 100,200') == ''
 
 
 def test_existing_scroll(monkeypatch):
