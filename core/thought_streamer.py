@@ -479,6 +479,11 @@ class ThoughtStreamer:
         # Minuteur pour le déclenchement audio à 1.5s
         self._audio_timer: Optional[threading.Timer] = None
 
+        # Garde-fou de « Synthèse des résultats… » : si le modèle ne dit rien
+        # après un outil (« ferme ça » exécuté, réponse muette), aucun début de
+        # parole ni fin de tour ne viendrait effacer la bulle.
+        self._settle_timer: Optional[threading.Timer] = None
+
         # Suivi du lecteur TTS chuchoté pour coupure immédiate
         self._active_tts_stop_cb: Optional[Callable[[], None]] = None
 
@@ -509,6 +514,7 @@ class ThoughtStreamer:
     def start_thinking(self, initial_step: str = "Pensée en cours...", tool_name: Optional[str] = None) -> None:
         """Enclenche une session de réflexion et arme le minuteur audio de 1.5s."""
         with self._lock:
+            self._cancel_settle_timer()
             if not self._is_thinking:
                 self._is_thinking = True
                 self._thinking_start_time = time.monotonic()
@@ -594,6 +600,7 @@ class ThoughtStreamer:
                 step = "Synthèse des résultats..."
                 self._current_micro_step = step
                 self._notify_ui(step, is_active=True)
+                self._arm_settle_timer()
 
     def on_speaking_start(self) -> None:
         """Appelé dès que le modèle commence à émettre sa réponse réelle.
@@ -605,6 +612,7 @@ class ThoughtStreamer:
         """
         with self._lock:
             self._disarm_audio_timer()
+            self._cancel_settle_timer()
             self._stop_active_whisper()
             self._is_thinking = False
             self._accumulated_thought.clear()
@@ -626,6 +634,33 @@ class ThoughtStreamer:
     def reset(self) -> None:
         """Réinitialise totalement le composant."""
         self.on_turn_complete()
+
+    # ── Garde-fou de fin d'outil ─────────────────────────────────────────────
+
+    SETTLE_SECONDS = 6.0
+
+    def _arm_settle_timer(self) -> None:
+        self._cancel_settle_timer()
+        timer = threading.Timer(self.SETTLE_SECONDS, self._on_settle_fired)
+        timer.daemon = True
+        self._settle_timer = timer
+        timer.start()
+
+    def _cancel_settle_timer(self) -> None:
+        if self._settle_timer is not None:
+            try:
+                self._settle_timer.cancel()
+            except Exception:
+                pass
+            self._settle_timer = None
+
+    def _on_settle_fired(self) -> None:
+        """Aucune parole ni nouvel outil après la fin d'un outil : on efface."""
+        with self._lock:
+            if self._current_tool is not None or not self._is_thinking:
+                return
+            self._settle_timer = None
+        self.on_speaking_start()
 
     # ── Minuteur et Vocalisation Chuchotée ───────────────────────────────────
 

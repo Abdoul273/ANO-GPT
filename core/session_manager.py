@@ -1752,13 +1752,17 @@ class SessionManager:
                                 getattr(fc, "name", "action"),
                                 getattr(fc, "args", None),
                             )
-                        fn_responses = await self._execute_tool_batch(
-                            response.tool_call.function_calls
-                        )
-                        for fc in calls:
-                            self.thought_streamer.feed_tool_end(
-                                getattr(fc, "name", "action")
+                        try:
+                            fn_responses = await self._execute_tool_batch(
+                                response.tool_call.function_calls
                             )
+                        finally:
+                            # Même si le lot plante : sans cela, « Synthèse
+                            # des résultats… » resterait affiché indéfiniment.
+                            for fc in calls:
+                                self.thought_streamer.feed_tool_end(
+                                    getattr(fc, "name", "action")
+                                )
                         if not self._interrupted and not getattr(self, "_noise_turn", False):
                             await self.session.send_tool_response(
                                 function_responses=fn_responses
