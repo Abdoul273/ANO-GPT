@@ -355,6 +355,7 @@ class ThoughtNoiseFilter:
         "contacts": ("Recherche dans vos contacts...", "Je cherche dans vos contacts..."),
         "code_helper": ("Analyse du code informatique...", "J'analyse le code source..."),
         "auto_debug": ("Diagnostic et débogage automatique...", "J'examine l'erreur pour la corriger..."),
+        "system_state": ("Lecture de l'état réel du système...", "Je vérifie l'état réel..."),
         "system_status": ("Inspection des ressources système...", "Je vérifie l'état du système..."),
         "computer_settings": ("Réglage des paramètres...", "Je règle les paramètres demandés..."),
         "navigation": ("Calcul de l'itinéraire...", "Je consulte l'itinéraire..."),

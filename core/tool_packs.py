@@ -51,7 +51,7 @@ CORE: frozenset[str] = frozenset({
     # Temps
     "reminder", "timer", "weather_report",
     # Machine
-    "system_status", "open_app", "close_app", "shell_exec", "computer_control", "undo_action",
+    "system_status", "system_state", "open_app", "close_app", "shell_exec", "computer_control", "undo_action",
     "agent_process_monitor",
     # Cadre de session
     "report_capability_gap", "shutdown_jarvis", "voice_style",

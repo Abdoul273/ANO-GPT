@@ -168,7 +168,7 @@ _CIRCUIT_ERROR_PREFIXES = ("tool '", "timeout:", "timed out:")
 # d'écriture et de sélection restent séquentielles car leur ordre est souvent
 # porteur de sens (chercher puis sélectionner, agir puis vérifier, etc.).
 _PARALLEL_SAFE_ACTIONS = frozenset({
-    "web_search", "system_status", "weather_report", "deep_think",
+    "web_search", "system_status", "system_state", "weather_report", "deep_think",
     "simulate_decision",
 })
 

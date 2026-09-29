@@ -446,6 +446,26 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "system_state",
+        "description": (
+            "Lit l'ÉTAT RÉEL de la machine à la source (bluetoothctl, nmcli, wpctl, hyprctl, "
+            "brightnessctl, playerctl, Caelestia). OBLIGATOIRE avant de répondre à toute question "
+            "d'état : « le Bluetooth est-il actif ? », « suis-je connecté au Wi-Fi / VPN ? », "
+            "« quel volume, micro coupé ? », « quelle luminosité ? », « quelle batterie, quel profil "
+            "d'énergie ? », « quelles fenêtres sont ouvertes, sur quel espace ? », « que joue-t-on ? », "
+            "« mode nuit / concentration ? », « combien de RAM / CPU / disque ? ». "
+            "Ne réponds JAMAIS d'après ta mémoire ou le contexte ambiant : appelle cet outil. "
+            "topic = bluetooth | wifi | reseau (VPN inclus) | audio | luminosite | energie | confort | "
+            "bureau (Hyprland) | media | ressources | avion | shell ; laisse vide pour un relevé complet."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic": {"type": "STRING", "description": "Rubrique(s) à lire, séparées par un espace ; vide = tout."},
+            },
+        },
+    },
+    {
         "name": "weather_report",
         "description": "Gives the weather report to user",
         "parameters": {
@@ -4488,6 +4508,11 @@ class ToolDispatcher:
             elif name == "system_status":
                 r = await loop.run_in_executor(None, get_system_status)
                 result = str(r)
+
+            elif name == "system_state":
+                from actions.system_probe import system_state
+                result = await loop.run_in_executor(
+                    None, lambda: system_state(str(args.get("topic") or "all")))
 
             elif name == "undo_action":
                 if str(args.get("action") or "undo").casefold() == "list":
