@@ -394,9 +394,6 @@ class SessionManager:
         self._foreign_noise_turn = True
         self._noise_turn = True
         self._live_user_text = ""
-        self._last_user_phrase = ""
-        self._turn_tool_calls = 0
-        self._claim_guard_phrase = ""
         return True
 
     def _extend_toolkit(self, text: str, *, origin: str = "demande") -> bool:
@@ -762,10 +759,12 @@ class SessionManager:
         """Rattrape un « c'est fait » dit sans outil : force l'appel réel, une fois."""
         from core.claim_guard import CORRECTION, is_unbacked_claim
 
-        calls, self._turn_tool_calls = self._turn_tool_calls, 0
-        phrase = self._last_user_phrase
+        # Méthodes liées à l'hôte : pas d'__init__ ici, d'où les getattr.
+        calls = getattr(self, "_turn_tool_calls", 0)
+        self._turn_tool_calls = 0
+        phrase = getattr(self, "_last_user_phrase", "")
         if (self._interrupted or getattr(self, "_noise_turn", False)
-                or phrase == self._claim_guard_phrase
+                or phrase == getattr(self, "_claim_guard_phrase", "")
                 or not is_unbacked_claim(phrase, model_text, calls)):
             return
         self._claim_guard_phrase = phrase
@@ -1767,7 +1766,7 @@ class SessionManager:
                                 )
                             continue
                         calls = getattr(response.tool_call, "function_calls", [])
-                        self._turn_tool_calls += len(calls or [])
+                        self._turn_tool_calls = getattr(self, "_turn_tool_calls", 0) + len(calls or [])
                         for fc in calls:
                             self.thought_streamer.feed_tool_start(
                                 getattr(fc, "name", "action"),
