@@ -1764,11 +1764,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "hypr_orchestrator",
         "description": (
-            "Orchestrateur dynamique de fenêtres et d'espaces de travail Hyprland. Utiliser pour: "
-            "reclasser automatiquement toutes les fenêtres ouvertes sur leurs workspaces dédiés selon leur rôle "
-            "(1: Code/IDE, 2: Web/Docs, 3: Terminal/DevSecOps, 4: Comms, 5: Média, 6: Monitoring), "
-            "appliquer des presets de travail (preset='devsecops' | 'coding' | 'monitoring' | 'web'), "
-            "ou déplacer dynamiquement une fenêtre spécifique vers son bureau dédié."
+            "Fenêtres et bureaux Hyprland : déplacer une fenêtre vers un bureau (« envoie ça sur le bureau 4 » → "
+            "action=move_window, workspace=4), organiser/reclasser les fenêtres, appliquer un preset, lister. "
+            "Appelle-le TOUJOURS : ne dis jamais qu'une fenêtre est déplacée sans son retour."
         ),
         "parameters": {
             "type": "OBJECT",

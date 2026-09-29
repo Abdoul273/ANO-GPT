@@ -51,6 +51,7 @@ CORE: frozenset[str] = frozenset({
     # Temps
     "reminder", "timer", "weather_report",
     # Machine
+    "hypr_orchestrator",
     "system_status", "system_state", "open_app", "close_app", "shell_exec", "computer_control", "undo_action",
     "agent_process_monitor",
     # Cadre de session
@@ -157,7 +158,7 @@ PACKS: Mapping[str, ToolPack] = {
         label="développement et système avancé",
         tools=frozenset({
             "devsecops", "github_control", "live_auto_debug", "self_repair",
-            "hypr_orchestrator", "computer_settings",
+            "computer_settings",
         }),
         triggers=_triggers(
             r"\b(preset|mode)\s+(coding|code|devsecops)\b",

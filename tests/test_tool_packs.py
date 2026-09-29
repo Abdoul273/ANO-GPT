@@ -28,7 +28,7 @@ def test_le_noyau_divise_le_preambule_par_deux():
     tout = _weight(TOOL_DECLARATIONS) + len(PROMPT) // 4
     noyau = (_weight(tp.select_declarations(TOOL_DECLARATIONS, frozenset()))
              + len(tp.filter_prompt(PROMPT, frozenset())) // 4)
-    assert noyau < tout * 0.55, f"{noyau} jetons contre {tout} : gain insuffisant"
+    assert noyau < tout * 0.58, f"{noyau} jetons contre {tout} : gain insuffisant"
 
 
 def test_a_froid_seul_le_carnet_du_telephone_est_visible():

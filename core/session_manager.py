@@ -394,6 +394,9 @@ class SessionManager:
         self._foreign_noise_turn = True
         self._noise_turn = True
         self._live_user_text = ""
+        self._last_user_phrase = ""
+        self._turn_tool_calls = 0
+        self._claim_guard_phrase = ""
         return True
 
     def _extend_toolkit(self, text: str, *, origin: str = "demande") -> bool:
@@ -754,6 +757,21 @@ class SessionManager:
             self._submit_text_turn(text),
             self._loop
         )
+
+    def _check_unbacked_claim(self, model_text: str) -> None:
+        """Rattrape un « c'est fait » dit sans outil : force l'appel réel, une fois."""
+        from core.claim_guard import CORRECTION, is_unbacked_claim
+
+        calls, self._turn_tool_calls = self._turn_tool_calls, 0
+        phrase = self._last_user_phrase
+        if (self._interrupted or getattr(self, "_noise_turn", False)
+                or phrase == self._claim_guard_phrase
+                or not is_unbacked_claim(phrase, model_text, calls)):
+            return
+        self._claim_guard_phrase = phrase
+        self.ui.write_log("SYS : confirmation sans outil détectée — exécution forcée.")
+        text = CORRECTION.format(claim=model_text.strip()[:80], request=phrase[:120])
+        spawn_logged(self._submit_text_turn(text), name="claim-guard", ui=self.ui)
 
     async def _submit_text_turn(
         self,
@@ -1536,6 +1554,7 @@ class SessionManager:
                                         name="contextual-persona-switch", ui=self.ui,
                                     )
                                 self._live_user_text = merged
+                                self._last_user_phrase = merged
                                 self._last_user_speech = time.monotonic()
                                 # Fermer la caméra dès que la demande est reconnue.
                                 # Attendre le turn_complete laisse le studio ouvert
@@ -1591,6 +1610,7 @@ class SessionManager:
                                 },
                             )
                             tstat = {"rx": 0, "drop": 0, "enq": 0, "silence": 0, "events": []}
+                            self._check_unbacked_claim("".join(out_buf))
                             if use_elevenlabs and out_buf and not self._interrupted:
                                 await speak_live_turn(self, "".join(out_buf), voice_settings)
                             bus = getattr(self, "_event_bus", None)
@@ -1747,6 +1767,7 @@ class SessionManager:
                                 )
                             continue
                         calls = getattr(response.tool_call, "function_calls", [])
+                        self._turn_tool_calls += len(calls or [])
                         for fc in calls:
                             self.thought_streamer.feed_tool_start(
                                 getattr(fc, "name", "action"),
