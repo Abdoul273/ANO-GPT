@@ -1,7 +1,7 @@
 # ANO-GPT — repères techniques
 
 Les règles de travail (périmètre, tests, quota) sont globales et vivent dans
-`~/.Codex/AGENTS.md`. Ce fichier ne garde que ce qui est propre à ce projet.
+`~/.codex/AGENTS.md`. Ce fichier ne garde que ce qui est propre à ce projet.
 
 - **Machine modeste** : 2 cœurs, 11 Go, Wayland/Hyprland. Qt tourne sur le
   thread principal et l'audio dans un thread asyncio — **ils partagent le
