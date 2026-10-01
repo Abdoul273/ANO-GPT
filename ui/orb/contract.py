@@ -30,10 +30,12 @@ STATE_TO_WS: dict[str, str] = {
 
 def visual_state(state: str, speaking: bool, muted: bool) -> str:
     """État visuel unique, identique pour tous les styles."""
+    # « muted » coupe le microphone, pas la voix émise : les réponses aux
+    # commandes écrites doivent aussi articuler quand le micro est verrouillé.
+    if speaking or str(state or "").upper() == "SPEAKING":
+        return "speaking"
     if muted:
         return "idle"
-    if speaking:
-        return "speaking"
     return STATE_TO_WS.get(str(state or "").upper(), "idle")
 
 

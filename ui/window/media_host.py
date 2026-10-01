@@ -252,11 +252,14 @@ class MediaHostMixin:
         if companion is None:
             return
         show = self._companion_should_show()
+        # Perdre le focus ne masque pas la fenêtre (notamment en mosaïque).
+        # Ne suspendre le grand visage que lorsqu'elle est cachée ou réduite.
+        sleeping = not self.isVisible() or self.isMinimized()
         if show == companion.isVisible():
             # Filet : un sommeil de calcul qui survivrait au retour de la
             # fenêtre figerait le grand orbe à l'écran, sans rien pour le
             # rattraper. L'état de rendu suit toujours ce qui est visible.
-            self.hud.set_low_power(show)
+            self.hud.set_low_power(sleeping)
             return
         if show:
             companion.show()
@@ -264,9 +267,9 @@ class MediaHostMixin:
             self._hint_companion_rule()
         else:
             companion.hide()
-        # Un seul des deux rendus anime à la fois : c'est la règle sur cette
-        # machine, où l'interface et la voix se partagent le GIL.
-        self.hud.set_low_power(show)
+        # La cadence adaptative de l'orbe borne le coût du visage visible ;
+        # le compagnon conserve son rôle lorsque l'utilisateur est ailleurs.
+        self.hud.set_low_power(sleeping)
 
     def _restore_from_companion(self) -> None:
         self.showNormal()
