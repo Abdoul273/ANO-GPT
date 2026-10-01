@@ -17,7 +17,7 @@ _ORDER = re.compile(
     r"bouge|mets|met|mettre|passe|passer|va|active|activer|desactive|desactiver|coupe|couper|"
     r"allume|eteins|augmente|baisse|monte|diminue|change|changer|connecte|deconnecte|"
     r"redemarre|verrouille|capture|prends|joue|pause|arrete|supprime|efface|installe|"
-    r"minimise|maximise|agrandis|reduis|bascule|range|organise)\b"
+    r"minimise|maximise|agrandis|reduis|bascule|range|organise|tape|ecris|ecrire|saisis|navigue)\b"
 )
 _QUESTION = re.compile(r"^(est[- ]ce|est ce|tu peux me dire|dis[- ]moi|qu'?est|quel|quelle|combien|pourquoi|comment)\b")
 
@@ -27,7 +27,7 @@ _CLAIM = re.compile(
     r"\best (deja )?(ouverte?|fermee?|lancee?|sur le bureau|sur l'espace|deplacee?|active[e]?|desactive[e]?)|"
     r"\bsont (ouvertes?|fermees?)|"
     r"\bj'ai (bien )?(ouvert|ferme|lance|deplace|envoye|mis|active|desactive|coupe|augmente|baisse|change|"
-    r"connecte|range|installe|supprime)|"
+    r"connecte|range|installe|supprime|ecrit|tape|saisi)|"
     r"\bvoila,? (c'est|j'ai|la|le)|\bmission accomplie|\bc'est chose faite|\bdeja fait)"
 )
 
@@ -51,9 +51,25 @@ def is_unbacked_claim(user_text: str, model_text: str, tool_calls: int) -> bool:
     return tool_calls == 0 and is_action_request(user_text) and claims_completion(model_text)
 
 
+def missing_typing_claim(user_text: str, model_text: str, evidence: list) -> bool:
+    """Ouvrir une application ne prouve pas que le texte demandé y a été saisi."""
+    if not re.search(r"\b(tape|ecris|ecrire|saisis)\b", _fold(user_text)):
+        return False
+    if not claims_completion(model_text):
+        return False
+    for name, args in evidence:
+        if name == "open_app" and (args.get("command") or args.get("type_text")):
+            return False
+        if name == "computer_control" and args.get("action") in {"type", "type_text", "write"}:
+            return False
+    return True
+
+
 CORRECTION = (
-    "[SYSTÈME — correction] Tu viens d'annoncer « {claim} » mais tu n'as appelé AUCUN outil : "
-    "rien n'a été exécuté. Appelle maintenant l'outil qui réalise « {request} », "
-    "puis annonce le résultat réel. Si aucun outil ne convient, dis franchement que tu n'as "
+    "[SYSTÈME — correction] Tu viens d'annoncer « {claim} » sans appel d'outil "
+    "qui justifie toute la demande « {request} ». Exécute uniquement l'étape manquante ; "
+    "ne répète jamais une action déjà exécutée. Pour une saisie dans une fenêtre déjà ouverte, "
+    "utilise computer_control ; respecte « sans envoyer » avec press_enter=False. "
+    "Puis annonce le résultat réel. Si aucun outil ne convient, dis franchement que tu n'as "
     "pas pu le faire. Ne prétends rien.]"
 )

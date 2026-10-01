@@ -785,6 +785,15 @@ class AudioEngine:
         if now_mono - last_trigger < 2.0:
             return False
 
+        # Le garde-fou de session reprend les demandes sans retour serveur.
+        # Les annuler ici après 5 s détruisait le tour texte et son suivi de
+        # reprise, alors que Gemini réfléchissait encore ou exécutait un outil.
+        if not jarvis_speaking and (
+            getattr(self, "_awaiting_server_since", 0.0)
+            or getattr(self, "_active_tool_tasks", None)
+        ):
+            return False
+
         last_io = getattr(self, "_last_model_turn_data_at", 0.0)
         if last_io == 0.0:
             self._last_model_turn_data_at = now_mono

@@ -2957,6 +2957,13 @@ class ToolDispatcher:
     async def _execute_tool_batch(self, function_calls) -> list[types.FunctionResponse]:
         """Exécute ensemble les lectures indépendantes, sinon conserve l'ordre."""
         calls = list(function_calls or ())
+        if getattr(self, "_voice_only_turn", False):
+            # Une réparation de voix relit une réponse déjà produite. Aucun
+            # appel ne doit rouvrir une fenêtre, retaper ou renvoyer un message.
+            return [types.FunctionResponse(
+                id=fc.id, name=fc.name,
+                response={"ok": False, "result": "Lecture vocale seule : aucun outil autorisé. Lis la réponse fournie."},
+            ) for fc in calls]
         self._is_thinking = True
         active = getattr(self, "_active_tool_tasks", None)
         if active is None:

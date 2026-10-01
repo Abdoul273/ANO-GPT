@@ -177,6 +177,17 @@ def test_watchdog_does_not_trigger_when_recently_active():
     assert host._turn_submit_lock.locked()
 
 
+def test_watchdog_does_not_cancel_pending_server_reply_or_running_tools():
+    for pending in ({"_awaiting_server_since": 90.0}, {"_active_tool_tasks": {object()}}):
+        host = DummyHost()
+        host._last_model_turn_data_at = 90.0
+        host.reset_audio_and_turn_state = Mock()
+        for name, value in pending.items():
+            setattr(host, name, value)
+        assert not AudioEngine.check_audio_watchdog(host, now=100.0)
+        host.reset_audio_and_turn_state.assert_not_called()
+
+
 def test_watchdog_rate_limiting():
     host = DummyHost()
     called = []

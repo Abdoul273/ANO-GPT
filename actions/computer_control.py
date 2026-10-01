@@ -823,6 +823,24 @@ def _scroll(direction: str, amount: int = 3) -> str:
 # Fenêtres : focus, liste, bureaux
 # ════════════════════════════════════════════════════════════════════════════
 
+def _terminal_agent_windows(clients: list, agent_name: str) -> list:
+    """Retrouve le terminal d'un agent même si son titre est simplement Kitty."""
+    if agent_name not in {"codex", "claude", "agy", "antigravity"}:
+        return []
+    import psutil
+    from actions.agent_process_monitor import _agents
+
+    terminal_pids = set()
+    for agent in _agents("agy" if agent_name == "antigravity" else agent_name):
+        try:
+            terminal_pids.update(p.pid for p in psutil.Process(agent["pid"]).parents())
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return [c for c in clients
+            if c.get("pid") in terminal_pids
+            and _is_terminal(str(c.get("class") or c.get("initialClass") or ""))]
+
+
 def _focus_window(title: str) -> str:
     if _WAYLAND and _have("hyprctl"):
         try:
@@ -851,6 +869,11 @@ def _focus_window(title: str) -> str:
                     # Le titre peut devenir « codex » après le lancement.
                     matches = [c for c in clients if _is_terminal(
                         str(c.get("class") or c.get("initialClass") or ""))]
+                if not matches:
+                    matches = _terminal_agent_windows(clients, needle)
+                    if len(matches) > 1:
+                        return (f"Plusieurs fenêtres terminal hébergent {needle} : "
+                                "précise le bureau ou l'adresse de la fenêtre avant de saisir du texte.")
                 if matches:
                     target = matches[0]
                     # Hyprland ne garantit pas l'ordre des clients. L'adresse

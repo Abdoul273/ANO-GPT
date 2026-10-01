@@ -242,6 +242,38 @@ def test_focus_window_by_address(monkeypatch):
     assert "address:0x55aabbcc" in focused or any("address:0x55aabbcc" in str(x) for x in focused)
 
 
+def test_codex_window_is_found_through_terminal_process_ancestry(monkeypatch):
+    import psutil
+    from types import SimpleNamespace
+    from actions import agent_process_monitor as monitor
+
+    monkeypatch.setattr(monitor, "_agents", lambda name: [{"pid": 123}])
+    monkeypatch.setattr(psutil, "Process", lambda pid: SimpleNamespace(
+        parents=lambda: [SimpleNamespace(pid=77), SimpleNamespace(pid=55)],
+    ))
+    clients = [
+        {"pid": 55, "class": "kitty", "title": "fish", "address": "0xabc"},
+        {"pid": 99, "class": "kitty", "title": "fish", "address": "0xdef"},
+    ]
+    assert cc._terminal_agent_windows(clients, "codex") == [clients[0]]
+
+
+def test_codex_focus_uses_kitty_window_even_without_codex_title(monkeypatch):
+    monkeypatch.setattr(cc, "_WAYLAND", True)
+    monkeypatch.setattr(cc, "_have", lambda cmd: cmd == "hyprctl")
+    monkeypatch.setattr(cc.time, "sleep", lambda _: None)
+    client = {"address": "0xabc", "title": "fish", "class": "kitty", "workspace": {"id": 4}}
+    active = {"address": "0xother"}
+    monkeypatch.setattr(cc, "_hyprctl_json", lambda cmd: [client] if cmd == "clients" else active)
+    monkeypatch.setattr(cc, "_terminal_agent_windows", lambda clients, name: [client])
+    monkeypatch.setattr(cc, "_hypr_dispatch", lambda *args: True)
+    focused = []
+    monkeypatch.setattr(cc, "_hypr_focus_window", lambda selector: focused.append(selector) or active.update(address="0xabc") or True)
+    result = cc._focus_window("codex")
+    assert focused == ["address:0xabc"]
+    assert "kitty" in result.casefold() or "fish" in result.casefold()
+
+
 def test_type_uses_recent_terminal_on_its_workspace(monkeypatch):
     from actions import launch_tracker
 

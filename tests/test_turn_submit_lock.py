@@ -8,6 +8,7 @@ remplaçait et qu'un reset le relâchait de l'extérieur.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -181,3 +182,71 @@ def test_toolkit_reconnect_replays_local_context_without_live_handle():
 
 def test_spawn_logged_reports_exception():
     asyncio.run(_test_spawn_logged_reports_exception())
+
+
+def test_typed_request_survives_five_second_audio_watchdog():
+    async def run():
+        host = _Host()
+        host._is_speaking = False
+        host._model_turn_active = False
+        turn = asyncio.create_task(host._submit_text_turn(
+            "mon pc est à combien de pourcent", timeout_s=1.0,
+            user_request="mon pc est à combien de pourcent",
+        ))
+        await asyncio.sleep(0)
+        assert host.session.sent == ["mon pc est à combien de pourcent"]
+        assert host._live_user_text == host._last_user_phrase == host.session.sent[0]
+        assert not AudioEngine.check_audio_watchdog(host, now=time.monotonic() + 6)
+        assert not turn.done()
+        assert host._turn_submit_lock.locked()
+        host._turn_done_event.set()
+        assert await turn is True
+    asyncio.run(run())
+
+
+def test_typed_request_during_disconnect_is_replayed_and_tracked():
+    async def run():
+        host = _Host()
+        host.session = None
+        request = "écris salut sans envoyer"
+        assert not await host._submit_text_turn(request, user_request=request)
+        assert host._unanswered == [request]
+        assert host._deferred_turns == []
+        host.session = _Session()
+        asyncio.create_task(_finish_turn(host, .5))
+        await host._resend_unanswered()
+        assert len(host.session.sent) == 1
+        assert host.session.sent[0].endswith(request)
+        assert host._last_user_phrase == request
+        assert host._unanswered == []
+    asyncio.run(run())
+
+
+def test_background_announcement_does_not_retry_previous_user_action():
+    async def run():
+        host = _Host()
+        host._last_user_phrase = "écris salut sans envoyer"
+        host._claim_guard_enabled = True
+        task = asyncio.create_task(host._submit_text_turn("Annonce le rappel de réunion", timeout_s=1))
+        await asyncio.sleep(0)
+        assert not host._claim_guard_enabled
+        host._turn_done_event.set()
+        assert await task
+    asyncio.run(run())
+
+
+def test_new_request_takes_priority_over_old_voice_repair():
+    from core.session_manager import _VOICE_REPAIR_PREFIX
+
+    async def run():
+        host = _Host()
+        host._deferred_turns = [f"{_VOICE_REPAIR_PREFIX} Relis l'ancienne réponse"]
+        request = "ouvre kitty"
+        task = asyncio.create_task(host._submit_text_turn(request, user_request=request, timeout_s=1))
+        await asyncio.sleep(0)
+        assert host.session.sent == [request]
+        assert not host._voice_only_turn
+        assert host._deferred_turns == []
+        host._turn_done_event.set()
+        assert await task
+    asyncio.run(run())

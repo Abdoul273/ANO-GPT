@@ -1040,7 +1040,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     asyncio.run_coroutine_threadsafe(
                         self.switch_persona_then_submit(auto_persona, text), self._loop
                     )
-            return
+                return
         # Commutation de persona / mode métier par commande texte ("Jarvis, passe en mode DevOps")
         p_match = self.check_persona_voice_trigger(text)
         if p_match:
@@ -1061,14 +1061,20 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                     self._send_daily_briefing("texte"), self._loop
                 )
                 return
-        if not self._loop or not self.session:
+        if not self._loop:
+            self._unanswered = list(getattr(self, "_unanswered", ()) or ())
+            self._unanswered.append(text)
+            del self._unanswered[:-2]
+            if hasattr(self.ui, "write_log"):
+                self.ui.write_log("SYS : demande conservée — elle sera envoyée à la connexion.")
             return
         # Un tour vocal encore ouvert entrerait en conflit avec le tour texte
         # qu'on envoie ici : on le referme d'abord.
         self._loop.call_soon_threadsafe(self._activity_end)
-        asyncio.run_coroutine_threadsafe(
-            self._submit_text_with_screen(text),
-            self._loop
+        self._loop.call_soon_threadsafe(
+            lambda: spawn_logged(
+                self._submit_text_with_screen(text), name="commande-texte", ui=self.ui,
+            )
         )
 
     async def _submit_text_with_screen(self, text: str) -> bool:
@@ -1079,7 +1085,7 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
                 await mind.inject_into_live(self, text)
             except Exception as exc:
                 print(f"[Écran] injection texte ignorée : {exc}")
-        return await self._submit_text_turn(text)
+        return await self._submit_text_turn(text, user_request=text)
     def _wake_up(self, reason: str = "hotkey") -> str:
         """Ouvre l'écoute, sauf après une coupure manuelle explicite."""
         if (self.ui.muted

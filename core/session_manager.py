@@ -93,16 +93,18 @@ _STALE_AUDIO_TURN_S = 8.0
 # Silence serveur toléré après une demande (voix, texte, réponse d'outil)
 # avant de tenir la session pour morte et de la rouvrir.
 _LIVE_REPLY_TIMEOUT_S = 15.0
+_VOICE_REPAIR_PREFIX = "[SYSTÈME — lecture vocale seule]"
 
 
 def _voice_output_is_degenerate(*, text_chars: int, received: int,
                                 queued: int, silence: int, pcm_rate: int) -> bool:
     """Vrai si Live a transcrit une phrase, mais presque uniquement émis du silence."""
     return bool(
-        text_chars >= 35
-        and received >= 3 * pcm_rate
-        and queued < 0.4 * received
-        and silence >= 0.6 * received
+        (text_chars > 0 and received == 0)
+        or (text_chars >= 35
+            and received >= 3 * pcm_rate
+            and queued < 0.4 * received
+            and silence >= 0.6 * received)
     )
 
 
@@ -243,10 +245,19 @@ class SessionManager:
                 and not self.ui.muted):
             self.ui.set_state("LISTENING")
 
-    def _fallback_after_bad_voice(self) -> None:
+    def _fallback_after_bad_voice(self, text: str = "") -> None:
         """Change de modèle après une réponse transcrite mais presque muette."""
         policy = self._live_models
+        if text and not getattr(self, "_voice_repair_attempted", False):
+            self._voice_repair_attempted = True
+            self._defer_turn(
+                f"{_VOICE_REPAIR_PREFIX} La réponse suivante a été produite sans voix audible. "
+                "Lis-la oralement mot pour mot. Aucun outil ni aucune action : tout a déjà "
+                f"été traité. Ne réexécute rien.\n{text}"
+            )
         if not policy.can_fallback():
+            if text and not getattr(self, "_voice_only_turn", False):
+                spawn_logged(self._flush_deferred_turns(), name="voice-repair", ui=self.ui)
             return
         model = policy.activate_fallback()
         self._voice_degraded_reconnect = True
@@ -755,28 +766,35 @@ class SessionManager:
             self._loop
         )
 
-    def _check_unbacked_claim(self, model_text: str) -> None:
+    def _check_unbacked_claim(self, model_text: str) -> bool:
         """Rattrape un « c'est fait » dit sans outil : force l'appel réel, une fois."""
-        from core.claim_guard import CORRECTION, is_unbacked_claim
+        from core.claim_guard import CORRECTION, is_unbacked_claim, missing_typing_claim
 
         # Méthodes liées à l'hôte : pas d'__init__ ici, d'où les getattr.
         calls = getattr(self, "_turn_tool_calls", 0)
         self._turn_tool_calls = 0
         phrase = getattr(self, "_last_user_phrase", "")
+        evidence = list(getattr(self, "_turn_tool_evidence", ()))
+        self._turn_tool_evidence = []
         if (self._interrupted or getattr(self, "_noise_turn", False)
+                or not getattr(self, "_claim_guard_enabled", True)
+                or getattr(self, "_voice_only_turn", False)
                 or phrase == getattr(self, "_claim_guard_phrase", "")
-                or not is_unbacked_claim(phrase, model_text, calls)):
-            return
+                or not (is_unbacked_claim(phrase, model_text, calls)
+                        or missing_typing_claim(phrase, model_text, evidence))):
+            return False
         self._claim_guard_phrase = phrase
-        self.ui.write_log("SYS : confirmation sans outil détectée — exécution forcée.")
+        self.ui.write_log("SYS : confirmation non justifiée détectée — étape manquante demandée.")
         text = CORRECTION.format(claim=model_text.strip()[:80], request=phrase[:120])
         spawn_logged(self._submit_text_turn(text), name="claim-guard", ui=self.ui)
+        return True
 
     async def _submit_text_turn(
         self,
         text: str,
         timeout_s: float = 90.0,
         pending_timeout_s: float = _STALE_AUDIO_TURN_S,
+        *, user_request: str = "",
     ) -> bool:
         """Soumet un tour texte sans le superposer à un autre tour modèle.
 
@@ -794,10 +812,20 @@ class SessionManager:
         if not self.session:
             # Résultat d'une tâche longue arrivé pendant une reconnexion : on
             # le garde, `_resend_unanswered` le livrera sur la session suivante.
-            self._defer_turn(text)
+            if user_request:
+                self._unanswered.append(user_request)
+                del self._unanswered[:-2]
+                self.ui.write_log("SYS : demande conservée — elle sera envoyée à la reconnexion.")
+            else:
+                self._defer_turn(text)
             return False
         self._maybe_show_clock_particles(text)
         deferred_turns = [str(item or "").strip() for item in getattr(self, "_deferred_turns", ())]
+        if user_request:
+            # Une nouvelle demande prime sur la relecture de l'ancienne.
+            # Ne jamais transformer son action en tour de lecture seule.
+            deferred_turns = [item for item in deferred_turns if _VOICE_REPAIR_PREFIX not in item]
+            self._deferred_turns = deferred_turns
         deferred = [
             *deferred_turns,
             str(getattr(self, "_deferred_voice_note", "") or "").strip(),
@@ -819,7 +847,11 @@ class SessionManager:
         async with lock:
             session = self.session
             if session is None:
-                self._defer_turn(original_text)
+                if user_request:
+                    self._unanswered.append(user_request)
+                    del self._unanswered[:-2]
+                else:
+                    self._defer_turn(original_text)
                 return False
             if session is not session_before:
                 # La connexion a été remplacée pendant l'attente du verrou : la
@@ -878,6 +910,17 @@ class SessionManager:
                         )
             if done is not None:
                 done.clear()
+            if user_request:
+                self._live_user_text = user_request
+                self._last_user_phrase = user_request
+                self._turn_tool_calls = 0
+                self._turn_tool_evidence = []
+                self._claim_guard_phrase = ""
+                self._voice_repair_attempted = False
+            self._voice_only_turn = not user_request and _VOICE_REPAIR_PREFIX in text
+            self._claim_guard_enabled = bool(user_request)
+            self._last_model_turn_data_at = time.monotonic()
+            self._awaiting_server_since = self._last_model_turn_data_at
             # Les modèles Live 3.1 refusent désormais client_content avec le
             # code 1007. Le texte temps réel clôt lui-même son entrée et
             # déclenche normalement la réponse audio.
@@ -1354,7 +1397,7 @@ class SessionManager:
             while True:
                 async for response in self.session.receive():
                     self._last_server_message_at = time.monotonic()
-                    if response.server_content is not None or response.tool_call is not None:
+                    if response.tool_call is not None:
                         self._awaiting_server_since = 0.0
 
                     # Reprise : le serveur renouvelle sa poignée en cours de
@@ -1373,6 +1416,7 @@ class SessionManager:
 
                     audio_data = _live_audio_data(response)
                     if audio_data:
+                        self._awaiting_server_since = 0.0
                         # Dès que Gemini commence à répondre, la demande qui a
                         # déclenché ce tour n'est plus « sans réponse ».
                         # Attendre exclusivement `turn_complete` laissait une
@@ -1475,6 +1519,7 @@ class SessionManager:
                                 print("[STT] activité serveur ignorée — mot-clé d'arrêt requis")
 
                         if (not self.discard_model_audio()) and sc.output_transcription and sc.output_transcription.text:
+                            self._awaiting_server_since = time.monotonic()
                             self.thought_streamer.on_speaking_start()
                             # Certains tours texte n'ont pas de PCM sortant :
                             # leur transcription de sortie confirme tout aussi
@@ -1580,10 +1625,18 @@ class SessionManager:
                                     self._continuous.on_user_transcript(merged)
                                 self.ui.set_user_transcript(merged)
                                 if not _user_started:
+                                    self._turn_tool_calls = 0
+                                    self._turn_tool_evidence = []
+                                    self._claim_guard_phrase = ""
+                                    self._voice_repair_attempted = False
+                                    self._voice_only_turn = False
+                                    self._claim_guard_enabled = True
                                     self.ui.write_log(f"[INLINE_START]Vous: {merged}")
                                     _user_started = True
 
                         if sc.turn_complete:
+                            self._awaiting_server_since = 0.0
+                            missing_pcm = not use_elevenlabs and tstat["enq"] == 0
                             degenerate_voice = (
                                 not use_elevenlabs
                                 and not self._interrupted
@@ -1609,7 +1662,17 @@ class SessionManager:
                                 },
                             )
                             tstat = {"rx": 0, "drop": 0, "enq": 0, "silence": 0, "events": []}
-                            self._check_unbacked_claim("".join(out_buf))
+                            correcting_claim = self._check_unbacked_claim("".join(out_buf))
+                            if missing_pcm and out_buf and not self.discard_model_audio():
+                                # Sans PCM, le lecteur n'affiche jamais les
+                                # sous-titres synchronisés : livrer le texte
+                                # avant la reconnexion qui réparera sa voix.
+                                q = getattr(self, "speech_text_queue", None)
+                                while q is not None and not q.empty():
+                                    self._flush_synced_speech_text(force=True)
+                                if getattr(self, "_speech_display_open", False):
+                                    self.ui.write_log("[INLINE_END]")
+                                    self._speech_display_open = False
                             if use_elevenlabs and out_buf and not self._interrupted:
                                 await speak_live_turn(self, "".join(out_buf), voice_settings)
                             bus = getattr(self, "_event_bus", None)
@@ -1753,8 +1816,8 @@ class SessionManager:
                                     self.ui.stop_camera_stream()
                                 spawn_logged(_cam_close(), name="camera-close")
 
-                            if degenerate_voice and not self._pending_vision:
-                                self._fallback_after_bad_voice()
+                            if degenerate_voice and not self._pending_vision and not correcting_claim:
+                                self._fallback_after_bad_voice(full_out)
 
                     if response.tool_call:
                         if self._interrupted or getattr(self, "_noise_turn", False):
@@ -1767,6 +1830,10 @@ class SessionManager:
                             continue
                         calls = getattr(response.tool_call, "function_calls", [])
                         self._turn_tool_calls = getattr(self, "_turn_tool_calls", 0) + len(calls or [])
+                        evidence = getattr(self, "_turn_tool_evidence", None)
+                        if evidence is None:
+                            evidence = self._turn_tool_evidence = []
+                        evidence.extend((fc.name, dict(fc.args or {})) for fc in calls)
                         for fc in calls:
                             self.thought_streamer.feed_tool_start(
                                 getattr(fc, "name", "action"),
@@ -1870,7 +1937,7 @@ class SessionManager:
         )
         text = note + action_rule + local_context + "\n".join(pending)
         try:
-            delivered = await self._submit_text_turn(text)
+            delivered = await self._submit_text_turn(text, user_request=pending[-1])
             if not delivered:
                 self._unanswered = pending + self._unanswered
                 return
