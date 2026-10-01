@@ -1,4 +1,8 @@
+import asyncio
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from actions import tiktok_tracker as tt
 
@@ -158,3 +162,90 @@ def test_browser_selection_uses_only_chrome_policy(monkeypatch):
     assert tt._browser_executable() is None
     monkeypatch.setattr(browser_policy, "chrome_binary", lambda: "/usr/bin/google-chrome")
     assert tt._browser_executable() == "/usr/bin/google-chrome"
+
+
+def test_background_poll_updates_without_reopening_closed_card(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(tt, "fetch_snapshot", lambda handle: _snap(ts=tt.time.time()))
+    state = tt._default_state()
+    state.update(handle="anogpt", enabled=True)
+    calls = []
+
+    class Player:
+        def update_card(self, kind, title, body):
+            calls.append(("update", kind, title))
+            # Même contrat que JarvisUI : signal Qt sans retour booléen.
+
+        def show_card(self, kind, title, body):
+            calls.append(("show", kind, title))
+
+    for _ in range(3):
+        tt.poll_once(Player(), state, reveal_card=False)
+    assert calls == [("update", "tiktok", "TikTok @anogpt")] * 3
+    saved = tt.load_state()
+    assert saved["enabled"] is True
+    assert len(saved["snapshots"]) == 3
+
+
+def test_background_refresh_never_falls_back_to_show_card():
+    shown = []
+
+    class Player:
+        def show_card(self, *args):
+            shown.append(args)
+
+    tt.show_card(Player(), tt._default_state(), _snap(), None, reveal_card=False)
+    assert shown == []
+
+
+def test_explicit_status_reopens_card_after_background_refresh(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    state = tt._default_state()
+    state.update(handle="anogpt", enabled=True, snapshots=[_snap(ts=tt.time.time())])
+    tt.save_state(state)
+    calls = []
+
+    class Player:
+        def update_card(self, *args):
+            calls.append("update")
+            return False
+
+        def show_card(self, *args):
+            calls.append("show")
+
+    tt.show_card(Player(), state, state["snapshots"][-1], None, reveal_card=False)
+    assert calls == ["update"]
+    result = tt.tiktok_tracker({"action": "status"}, player=Player())
+    assert "41 abonnés" in result
+    assert calls == ["update", "show"]
+
+
+def test_watch_keeps_announcements_without_reopening_card(tmp_path, monkeypatch):
+    from core.proactive_engine import ProactiveEngine
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    state = tt._default_state()
+    state.update(handle="anogpt", enabled=True, snapshots=[_snap()])
+    tt.save_state(state)
+    monkeypatch.setattr(tt, "fetch_snapshot", lambda handle: _snap(followers=42, ts=tt.time.time()))
+    shown, updated, events = [], [], []
+    host = SimpleNamespace(
+        ui=SimpleNamespace(
+            show_card=lambda *args: shown.append(args),
+            update_card=lambda *args: updated.append(args),
+            write_log=lambda *args: None,
+        ),
+        _proactive=SimpleNamespace(publish=lambda *args, **kwargs: events.append(args)),
+    )
+
+    async def stop_after_poll(delay):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(asyncio, "sleep", stop_after_poll)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(ProactiveEngine._run_tiktok_watch(host))
+    assert shown == []
+    assert len(updated) == 1
+    assert len(events) == 1
+    assert events[0][0] == "tiktok"
+    assert "Nouvel abonné" in events[0][1]

@@ -430,7 +430,9 @@ class ProactiveEngine:
                 await asyncio.sleep(tt.MIN_INTERVAL_S)
                 continue
             try:
-                cur, prev, state = await asyncio.to_thread(tt.poll_once, self.ui, state)
+                cur, prev, state = await asyncio.to_thread(
+                    tt.poll_once, self.ui, state, reveal_card=False,
+                )
                 events = tt.summarize_notable_events(tt.notable_events(prev, cur))
                 for key, message, priority in events:
                     self._proactive.publish(

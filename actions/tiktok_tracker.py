@@ -451,14 +451,21 @@ def summarize_notable_events(events: list[tuple[str, str, int]]) -> list[tuple[s
 # Cycle d'une lecture (utilisé par la veille et par l'outil)
 # ════════════════════════════════════════════════════════════════════════════
 
-def show_card(player: Any, state: dict[str, Any], cur: dict, prev: Optional[dict]) -> None:
+def show_card(
+    player: Any, state: dict[str, Any], cur: dict, prev: Optional[dict],
+    *, reveal_card: bool = True,
+) -> None:
     if player is None:
         return
     title = f"TikTok @{cur.get('handle') or state.get('handle')}"
     body = format_card(cur, prev, state.get("day_baseline"))
     try:
-        update = getattr(player, "update_card", None)
-        if callable(update) and update(CARD_TYPE, title, body):
+        if not reveal_card:
+            # Qt livre la mise à jour par signal et ne renvoie aucun booléen.
+            # La veille ne doit jamais recréer une carte fermée par l'utilisateur.
+            update = getattr(player, "update_card", None)
+            if callable(update):
+                update(CARD_TYPE, title, body)
             return
         show = getattr(player, "show_card", None)
         if callable(show):
@@ -478,7 +485,9 @@ def record_snapshot(state: dict[str, Any], cur: dict) -> Optional[dict]:
     return prev
 
 
-def poll_once(player: Any = None, state: Optional[dict] = None) -> tuple[dict, Optional[dict], dict]:
+def poll_once(
+    player: Any = None, state: Optional[dict] = None, *, reveal_card: bool = True,
+) -> tuple[dict, Optional[dict], dict]:
     """Une lecture complète : page → historique → carte. Retourne
     (lecture, précédente, état). Lève en cas d'échec réseau."""
     state = state if state is not None else load_state()
@@ -491,7 +500,7 @@ def poll_once(player: Any = None, state: Optional[dict] = None) -> tuple[dict, O
         raise
     prev = record_snapshot(state, cur)
     save_state(state)
-    show_card(player, state, cur, prev)
+    show_card(player, state, cur, prev, reveal_card=reveal_card)
     return cur, prev, state
 
 
