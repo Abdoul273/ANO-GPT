@@ -1592,6 +1592,19 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
 
     # ── main loop ───────────────────────────────────────────────────────────
 
+    async def _wait_dashboard_port_free(self, timeout: float = 10.0) -> None:
+        import socket
+
+        from dashboard.server import PORT
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with socket.socket() as sock:
+                sock.settimeout(0.3)
+                if sock.connect_ex(("127.0.0.1", PORT)) != 0:
+                    return  # personne n'écoute : le port est à nous
+            await asyncio.sleep(0.5)
+
     async def run(self):
         self._loop = asyncio.get_running_loop()
         from core.observability import install_asyncio_handler
@@ -1714,6 +1727,9 @@ class JarvisLive(AudioEngine, SessionManager, ToolDispatcher, ProactiveEngine, P
             )
 
         # Start dashboard (optional — needs: pip install fastapi "uvicorn[standard]" cryptography)
+        # Quand ANO est éteint, l'assistant Siri de Caelestia sert ANO Remote sur le
+        # même port ; il le rend dès qu'ANO démarre. On attend donc qu'il soit libre.
+        await self._wait_dashboard_port_free()
         try:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
