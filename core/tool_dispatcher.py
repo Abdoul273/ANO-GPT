@@ -4806,6 +4806,11 @@ class ToolDispatcher:
                 "point_on_screen": lambda a: self._agent_point_on_screen(a),
                 "search_personal_docs": self._agent_search_personal_docs,
                 "prayer": lambda a: prayer_control(a),
+                # ── le téléphone (ANO-Remote) : pour Siri / les agents ──────
+                "phone_call": lambda a: self._agent_live_tool("phone_call", a),
+                "phone_hangup": lambda a: self._agent_live_tool("phone_hangup", a),
+                "phone_contacts": lambda a: self._agent_live_tool("phone_contacts", a),
+                "phone_sms": lambda a: self._agent_live_tool("phone_sms", a),
             }
         return self._agent_tool_table
 
@@ -4844,6 +4849,23 @@ class ToolDispatcher:
             return f"Impossible de situer « {query} »."
         self.ui.show_map(query, coords[0], coords[1], radius)
         return f"Carte centrée sur {query}."
+
+    def _agent_live_tool(self, name: str, args: dict) -> str:
+        """Exécute un outil Live (téléphone…) sur la boucle asyncio d'ANO.
+
+        Ces outils parlent au téléphone par la socket du tableau de bord, qui
+        n'existe que dans ce processus : un agent externe passe donc par ici.
+        """
+        from types import SimpleNamespace
+
+        if not getattr(self, "_loop", None):
+            return "ANO-GPT démarre encore : réessayez dans un instant."
+        fc = SimpleNamespace(id="agent", name=name, args=dict(args or {}))
+        future = asyncio.run_coroutine_threadsafe(
+            self._execute_tool_impl(fc, dict(args or {})), self._loop)
+        response = future.result(timeout=40.0)
+        payload = getattr(response, "response", None) or {}
+        return str(payload.get("result", payload) if isinstance(payload, dict) else payload)
 
     def _agent_camera(self, args: dict) -> str:
         return self._camera_tool(
