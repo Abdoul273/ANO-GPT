@@ -436,6 +436,18 @@ class AudioEngine:
             except Exception:
                 break
 
+    def _show_output_level(self, level: float) -> None:
+        try:
+            self.ui.set_volume(level)
+        except Exception:
+            pass
+
+    def _show_output_spectrum(self, chunk: bytes) -> None:
+        try:
+            self.ui.feed_audio_spectrum(chunk, RECEIVE_SAMPLE_RATE, True)
+        except Exception:
+            pass
+
     def _flush_synced_speech_text(self, force: bool = False) -> None:
         """Affiche le texte entendu, avec rattrapage borné des transcriptions tardives."""
         q = self.speech_text_queue
@@ -2197,17 +2209,25 @@ class AudioEngine:
                 # au contenu de la voix.
                 now_visual = time.monotonic()
                 update_visual = now_visual - last_visual_update >= 0.04
+                # Ce chunk n'est audible qu'une latence de sortie après son
+                # écriture : l'orbe (donc la bouche du portrait) le reçoit à ce
+                # moment-là, sinon les lèvres devancent la voix. Même retard que
+                # celui retranché au sous-titre dans _flush_synced_speech_text.
+                visual_delay = max(0.0, float(getattr(
+                    self, "_audio_output_latency", _OUTPUT_LATENCY_S)))
                 try:
                     samples = np.frombuffer(chunk, dtype=np.int16)
                     if samples.size and update_visual:
                         rms = float(np.sqrt(np.mean((samples.astype(np.float32) / 32768.0) ** 2)))
-                        self.ui.set_volume(min(1.0, rms * 5.0))
+                        loop.call_later(
+                            visual_delay, self._show_output_level, min(1.0, rms * 5.0))
                 except Exception:
                     pass
                 try:
                     try:
                         if update_visual:
-                            self.ui.feed_audio_spectrum(chunk, RECEIVE_SAMPLE_RATE, True)
+                            loop.call_later(
+                                visual_delay, self._show_output_spectrum, chunk)
                             last_visual_update = now_visual
                     except Exception:
                         pass
