@@ -1213,6 +1213,230 @@ class ToolDispatcher:
         )
         return result
 
+    async def _tool_whatsapp_control(self, fc, name, args, loop):
+        result = "Done."
+        from core.zapzap_controller import control as zapzap_control
+        result = await loop.run_in_executor(
+            None,
+            lambda: zapzap_control(
+                args.get("action", "status"), args.get("receiver", ""),
+                args.get("message", ""),
+            ),
+        )
+        return result
+
+    async def _tool_reminder(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
+        result = r or "Reminder set."
+
+        _action = str(args.get("action", "set") or "set").lower()
+        if _action in ("set", "add", "create", "list") and r and not r.startswith(("Aucun", "La date")):
+            await loop.run_in_executor(None, self._show_active_reminders_card)
+        return result
+
+    async def _tool_timer(self, fc, name, args, loop):
+        result = "Done."
+        action = str(args.get("action") or "set").lower()
+        if action in {"set", "add", "create"}:
+            seconds = int(float(args.get("minutes") or 0) * 60)
+            if seconds < 1:
+                result = "Indique une durée positive en minutes."
+            else:
+                item = self._timers.create(str(args.get("name") or "Minuteur"), seconds)
+                result = f"Minuteur {item['name']} lancé pour {seconds // 60} minutes."
+        elif action == "list":
+            active = self._timers.active()
+            result = "Aucun minuteur actif." if not active else "; ".join(
+                f"{t['name']} : {t['remaining'] // 60:02d}:{t['remaining'] % 60:02d}" for t in active)
+        elif action == "cancel":
+            result = "Minuteur annulé." if self._timers.cancel(str(args.get("value") or args.get("name") or "")) else "Minuteur introuvable."
+        else:
+            result = "Action minuteur inconnue."
+        return result
+
+    async def _tool_youtube_video(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(
+            None,
+            lambda: youtube_video(
+                parameters=args,
+                response=None,
+                player=self.ui,
+                session_memory=self._tool_session_memory,
+                speak=self.speak,
+            ),
+        )
+        result = r or "Done."
+        return result
+
+    async def _tool_agent_process_monitor(self, fc, name, args, loop):
+        result = "Done."
+        result = await loop.run_in_executor(
+            None, lambda: agent_process_monitor(
+                parameters=args, player=self.ui, speak=self.speak))
+        return result
+
+    async def _tool_phone_call(self, fc, name, args, loop):
+        result = "Done."
+        target = str(args.get("target") or "").strip()
+        if not target:
+            result = "Indiquez le nom ou le numéro à appeler."
+        elif self._dashboard is None:
+            result = "ANO-Remote est indisponible : aucun appel n'a été lancé."
+        else:
+            outcome = await self._dashboard.request_phone_call(
+                target, selection=int(args.get("selection") or 0)
+            )
+            result = _render_phone_outcome(outcome, "Commande téléphonique traitée.")
+        return result
+
+    async def _tool_phone_hangup(self, fc, name, args, loop):
+        result = "Done."
+        if self._dashboard is None:
+            result = "ANO-Remote est indisponible : impossible de raccrocher."
+        else:
+            outcome = await self._dashboard.request_phone_hangup()
+            result = _render_phone_outcome(outcome, "Demande de raccrochage traitée.")
+        return result
+
+    async def _tool_phone_contacts(self, fc, name, args, loop):
+        result = "Done."
+        query = str(args.get("query") or "").strip()
+        if not query:
+            result = "Indiquez le nom ou la fin de numéro à chercher."
+        elif self._dashboard is None:
+            result = ("ANO-Remote est indisponible : le carnet du téléphone "
+                      "n'est pas consultable. Ne conclus pas que le contact "
+                      "n'existe pas.")
+        else:
+            outcome = await self._dashboard.request_phone_contacts(query)
+            result = _render_phone_outcome(
+                outcome, "Recherche de contacts traitée.",
+                choices_hint="Ce sont les contacts du téléphone.",
+            )
+        return result
+
+    async def _tool_phone_sms(self, fc, name, args, loop):
+        result = "Done."
+        result = await self._send_phone_sms(args)
+        return result
+
+    async def _tool_web_search(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
+        result = r or "Done."
+        # Mirror results to the on-screen content panel
+        _mode = args.get("mode", "search")
+        if r and not r.startswith("No results") and not r.startswith("Search failed"):
+            _query = args.get("query") or ", ".join(args.get("items", []))
+            _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
+            self.ui.show_content(_label, r)
+            from actions.web_search import get_last_card_markdown
+            _md = get_last_card_markdown()
+            if _md:
+                self.ui.show_card("result", _label, _md)
+        return result
+
+    async def _tool_image_search(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(
+            None,
+            lambda: image_search_action(parameters=args, player=self.ui),
+        )
+        result = r or "Aucune image trouvée."
+        return result
+
+    async def _tool_generate_image(self, fc, name, args, loop):
+        result = "Done."
+        if self._start_image_generation(args):
+            result = (
+                "La génération de l'image est lancée. Dis-le immédiatement "
+                "en français à l'utilisateur ; il recevra un point d'avancement "
+                "puis une annonce lorsque le fichier sera prêt."
+            )
+        else:
+            result = (
+                "Une image est déjà en cours de création. Dis-le en français, "
+                "sans relancer la génération."
+            )
+        return result
+
+    async def _tool_show_last_generated_image(self, fc, name, args, loop):
+        result = "Done."
+        result = ("J'ouvre l'image créée dans le visionneur intégré."
+                  if self.ui.show_last_generated_image()
+                  else "Aucune image créée n'est disponible dans cette session.")
+        return result
+
+    async def _tool_generate_video(self, fc, name, args, loop):
+        result = "Done."
+        if self._start_video_generation(args):
+            result = (
+                "La génération de la vidéo est lancée. Dis-le immédiatement "
+                "en français à l'utilisateur ; il recevra un point d'avancement "
+                "puis une annonce lorsque le fichier sera prêt."
+            )
+        else:
+            result = (
+                "Une vidéo est déjà en cours de création. Dis-le en français, "
+                "sans relancer la génération."
+            )
+        return result
+
+    async def _tool_generate_document(self, fc, name, args, loop):
+        result = "Done."
+        if self._start_deferred_tool(name, args):
+            result = "La rédaction est lancée. Dis-le immédiatement ; le document sera annoncé dès qu'il sera prêt."
+        else:
+            result = "Un document est déjà en cours de rédaction."
+        return result
+
+    async def _tool_close_image_gallery(self, fc, name, args, loop):
+        result = "Done."
+        self.ui.close_image_gallery()
+        result = "Galerie d'images fermée."
+        return result
+
+    async def _tool_capture_control(self, fc, name, args, loop):
+        result = "Done."
+        capture_action = str(args.get("action") or "").casefold()
+        spoken = getattr(self, "_live_user_text", "")
+        if (capture_action == "start_recording"
+                and not _has_explicit_capture_intent(spoken)):
+            result = (
+                "Enregistrement non lancé : la phrase reconnue ne demande pas "
+                "clairement une capture d'écran. Demande à l'utilisateur de "
+                "préciser s'il veut réellement enregistrer l'écran."
+            )
+        else:
+            r = await loop.run_in_executor(
+                None,
+                lambda: capture_control(parameters=args, player=self.ui,
+                                        session_memory=self._tool_session_memory),
+            )
+            result = r or "Capture effectuée."
+        return result
+
+    async def _tool_music_control(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(
+            None,
+            lambda: music_control(parameters=args, player=self.ui,
+                                  session_memory=self._tool_session_memory),
+        )
+        result = r or "Lecture lancée."
+        return result
+
+    async def _tool_download_music(self, fc, name, args, loop):
+        result = "Done."
+        if self._start_deferred_tool(name, args):
+            result = ("Je prépare le téléchargement en arrière-plan. Dis-le immédiatement ; "
+                      "je confirmerai le lancement dès que la recherche sera terminée.")
+        else:
+            result = "Un téléchargement est déjà en cours de préparation."
+        return result
+
     async def _execute_tool_impl(self, fc, prepared_args: dict | None = None) -> types.FunctionResponse:
         name = fc.name
         args = dict(prepared_args if prepared_args is not None else (fc.args or {}))
@@ -1420,58 +1644,19 @@ class ToolDispatcher:
                               f"(ne dis pas que c'est envoyé) : {_plat} → {_recv} : {_txt}")
 
             elif name == "whatsapp_control":
-                from core.zapzap_controller import control as zapzap_control
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: zapzap_control(
-                        args.get("action", "status"), args.get("receiver", ""),
-                        args.get("message", ""),
-                    ),
-                )
+                result = await self._tool_whatsapp_control(fc, name, args, loop)
 
             elif name == "reminder":
-                r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
-                result = r or "Reminder set."
-
-                _action = str(args.get("action", "set") or "set").lower()
-                if _action in ("set", "add", "create", "list") and r and not r.startswith(("Aucun", "La date")):
-                    await loop.run_in_executor(None, self._show_active_reminders_card)
+                result = await self._tool_reminder(fc, name, args, loop)
 
             elif name == "timer":
-                action = str(args.get("action") or "set").lower()
-                if action in {"set", "add", "create"}:
-                    seconds = int(float(args.get("minutes") or 0) * 60)
-                    if seconds < 1:
-                        result = "Indique une durée positive en minutes."
-                    else:
-                        item = self._timers.create(str(args.get("name") or "Minuteur"), seconds)
-                        result = f"Minuteur {item['name']} lancé pour {seconds // 60} minutes."
-                elif action == "list":
-                    active = self._timers.active()
-                    result = "Aucun minuteur actif." if not active else "; ".join(
-                        f"{t['name']} : {t['remaining'] // 60:02d}:{t['remaining'] % 60:02d}" for t in active)
-                elif action == "cancel":
-                    result = "Minuteur annulé." if self._timers.cancel(str(args.get("value") or args.get("name") or "")) else "Minuteur introuvable."
-                else:
-                    result = "Action minuteur inconnue."
+                result = await self._tool_timer(fc, name, args, loop)
 
             elif name == "youtube_video":
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: youtube_video(
-                        parameters=args,
-                        response=None,
-                        player=self.ui,
-                        session_memory=self._tool_session_memory,
-                        speak=self.speak,
-                    ),
-                )
-                result = r or "Done."
+                result = await self._tool_youtube_video(fc, name, args, loop)
 
             elif name == "agent_process_monitor":
-                result = await loop.run_in_executor(
-                    None, lambda: agent_process_monitor(
-                        parameters=args, player=self.ui, speak=self.speak))
+                result = await self._tool_agent_process_monitor(fc, name, args, loop)
 
             elif name == "screen_process":
                 import time as _t_mod
@@ -1778,41 +1963,16 @@ class ToolDispatcher:
                 result = await loop.run_in_executor(None, lambda: self._focus_guard.control(args))
 
             elif name == "phone_call":
-                target = str(args.get("target") or "").strip()
-                if not target:
-                    result = "Indiquez le nom ou le numéro à appeler."
-                elif self._dashboard is None:
-                    result = "ANO-Remote est indisponible : aucun appel n'a été lancé."
-                else:
-                    outcome = await self._dashboard.request_phone_call(
-                        target, selection=int(args.get("selection") or 0)
-                    )
-                    result = _render_phone_outcome(outcome, "Commande téléphonique traitée.")
+                result = await self._tool_phone_call(fc, name, args, loop)
 
             elif name == "phone_hangup":
-                if self._dashboard is None:
-                    result = "ANO-Remote est indisponible : impossible de raccrocher."
-                else:
-                    outcome = await self._dashboard.request_phone_hangup()
-                    result = _render_phone_outcome(outcome, "Demande de raccrochage traitée.")
+                result = await self._tool_phone_hangup(fc, name, args, loop)
 
             elif name == "phone_contacts":
-                query = str(args.get("query") or "").strip()
-                if not query:
-                    result = "Indiquez le nom ou la fin de numéro à chercher."
-                elif self._dashboard is None:
-                    result = ("ANO-Remote est indisponible : le carnet du téléphone "
-                              "n'est pas consultable. Ne conclus pas que le contact "
-                              "n'existe pas.")
-                else:
-                    outcome = await self._dashboard.request_phone_contacts(query)
-                    result = _render_phone_outcome(
-                        outcome, "Recherche de contacts traitée.",
-                        choices_hint="Ce sont les contacts du téléphone.",
-                    )
+                result = await self._tool_phone_contacts(fc, name, args, loop)
 
             elif name == "phone_sms":
-                result = await self._send_phone_sms(args)
+                result = await self._tool_phone_sms(fc, name, args, loop)
 
             elif name == "second_brain":
                 result = await loop.run_in_executor(
@@ -1862,60 +2022,19 @@ class ToolDispatcher:
                 result = r or "Done."
 
             elif name == "web_search":
-                r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
-                result = r or "Done."
-                # Mirror results to the on-screen content panel
-                _mode = args.get("mode", "search")
-                if r and not r.startswith("No results") and not r.startswith("Search failed"):
-                    _query = args.get("query") or ", ".join(args.get("items", []))
-                    _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                    self.ui.show_content(_label, r)
-                    from actions.web_search import get_last_card_markdown
-                    _md = get_last_card_markdown()
-                    if _md:
-                        self.ui.show_card("result", _label, _md)
+                result = await self._tool_web_search(fc, name, args, loop)
             elif name == "image_search":
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: image_search_action(parameters=args, player=self.ui),
-                )
-                result = r or "Aucune image trouvée."
+                result = await self._tool_image_search(fc, name, args, loop)
             elif name == "generate_image":
-                if self._start_image_generation(args):
-                    result = (
-                        "La génération de l'image est lancée. Dis-le immédiatement "
-                        "en français à l'utilisateur ; il recevra un point d'avancement "
-                        "puis une annonce lorsque le fichier sera prêt."
-                    )
-                else:
-                    result = (
-                        "Une image est déjà en cours de création. Dis-le en français, "
-                        "sans relancer la génération."
-                    )
+                result = await self._tool_generate_image(fc, name, args, loop)
             elif name == "show_last_generated_image":
-                result = ("J'ouvre l'image créée dans le visionneur intégré."
-                          if self.ui.show_last_generated_image()
-                          else "Aucune image créée n'est disponible dans cette session.")
+                result = await self._tool_show_last_generated_image(fc, name, args, loop)
             elif name == "generate_video":
-                if self._start_video_generation(args):
-                    result = (
-                        "La génération de la vidéo est lancée. Dis-le immédiatement "
-                        "en français à l'utilisateur ; il recevra un point d'avancement "
-                        "puis une annonce lorsque le fichier sera prêt."
-                    )
-                else:
-                    result = (
-                        "Une vidéo est déjà en cours de création. Dis-le en français, "
-                        "sans relancer la génération."
-                    )
+                result = await self._tool_generate_video(fc, name, args, loop)
             elif name == "generate_document":
-                if self._start_deferred_tool(name, args):
-                    result = "La rédaction est lancée. Dis-le immédiatement ; le document sera annoncé dès qu'il sera prêt."
-                else:
-                    result = "Un document est déjà en cours de rédaction."
+                result = await self._tool_generate_document(fc, name, args, loop)
             elif name == "close_image_gallery":
-                self.ui.close_image_gallery()
-                result = "Galerie d'images fermée."
+                result = await self._tool_close_image_gallery(fc, name, args, loop)
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
@@ -1954,22 +2073,7 @@ class ToolDispatcher:
                 result = r or "Contrôle média exécuté."
 
             elif name == "capture_control":
-                capture_action = str(args.get("action") or "").casefold()
-                spoken = getattr(self, "_live_user_text", "")
-                if (capture_action == "start_recording"
-                        and not _has_explicit_capture_intent(spoken)):
-                    result = (
-                        "Enregistrement non lancé : la phrase reconnue ne demande pas "
-                        "clairement une capture d'écran. Demande à l'utilisateur de "
-                        "préciser s'il veut réellement enregistrer l'écran."
-                    )
-                else:
-                    r = await loop.run_in_executor(
-                        None,
-                        lambda: capture_control(parameters=args, player=self.ui,
-                                                session_memory=self._tool_session_memory),
-                    )
-                    result = r or "Capture effectuée."
+                result = await self._tool_capture_control(fc, name, args, loop)
 
             elif name == "visual_recognition" and _vision_is_deferred(args):
                 # Photo, analyse Gemini/Azure et recherche éventuelle :
@@ -2016,19 +2120,10 @@ class ToolDispatcher:
                 result = r or "Je n'ai pas reconnu la musique."
 
             elif name == "music_control":
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: music_control(parameters=args, player=self.ui,
-                                          session_memory=self._tool_session_memory),
-                )
-                result = r or "Lecture lancée."
+                result = await self._tool_music_control(fc, name, args, loop)
 
             elif name == "download_music":
-                if self._start_deferred_tool(name, args):
-                    result = ("Je prépare le téléchargement en arrière-plan. Dis-le immédiatement ; "
-                              "je confirmerai le lancement dès que la recherche sera terminée.")
-                else:
-                    result = "Un téléchargement est déjà en cours de préparation."
+                result = await self._tool_download_music(fc, name, args, loop)
 
             elif name == "background_tasks":
                 result = self._background_tasks_control(args)
