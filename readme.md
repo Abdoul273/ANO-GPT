@@ -229,7 +229,7 @@ La boucle vocale, l'interface Qt et les actions vivent dans des composants disti
 
 Les plugins recommandés prennent la forme d'un dossier avec `plugin.json` et `main.py`. Ils apparaissent dans **Menu → Plugins** et leurs outils deviennent disponibles à la prochaine connexion vocale. Consultez le [guide de création](plugins/PLUGIN_AUTHORING_GUIDE.md) et le [résumé du système de plugins](plugins/README.md).
 
-Les développeurs peuvent aussi enrichir `actions/`, les déclarations d'outils de `core/tool_dispatcher.py` et les composants visuels de `ui/`.
+Les développeurs peuvent aussi enrichir `actions/`, les déclarations d'outils de `core/tool_declarations.py` et les composants visuels de `ui/`.
 
 ## 📚 Documentation
 

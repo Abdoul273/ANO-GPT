@@ -81,7 +81,7 @@ def why(inc: incident_log.Incident) -> str:
     if kind == "ActionValidationError" or "Arguments invalides" in msg:
         sent = f" Le modèle a envoyé : {', '.join(args)}." if args else ""
         return ("Le modèle a appelé l'outil avec des paramètres que son schéma refuse : "
-                "la déclaration de l'outil (core/tool_dispatcher.py) ne correspond pas à ce que "
+                "la déclaration de l'outil (core/tool_declarations.py) ne correspond pas à ce que "
                 f"le modèle envoie, ou un champ requis manque.{sent}")
     if kind in {"TimeoutError", "ActionQueueTimeout"}:
         return ("L'action n'a pas répondu dans le délai qui lui est accordé "

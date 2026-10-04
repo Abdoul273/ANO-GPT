@@ -98,7 +98,10 @@ def test_le_cadrage_des_lieux_suit_le_plus_eloigne():
 
 # ── le chemin « ma position » ───────────────────────────────────────────────
 
-MAIN = (Path(__file__).resolve().parent.parent / "core" / "tool_dispatcher.py").read_text(encoding="utf-8")
+MAIN = "\n".join(
+    (Path(__file__).resolve().parent.parent / "core" / name).read_text(encoding="utf-8")
+    for name in ("tool_dispatcher.py", "tool_declarations.py")
+)
 
 
 def test_ma_position_demande_un_releve_gps_frais():
@@ -171,7 +174,10 @@ def test_la_navigation_deja_en_leaflet_nattend_pas_un_rechargement():
 
 # ── Choisir la vue par la voix : « en carte » / « en globe » ────────────────
 
-DISPATCHER = (Path(__file__).resolve().parent.parent / "core" / "tool_dispatcher.py").read_text(encoding="utf-8")
+DISPATCHER = "\n".join(
+    (Path(__file__).resolve().parent.parent / "core" / name).read_text(encoding="utf-8")
+    for name in ("tool_dispatcher.py", "tool_declarations.py")
+)
 
 
 def test_loutil_show_map_expose_un_parametre_vue():

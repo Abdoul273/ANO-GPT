@@ -9,7 +9,10 @@ import pytest
 PROMPT = (Path(__file__).resolve().parent.parent / "core" / "prompt.txt").read_text(
     encoding="utf-8"
 )
-MAIN = (Path(__file__).resolve().parent.parent / "core" / "tool_dispatcher.py").read_text(encoding="utf-8")
+MAIN = "\n".join(
+    (Path(__file__).resolve().parent.parent / "core" / name).read_text(encoding="utf-8")
+    for name in ("tool_dispatcher.py", "tool_declarations.py")
+)
 
 
 def test_prompt_forbids_opening_an_external_camera_app():
