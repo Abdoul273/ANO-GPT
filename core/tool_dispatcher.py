@@ -1697,6 +1697,342 @@ class ToolDispatcher:
                       f"via une carte (ne l'exécute pas sans son accord explicite) : {_cmd}")
         return result
 
+    async def _tool_open_app(self, fc, name, args, loop):
+        result = "Done."
+        # ── Garde-fou anti-boucle ─────────────────────────────────
+        # Le modèle Live peut re-décider d'appeler open_app après
+        # avoir reçu le résultat (« kitty est ouvert »). Sans ce
+        # verrou, chaque résultat renvoyé au modèle déclenche un
+        # nouvel appel identique → fenêtres à l'infini.
+        import time as _t_mod
+        _now = _t_mod.monotonic()
+        _app_sig = (
+            f"{str(args.get('app_name', '') or '').lower().strip()}"
+            f"|{str(args.get('command', '') or '').lower().strip()}"
+            f"|{str(args.get('workspace', '') or '').strip()}"
+        )
+        _OA_COOLDOWN = 10.0  # seconds — même app+cmd+ws dans ce délai = doublon
+        if (
+            _app_sig == getattr(self, "_open_app_last_sig", "")
+            and _app_sig  # ne bloque pas les appels vides
+            and (_now - getattr(self, "_open_app_last_time", 0.0)) < _OA_COOLDOWN
+        ):
+            _wait = _OA_COOLDOWN - (_now - self._open_app_last_time)
+            print(f"[open_app] ⏳ Doublon bloqué ({_wait:.1f}s restantes) — même app+commande+workspace")
+            result = (
+                "DÉJÀ FAIT. L'application a été lancée et la commande "
+                "tapée lors de l'appel précédent (il y a moins de 10 s). "
+                "Ne rappelle PAS cet outil. Confirme simplement à "
+                "l'utilisateur que c'est fait."
+            )
+        else:
+            self._open_app_last_sig = _app_sig
+            self._open_app_last_time = _now
+            r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
+            result = r or f"Opened {args.get('app_name')}."
+            # Ajouter une instruction anti-loop explicite dans le
+            # résultat pour que le modèle ne re-tente pas.
+            result += " Action terminée — ne rappelle PAS open_app."
+        return result
+
+    async def _tool_close_app(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(None, lambda: close_app(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
+        result = r or f"Closed {args.get('app_name')}."
+        return result
+
+    async def _tool_weather_report(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
+        result = r or "Weather delivered."
+        from actions.weather_report import get_last_weather_card
+        _card = get_last_weather_card()
+        if _card:
+            self.ui.show_card("result", "Météo", _card)
+        return result
+
+    async def _tool_file_controller(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(
+            None,
+            lambda: file_controller(
+                parameters=args, player=self.ui,
+                session_memory=self._tool_session_memory,
+            ),
+        )
+        result = r or "Done."
+        return result
+
+    async def _tool_send_message(self, fc, name, args, loop):
+        result = "Done."
+        r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
+        result = r or f"Message sent to {args.get('receiver')}."
+        if result.startswith("[NEEDS_CONFIRM] "):
+            _plat, _recv, _txt = result[len("[NEEDS_CONFIRM] "):].split("|", 2)
+            _confirm_args = dict(args)
+            _confirm_args["confirm"] = True
+
+            def _resend(a=_confirm_args):
+                if self.ui.on_text_command:
+                    self.ui.on_text_command(
+                        f"envoie ce message maintenant : « {a.get('message_text')} » "
+                        f"à {a.get('receiver')} sur {a.get('platform')}, confirme envoi"
+                    )
+
+            self.ui.show_card(
+                "confirmation", f"Envoyer sur {_plat} ?",
+                f"**À :** {_recv}\n\n{_txt}",
+                [
+                    {"label": "Envoyer", "primary": True, "callback": _resend},
+                    {"label": "Annuler",
+                     "callback": (lambda: self.ui.on_text_command("annule cet envoi")
+                                  if self.ui.on_text_command else None)},
+                ],
+            )
+            result = (f"Aperçu affiché à l'utilisateur pour confirmation avant envoi "
+                      f"(ne dis pas que c'est envoyé) : {_plat} → {_recv} : {_txt}")
+        return result
+
+    async def _tool_computer_settings(self, fc, name, args, loop):
+        result = "Done."
+        settings_args = dict(args)
+        if str(settings_args.get("action") or "").casefold() in {
+            "toggle_bluetooth", "bluetooth", "toggle_bt",
+        }:
+            explicit = _bluetooth_action_from_request(
+                str(getattr(self, "_live_user_text", "") or "")
+                or str(settings_args.get("description") or "")
+            )
+            if explicit:
+                settings_args["action"] = explicit
+        r = await loop.run_in_executor(
+            None, lambda: computer_settings(
+                parameters=settings_args, response=None, player=self.ui,
+                session_memory=self._tool_session_memory,
+            )
+        )
+        result = r or "Done."
+        return result
+
+    async def _tool_computer_control(self, fc, name, args, loop):
+        result = "Done."
+        control_args = dict(args)
+        if (str(control_args.get("action") or "").casefold() in {"click", "screen_click"}
+                and not control_args.get("description")):
+            target = _click_target_from_request(
+                getattr(self, "_live_user_text", "")
+            )
+            if target:
+                control_args["description"] = target
+                control_args.pop("x", None)
+                control_args.pop("y", None)
+        r = await loop.run_in_executor(
+            None, lambda: computer_control(parameters=control_args, player=self.ui)
+        )
+        result = r or "Done."
+        return result
+
+    async def _tool_proactive_mode(self, fc, name, args, loop):
+        result = "Done."
+        action = str(args.get("action") or "status").strip().casefold()
+        if action in {"silence", "silent", "off", "0"}:
+            state = self._proactive.set_silent(True)
+        elif action in {"on", "actif", "active", "1"}:
+            state = self._proactive.set_silent(False)
+        elif action in {"set_home", "home", "maison", "domicile"}:
+            from core.geolocation import get_live_position
+
+            position = get_live_position(resolve_place=False)
+            if not position:
+                result = (
+                    "Position GPS indisponible. Ouvre ANO Remote sur le "
+                    "téléphone puis réessaie."
+                )
+            else:
+                self._proactive.set_home(
+                    position["lat"], position["lon"],
+                    float(args.get("radius_m") or 250),
+                )
+                result = "Cette position est maintenant ton domicile."
+            state = None
+        else:
+            state = "silence" if self._proactive.silent else "actif"
+        if state is not None:
+            result = f"Mode proactif : {state}."
+        return result
+
+    async def _tool_plugin_manager(self, fc, name, args, loop):
+        result = "Done."
+        action = str(args.get("action") or "list").casefold()
+        plugin_name = str(args.get("name") or "").strip()
+        if action == "reload":
+            self._plugins.discover()
+            self._refresh_plugin_runtime()
+            result = "Plugins rescannés. Les déclarations seront actualisées à la prochaine reconnexion."
+        elif action in {"enable", "disable"}:
+            changed = self._plugins.set_enabled(plugin_name, action == "enable")
+            if changed:
+                self._refresh_plugin_runtime()
+            result = (("Plugin activé" if action == "enable" else "Plugin désactivé")
+                      + f" : {plugin_name}. La modification prendra effet à la prochaine reconnexion.") \
+                     if changed else f"Plugin inconnu : {plugin_name}."
+        else:
+            rows = self._plugins.status()
+            if not rows:
+                result = "Aucun plugin installé dans le dossier plugins/."
+            else:
+                lines = []
+                for row in rows:
+                    if row["error"]:
+                        state = "ERREUR"
+                    elif row["enabled"]:
+                        state = "ACTIF"
+                    elif row.get("needs_approval"):
+                        state = "EN ATTENTE D'APPROBATION (code modifié ou jamais activé)"
+                    else:
+                        state = "INACTIF"
+                    lines.append(f"- {row['name']} — {state}" + (f" : {row['error']}" if row["error"] else ""))
+                result = "Plugins ANO-GPT :\n" + "\n".join(lines)
+                self.ui.show_card("info", "Plugins ANO-GPT", result)
+        return result
+
+    async def _tool_auto_extension_control(self, fc, name, args, loop):
+        result = "Done."
+        from core.auto_extension import get_auto_extension_manager
+        result = get_auto_extension_manager().control(
+            str(args.get("action") or "list").casefold(),
+            str(args.get("id") or ""),
+            plugins=self._plugins,
+            refresh=self._refresh_plugin_runtime,
+        )
+        self.ui.show_card("info", "Extensions autonomes", result)
+        return result
+
+    async def _tool_report_capability_gap(self, fc, name, args, loop):
+        result = "Done."
+        request_text = str(args.get("request") or "")
+        # Repêchage des outils par contexte : le modèle se croit démuni
+        # alors que l'outil existe, simplement dans un paquet fermé.
+        # Rouvrir vaut mieux que journaliser une lacune imaginaire.
+        extend = getattr(self, "_extend_toolkit", None)
+        if callable(extend) and extend(request_text, origin="lacune signalée"):
+            result = ("[OUTILS_ELARGIS] Les outils de ce domaine viennent d'être "
+                      "activés. La demande est relancée automatiquement : ne "
+                      "signale aucune lacune.")
+        else:
+            from core.auto_extension import get_auto_extension_manager
+            need = get_auto_extension_manager().record_unmet(
+                request_text, str(args.get("reason") or "outil absent"),
+            )
+            result = (f"Lacune enregistrée dans le groupe {need.id}." if need
+                      else "Lacune non enregistrée : demande insuffisante.")
+        return result
+
+    async def _tool_hypr_orchestrator(self, fc, name, args, loop):
+        result = "Done."
+        heard = str(getattr(self, "_live_user_text", "") or "")
+        preset_call = str(args.get("action") or "").casefold() in {
+            "preset", "apply_preset",
+        }
+        if preset_call and heard and not _preset_requested(heard):
+            result = "Preset ignoré : aucune demande de preset reconnue dans cette phrase."
+        else:
+            r = await loop.run_in_executor(
+                None, lambda: hypr_orchestrator_control(parameters=args, player=self.ui)
+            )
+            result = r or "Organisation Hyprland terminée."
+        return result
+
+    async def _tool_tiktok_coach(self, fc, name, args, loop):
+        result = "Done."
+        if name == "tiktok_coach" and str(args.get("action") or "").lower() in (
+            "viral_video", "generate_video", "create_video", "make_video", "video_virale",
+        ):
+            # « Génère-moi une vidéo virale » : concept pensé pour CE compte,
+            # puis la vidéo est réellement produite (Sora) en arrière-plan.
+            from actions.tiktok_coach import viral_video_brief
+            secs = int(args.get("seconds") or 12)
+            brief = await loop.run_in_executor(
+                None, lambda: viral_video_brief(str(args.get("query") or ""), seconds=secs),
+            )
+            self._ui_card("show_card", "result", "Concept vidéo virale",
+                          f"**{brief['concept']}**\n\n{brief['caption']}\n\n```text\n{brief['prompt']}\n```")
+            launched = self._start_video_generation({"prompt": brief["prompt"], "seconds": brief["seconds"]})
+            result = (
+                f"Concept retenu : {brief['concept']} Description prête : {brief['caption']}. "
+                + ("La VIDÉO est lancée avec Sora en arrière-plan (plusieurs minutes) : dis le concept "
+                   "en une phrase, précise que la vidéo arrive toute seule, n'appelle aucun autre outil."
+                   if launched else
+                   "Une vidéo est déjà en cours de génération : dis-le, la nouvelle attendra.")
+            )
+
+        elif name == "tiktok_coach" and _tiktok_is_deferred(args):
+            # Analyse Gemini d'une ou plusieurs vidéos : de 10 s à plus
+            # d'une minute. Le verdict arrive dans un nouveau tour.
+            if self._start_deferred_tool(name, args):
+                result = ("J'analyse. Dis-le immédiatement en une phrase ; le verdict "
+                          "sera annoncé dès qu'il sera prêt. Ne rappelle pas cet outil.")
+            else:
+                result = ("Une analyse TikTok est déjà en cours ; dis-le brièvement "
+                          "et ne rappelle pas cet outil.")
+
+        elif name == "tiktok_coach":
+            result = await loop.run_in_executor(
+                None,
+                lambda: tiktok_coach(parameters=args, player=self.ui, speak=self.speak),
+            )
+        return result
+
+    async def _tool_visual_recognition(self, fc, name, args, loop):
+        result = "Done."
+        if name == "visual_recognition" and _vision_is_deferred(args):
+            # Photo, analyse Gemini/Azure et recherche éventuelle :
+            # 8 à 14 s micro fermé. On rend la main tout de suite, le
+            # résultat arrive dans un nouveau tour.
+            if self._start_deferred_tool(name, args):
+                result = ("Je regarde. Dis-le immédiatement en une phrase ; "
+                          "ce que je vois sera annoncé dès que l'analyse sera prête. "
+                          "Ne rappelle pas cet outil.")
+            else:
+                result = ("Une analyse visuelle est déjà en cours ; dis-le brièvement "
+                          "et ne rappelle pas cet outil.")
+
+        elif name == "visual_recognition":
+            from actions.visual_recognition import visual_recognition
+            r = await loop.run_in_executor(
+                None,
+                lambda: visual_recognition(parameters=args, player=self.ui,
+                                           session_memory=self._tool_session_memory,
+                                           speak=self.speak,
+                                           grab_frame=self._grab_camera_still,
+                                           save_photo=self._save_capture),
+            )
+            result = r or "Je n'ai rien reconnu."
+        return result
+
+    async def _tool_music_recognition(self, fc, name, args, loop):
+        result = "Done."
+        if name == "music_recognition" and _music_is_deferred(args):
+            # Deux fenêtres d'écoute et l'empreinte : jusqu'à 50 s, au-delà
+            # du délai du répartiteur. Le titre arrive dans un nouveau tour.
+            if self._start_deferred_tool(name, args):
+                result = ("J'écoute. Dis uniquement « J'écoute. » puis tais-toi : "
+                          "le titre sera annoncé dès qu'il sera reconnu. "
+                          "Ne rappelle pas cet outil.")
+            else:
+                result = ("Une écoute est déjà en cours ; dis-le en quelques mots "
+                          "et ne rappelle pas cet outil.")
+
+        elif name == "music_recognition":
+            from actions.music_recognition import music_recognition
+            r = await loop.run_in_executor(
+                None,
+                lambda: music_recognition(parameters=args, player=self.ui,
+                                          session_memory=self._tool_session_memory),
+            )
+            result = r or "Je n'ai pas reconnu la musique."
+        return result
+
     async def _execute_tool_impl(self, fc, prepared_args: dict | None = None) -> types.FunctionResponse:
         name = fc.name
         args = dict(prepared_args if prepared_args is not None else (fc.args or {}))
@@ -1807,52 +2143,13 @@ class ToolDispatcher:
                     result = "Une simulation stratégique est déjà en cours."
 
             elif name == "open_app":
-                # ── Garde-fou anti-boucle ─────────────────────────────────
-                # Le modèle Live peut re-décider d'appeler open_app après
-                # avoir reçu le résultat (« kitty est ouvert »). Sans ce
-                # verrou, chaque résultat renvoyé au modèle déclenche un
-                # nouvel appel identique → fenêtres à l'infini.
-                import time as _t_mod
-                _now = _t_mod.monotonic()
-                _app_sig = (
-                    f"{str(args.get('app_name', '') or '').lower().strip()}"
-                    f"|{str(args.get('command', '') or '').lower().strip()}"
-                    f"|{str(args.get('workspace', '') or '').strip()}"
-                )
-                _OA_COOLDOWN = 10.0  # seconds — même app+cmd+ws dans ce délai = doublon
-                if (
-                    _app_sig == getattr(self, "_open_app_last_sig", "")
-                    and _app_sig  # ne bloque pas les appels vides
-                    and (_now - getattr(self, "_open_app_last_time", 0.0)) < _OA_COOLDOWN
-                ):
-                    _wait = _OA_COOLDOWN - (_now - self._open_app_last_time)
-                    print(f"[open_app] ⏳ Doublon bloqué ({_wait:.1f}s restantes) — même app+commande+workspace")
-                    result = (
-                        "DÉJÀ FAIT. L'application a été lancée et la commande "
-                        "tapée lors de l'appel précédent (il y a moins de 10 s). "
-                        "Ne rappelle PAS cet outil. Confirme simplement à "
-                        "l'utilisateur que c'est fait."
-                    )
-                else:
-                    self._open_app_last_sig = _app_sig
-                    self._open_app_last_time = _now
-                    r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
-                    result = r or f"Opened {args.get('app_name')}."
-                    # Ajouter une instruction anti-loop explicite dans le
-                    # résultat pour que le modèle ne re-tente pas.
-                    result += " Action terminée — ne rappelle PAS open_app."
+                result = await self._tool_open_app(fc, name, args, loop)
 
             elif name == "close_app":
-                r = await loop.run_in_executor(None, lambda: close_app(parameters=args, response=None, player=self.ui, session_memory=self._tool_session_memory))
-                result = r or f"Closed {args.get('app_name')}."
+                result = await self._tool_close_app(fc, name, args, loop)
 
             elif name == "weather_report":
-                r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Weather delivered."
-                from actions.weather_report import get_last_weather_card
-                _card = get_last_weather_card()
-                if _card:
-                    self.ui.show_card("result", "Météo", _card)
+                result = await self._tool_weather_report(fc, name, args, loop)
 
             elif name == "location":
                 # Résultat structuré du GPS/config, jamais une supposition à
@@ -1866,42 +2163,10 @@ class ToolDispatcher:
                 result = r or "Done."
 
             elif name == "file_controller":
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: file_controller(
-                        parameters=args, player=self.ui,
-                        session_memory=self._tool_session_memory,
-                    ),
-                )
-                result = r or "Done."
+                result = await self._tool_file_controller(fc, name, args, loop)
 
             elif name == "send_message":
-                r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Message sent to {args.get('receiver')}."
-                if result.startswith("[NEEDS_CONFIRM] "):
-                    _plat, _recv, _txt = result[len("[NEEDS_CONFIRM] "):].split("|", 2)
-                    _confirm_args = dict(args)
-                    _confirm_args["confirm"] = True
-
-                    def _resend(a=_confirm_args):
-                        if self.ui.on_text_command:
-                            self.ui.on_text_command(
-                                f"envoie ce message maintenant : « {a.get('message_text')} » "
-                                f"à {a.get('receiver')} sur {a.get('platform')}, confirme envoi"
-                            )
-
-                    self.ui.show_card(
-                        "confirmation", f"Envoyer sur {_plat} ?",
-                        f"**À :** {_recv}\n\n{_txt}",
-                        [
-                            {"label": "Envoyer", "primary": True, "callback": _resend},
-                            {"label": "Annuler",
-                             "callback": (lambda: self.ui.on_text_command("annule cet envoi")
-                                          if self.ui.on_text_command else None)},
-                        ],
-                    )
-                    result = (f"Aperçu affiché à l'utilisateur pour confirmation avant envoi "
-                              f"(ne dis pas que c'est envoyé) : {_plat} → {_recv} : {_txt}")
+                result = await self._tool_send_message(fc, name, args, loop)
 
             elif name == "whatsapp_control":
                 result = await self._tool_whatsapp_control(fc, name, args, loop)
@@ -1970,42 +2235,8 @@ class ToolDispatcher:
             elif name == "tiktok_tracker":
                 result = await self._tool_tiktok_tracker(fc, name, args, loop)
 
-            elif name == "tiktok_coach" and str(args.get("action") or "").lower() in (
-                "viral_video", "generate_video", "create_video", "make_video", "video_virale",
-            ):
-                # « Génère-moi une vidéo virale » : concept pensé pour CE compte,
-                # puis la vidéo est réellement produite (Sora) en arrière-plan.
-                from actions.tiktok_coach import viral_video_brief
-                secs = int(args.get("seconds") or 12)
-                brief = await loop.run_in_executor(
-                    None, lambda: viral_video_brief(str(args.get("query") or ""), seconds=secs),
-                )
-                self._ui_card("show_card", "result", "Concept vidéo virale",
-                              f"**{brief['concept']}**\n\n{brief['caption']}\n\n```text\n{brief['prompt']}\n```")
-                launched = self._start_video_generation({"prompt": brief["prompt"], "seconds": brief["seconds"]})
-                result = (
-                    f"Concept retenu : {brief['concept']} Description prête : {brief['caption']}. "
-                    + ("La VIDÉO est lancée avec Sora en arrière-plan (plusieurs minutes) : dis le concept "
-                       "en une phrase, précise que la vidéo arrive toute seule, n'appelle aucun autre outil."
-                       if launched else
-                       "Une vidéo est déjà en cours de génération : dis-le, la nouvelle attendra.")
-                )
-
-            elif name == "tiktok_coach" and _tiktok_is_deferred(args):
-                # Analyse Gemini d'une ou plusieurs vidéos : de 10 s à plus
-                # d'une minute. Le verdict arrive dans un nouveau tour.
-                if self._start_deferred_tool(name, args):
-                    result = ("J'analyse. Dis-le immédiatement en une phrase ; le verdict "
-                              "sera annoncé dès qu'il sera prêt. Ne rappelle pas cet outil.")
-                else:
-                    result = ("Une analyse TikTok est déjà en cours ; dis-le brièvement "
-                              "et ne rappelle pas cet outil.")
-
             elif name == "tiktok_coach":
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: tiktok_coach(parameters=args, player=self.ui, speak=self.speak),
-                )
+                result = await self._tool_tiktok_coach(fc, name, args, loop)
 
             elif name in ("prayer", "prayer_control"):
                 result = await loop.run_in_executor(None, lambda: prayer_control(args))
@@ -2037,23 +2268,7 @@ class ToolDispatcher:
                 )
 
             elif name == "computer_settings":
-                settings_args = dict(args)
-                if str(settings_args.get("action") or "").casefold() in {
-                    "toggle_bluetooth", "bluetooth", "toggle_bt",
-                }:
-                    explicit = _bluetooth_action_from_request(
-                        str(getattr(self, "_live_user_text", "") or "")
-                        or str(settings_args.get("description") or "")
-                    )
-                    if explicit:
-                        settings_args["action"] = explicit
-                r = await loop.run_in_executor(
-                    None, lambda: computer_settings(
-                        parameters=settings_args, response=None, player=self.ui,
-                        session_memory=self._tool_session_memory,
-                    )
-                )
-                result = r or "Done."
+                result = await self._tool_computer_settings(fc, name, args, loop)
 
             elif name == "hud_appearance":
                 result = await loop.run_in_executor(
@@ -2102,20 +2317,7 @@ class ToolDispatcher:
                 result = r or "Done."
 
             elif name == "computer_control":
-                control_args = dict(args)
-                if (str(control_args.get("action") or "").casefold() in {"click", "screen_click"}
-                        and not control_args.get("description")):
-                    target = _click_target_from_request(
-                        getattr(self, "_live_user_text", "")
-                    )
-                    if target:
-                        control_args["description"] = target
-                        control_args.pop("x", None)
-                        control_args.pop("y", None)
-                r = await loop.run_in_executor(
-                    None, lambda: computer_control(parameters=control_args, player=self.ui)
-                )
-                result = r or "Done."
+                result = await self._tool_computer_control(fc, name, args, loop)
 
             elif name == "game_updater":
                 r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
@@ -2132,49 +2334,11 @@ class ToolDispatcher:
             elif name == "capture_control":
                 result = await self._tool_capture_control(fc, name, args, loop)
 
-            elif name == "visual_recognition" and _vision_is_deferred(args):
-                # Photo, analyse Gemini/Azure et recherche éventuelle :
-                # 8 à 14 s micro fermé. On rend la main tout de suite, le
-                # résultat arrive dans un nouveau tour.
-                if self._start_deferred_tool(name, args):
-                    result = ("Je regarde. Dis-le immédiatement en une phrase ; "
-                              "ce que je vois sera annoncé dès que l'analyse sera prête. "
-                              "Ne rappelle pas cet outil.")
-                else:
-                    result = ("Une analyse visuelle est déjà en cours ; dis-le brièvement "
-                              "et ne rappelle pas cet outil.")
-
             elif name == "visual_recognition":
-                from actions.visual_recognition import visual_recognition
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: visual_recognition(parameters=args, player=self.ui,
-                                               session_memory=self._tool_session_memory,
-                                               speak=self.speak,
-                                               grab_frame=self._grab_camera_still,
-                                               save_photo=self._save_capture),
-                )
-                result = r or "Je n'ai rien reconnu."
-
-            elif name == "music_recognition" and _music_is_deferred(args):
-                # Deux fenêtres d'écoute et l'empreinte : jusqu'à 50 s, au-delà
-                # du délai du répartiteur. Le titre arrive dans un nouveau tour.
-                if self._start_deferred_tool(name, args):
-                    result = ("J'écoute. Dis uniquement « J'écoute. » puis tais-toi : "
-                              "le titre sera annoncé dès qu'il sera reconnu. "
-                              "Ne rappelle pas cet outil.")
-                else:
-                    result = ("Une écoute est déjà en cours ; dis-le en quelques mots "
-                              "et ne rappelle pas cet outil.")
+                result = await self._tool_visual_recognition(fc, name, args, loop)
 
             elif name == "music_recognition":
-                from actions.music_recognition import music_recognition
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: music_recognition(parameters=args, player=self.ui,
-                                              session_memory=self._tool_session_memory),
-                )
-                result = r or "Je n'ai pas reconnu la musique."
+                result = await self._tool_music_recognition(fc, name, args, loop)
 
             elif name == "music_control":
                 result = await self._tool_music_control(fc, name, args, loop)
@@ -2189,31 +2353,7 @@ class ToolDispatcher:
                 result = self._agent_voice_style(args)
 
             elif name == "proactive_mode":
-                action = str(args.get("action") or "status").strip().casefold()
-                if action in {"silence", "silent", "off", "0"}:
-                    state = self._proactive.set_silent(True)
-                elif action in {"on", "actif", "active", "1"}:
-                    state = self._proactive.set_silent(False)
-                elif action in {"set_home", "home", "maison", "domicile"}:
-                    from core.geolocation import get_live_position
-
-                    position = get_live_position(resolve_place=False)
-                    if not position:
-                        result = (
-                            "Position GPS indisponible. Ouvre ANO Remote sur le "
-                            "téléphone puis réessaie."
-                        )
-                    else:
-                        self._proactive.set_home(
-                            position["lat"], position["lon"],
-                            float(args.get("radius_m") or 250),
-                        )
-                        result = "Cette position est maintenant ton domicile."
-                    state = None
-                else:
-                    state = "silence" if self._proactive.silent else "actif"
-                if state is not None:
-                    result = f"Mode proactif : {state}."
+                result = await self._tool_proactive_mode(fc, name, args, loop)
 
             elif name == "system_status":
                 r = await loop.run_in_executor(None, get_system_status)
@@ -2241,65 +2381,13 @@ class ToolDispatcher:
                 )
 
             elif name == "plugin_manager":
-                action = str(args.get("action") or "list").casefold()
-                plugin_name = str(args.get("name") or "").strip()
-                if action == "reload":
-                    self._plugins.discover()
-                    self._refresh_plugin_runtime()
-                    result = "Plugins rescannés. Les déclarations seront actualisées à la prochaine reconnexion."
-                elif action in {"enable", "disable"}:
-                    changed = self._plugins.set_enabled(plugin_name, action == "enable")
-                    if changed:
-                        self._refresh_plugin_runtime()
-                    result = (("Plugin activé" if action == "enable" else "Plugin désactivé")
-                              + f" : {plugin_name}. La modification prendra effet à la prochaine reconnexion.") \
-                             if changed else f"Plugin inconnu : {plugin_name}."
-                else:
-                    rows = self._plugins.status()
-                    if not rows:
-                        result = "Aucun plugin installé dans le dossier plugins/."
-                    else:
-                        lines = []
-                        for row in rows:
-                            if row["error"]:
-                                state = "ERREUR"
-                            elif row["enabled"]:
-                                state = "ACTIF"
-                            elif row.get("needs_approval"):
-                                state = "EN ATTENTE D'APPROBATION (code modifié ou jamais activé)"
-                            else:
-                                state = "INACTIF"
-                            lines.append(f"- {row['name']} — {state}" + (f" : {row['error']}" if row["error"] else ""))
-                        result = "Plugins ANO-GPT :\n" + "\n".join(lines)
-                        self.ui.show_card("info", "Plugins ANO-GPT", result)
+                result = await self._tool_plugin_manager(fc, name, args, loop)
 
             elif name == "auto_extension_control":
-                from core.auto_extension import get_auto_extension_manager
-                result = get_auto_extension_manager().control(
-                    str(args.get("action") or "list").casefold(),
-                    str(args.get("id") or ""),
-                    plugins=self._plugins,
-                    refresh=self._refresh_plugin_runtime,
-                )
-                self.ui.show_card("info", "Extensions autonomes", result)
+                result = await self._tool_auto_extension_control(fc, name, args, loop)
 
             elif name == "report_capability_gap":
-                request_text = str(args.get("request") or "")
-                # Repêchage des outils par contexte : le modèle se croit démuni
-                # alors que l'outil existe, simplement dans un paquet fermé.
-                # Rouvrir vaut mieux que journaliser une lacune imaginaire.
-                extend = getattr(self, "_extend_toolkit", None)
-                if callable(extend) and extend(request_text, origin="lacune signalée"):
-                    result = ("[OUTILS_ELARGIS] Les outils de ce domaine viennent d'être "
-                              "activés. La demande est relancée automatiquement : ne "
-                              "signale aucune lacune.")
-                else:
-                    from core.auto_extension import get_auto_extension_manager
-                    need = get_auto_extension_manager().record_unmet(
-                        request_text, str(args.get("reason") or "outil absent"),
-                    )
-                    result = (f"Lacune enregistrée dans le groupe {need.id}." if need
-                              else "Lacune non enregistrée : demande insuffisante.")
+                result = await self._tool_report_capability_gap(fc, name, args, loop)
 
             elif name == "shell_exec":
                 result = await self._tool_shell_exec(fc, name, args, loop)
@@ -2313,17 +2401,7 @@ class ToolDispatcher:
                 result = r or "Opération DevSecOps effectuée."
 
             elif name == "hypr_orchestrator":
-                heard = str(getattr(self, "_live_user_text", "") or "")
-                preset_call = str(args.get("action") or "").casefold() in {
-                    "preset", "apply_preset",
-                }
-                if preset_call and heard and not _preset_requested(heard):
-                    result = "Preset ignoré : aucune demande de preset reconnue dans cette phrase."
-                else:
-                    r = await loop.run_in_executor(
-                        None, lambda: hypr_orchestrator_control(parameters=args, player=self.ui)
-                    )
-                    result = r or "Organisation Hyprland terminée."
+                result = await self._tool_hypr_orchestrator(fc, name, args, loop)
 
             elif name == "shutdown_jarvis":
                 requested = str(getattr(self, "_live_user_text", "") or "").casefold()
