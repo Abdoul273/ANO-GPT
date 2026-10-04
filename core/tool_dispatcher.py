@@ -973,6 +973,246 @@ class ToolDispatcher:
         )
         return True
 
+    async def _tool_camera_control(self, fc, name, args, loop):
+        result = "Done."
+        result = await loop.run_in_executor(
+            None,
+            self._camera_tool,
+            (args.get("action") or "open").strip().lower(),
+            (args.get("source") or "").strip().lower(),
+            (args.get("lens") or "").strip().lower(),
+        )
+        return result
+
+    async def _tool_point_on_screen(self, fc, name, args, loop):
+        result = "Done."
+        result = await loop.run_in_executor(
+            None, lambda: self._agent_point_on_screen(args)
+        )
+        return result
+
+    async def _tool_self_repair(self, fc, name, args, loop):
+        result = "Done."
+        # Une réparation peut réveiller dev_agent : elle a sa place dans
+        # un exécuteur, pas sur la boucle qui porte la voix.
+        result = await loop.run_in_executor(
+            None, self._agent_self_repair, args
+        )
+        return result
+
+    async def _tool_close_camera(self, fc, name, args, loop):
+        result = "Done."
+        # Le studio peut attendre son worker : hors de la boucle vocale.
+        result = await loop.run_in_executor(None, self.close_all_cameras)
+        return result
+
+    async def _tool_show_map(self, fc, name, args, loop):
+        result = "Done."
+        query = (args.get("query") or "").strip()
+        radius_km = float(args.get("radius_km") or 3.0)
+        lat_arg = args.get("lat")
+        lon_arg = args.get("lon")
+        _view_arg = str(args.get("view") or "").strip().casefold()
+        view = "globe" if "globe" in _view_arg else (
+            "leaflet" if _view_arg else None
+        )
+
+        # « Ma position » : relevé récent, sinon GPS redemandé (borné).
+        if not query and lat_arg is None and lon_arg is None and self._dashboard:
+            from core.geolocation import get_precise_user_coords
+            if get_precise_user_coords(max_age_s=_MAP_FIX_FRESH_S) is None:
+                await self._dashboard.request_fresh_location(timeout=_MAP_FIX_WAIT_S)
+
+        def _do_show_map():
+            if lat_arg is not None and lon_arg is not None:
+                lat, lon = float(lat_arg), float(lon_arg)
+                label = query or "position"
+            else:
+                from core.geolocation import geocode, get_precise_user_coords
+                if query:
+                    coords = geocode(query)
+                    label = query
+                else:
+                    coords = get_precise_user_coords()
+                    label = "votre position"
+                if not coords:
+                    if not query:
+                        return (
+                            "Je ne peux pas afficher votre position réelle sans un relevé GPS "
+                            "précis. Ouvrez le contrôle à distance sur votre téléphone "
+                            "et autorisez la localisation, puis réessayez. Je n'utiliserai pas "
+                            "Conakry ou la position IP comme si c'était votre position."
+                        )
+                    return f"Impossible de localiser « {query} » sur la carte."
+                lat, lon = coords
+            quartier = ""
+            if not query:
+                # « Voici ta position » sans le quartier n'a jamais de
+                # sens : le modèle n'avait alors que des coordonnées
+                # brutes et devinait « Conakry » depuis sa culture
+                # générale plutôt que de le dire précisément — et une
+                # question de suivi (« dans quel quartier ? ») partait
+                # en recherche web, qui ne peut évidemment pas savoir
+                # où l'utilisateur se trouve en ce moment.
+                from core.geolocation import reverse_geocode
+                place = reverse_geocode(lat, lon) or {}
+                quartier = str(place.get("city") or "")
+                if quartier:
+                    label = f"{quartier}, {place.get('country_name') or 'votre position'}"
+            self.ui.show_map(label, lat, lon, radius_km, view=view)
+            style = {"globe": " (vue globe)", "leaflet": " (vue carte)"}.get(view, "")
+            where = f"quartier {quartier}, " if quartier else ""
+            return (
+                f"Carte affichée, centrée sur {label} ({where}coordonnées "
+                f"{lat:.4f}, {lon:.4f}){style}. Dis le quartier précis à "
+                f"l'utilisateur s'il est connu, pas seulement la ville."
+            )
+
+        result = await loop.run_in_executor(None, _do_show_map)
+        return result
+
+    async def _tool_show_country_info(self, fc, name, args, loop):
+        result = "Done."
+        country_query = (args.get("country") or "").strip()
+        _view_arg = str(args.get("view") or "").strip().casefold()
+        view = "globe" if "globe" in _view_arg else (
+            "leaflet" if _view_arg else None
+        )
+
+        def _do_show_country():
+            from core.country_info import fetch_country_info
+            info = fetch_country_info(country_query)
+            if info is None:
+                return (
+                    f"Je ne trouve pas de pays correspondant à « {country_query} ». "
+                    "Vérifie l'orthographe ou essaie le nom en anglais."
+                )
+            radius = max(200.0, (info.area_km2 or 1.0) ** 0.5 * 6.0)
+            self.ui.show_map(
+                info.name, info.lat, info.lon, radius, view=view,
+                country={
+                    "flag": info.flag, "name": info.name,
+                    "capital": info.capital,
+                    "population": (
+                        f"{info.population:,}".replace(",", " ")
+                        if info.population else ""
+                    ),
+                    "currencies": info.currencies,
+                    "languages": info.languages,
+                    "timezone": info.timezone,
+                    "area": (
+                        f"{info.area_km2:,.0f} km²".replace(",", " ")
+                        if info.area_km2 else ""
+                    ),
+                    "neighbors": info.neighbors,
+                    "calling_code": info.calling_code,
+                    "weather": (
+                        f"{info.weather_emoji} {info.weather_text}, {info.temp_c:.0f}°C"
+                        if info.temp_c is not None else ""
+                    ),
+                },
+            )
+            return info.as_tool_result()
+
+        result = await loop.run_in_executor(None, _do_show_country)
+        return result
+
+    async def _tool_navigate(self, fc, name, args, loop):
+        result = "Done."
+        # Démarrer un guidage depuis une position IP ou périmée a déjà
+        # renvoyé des distances à des milliers de km de la réalité :
+        # même exigence de relevé frais qu'au premier « montre ma
+        # position ». Un statut/arrêt n'a pas besoin de position.
+        _nav_action = str(args.get("action") or "start").strip().lower()
+        _needs_origin = _nav_action not in (
+            "stop", "cancel", "end", "close", "quitter", "arreter",
+            "status", "info", "state", "where", "prochaine",
+        )
+        _gps_ok = True
+        if _needs_origin:
+            from core.geolocation import get_precise_user_coords
+            # Un relevé des 5 dernières minutes suffit — inutile de
+            # réveiller le téléphone si la position vient d'être
+            # utilisée (ex. juste après « montre ma position »).
+            _gps_ok = get_precise_user_coords(max_age_s=300.0) is not None
+            if not _gps_ok and self._dashboard:
+                # request_fresh_location rend False sans attendre le
+                # délai complet si aucun téléphone n'est connecté —
+                # inutile alors de patienter 10 s pour rien.
+                _gps_ok = await self._dashboard.request_fresh_location(timeout=10.0)
+                if _gps_ok:
+                    _gps_ok = get_precise_user_coords(max_age_s=15.0) is not None
+
+        if _needs_origin and not _gps_ok:
+            result = (
+                "Je n'ai aucune position GPS précise pour démarrer le guidage. "
+                "Ouvre ANO Remote sur ton téléphone, autorise la localisation, "
+                "puis redemande ; je n'utiliserai pas une position IP ou "
+                "ancienne comme point de départ."
+            )
+        else:
+            r = await loop.run_in_executor(
+                None,
+                lambda: navigation_action(
+                    parameters=args,
+                    player=self.ui,
+                    speak=self.speak,
+                ),
+            )
+            result = r or "Navigation initialisée."
+        return result
+
+    async def _tool_find_nearby(self, fc, name, args, loop):
+        result = "Done."
+        # Chercher « autour de moi » exige de savoir où l'on est
+        # maintenant : on redemande le GPS au téléphone avant de
+        # chercher, comme pour « montre ma position ». Sans cela, des
+        # distances au mètre près sont calculées depuis une position IP
+        # vieille de plusieurs heures.
+        around_user = not (args.get("near") or "").strip()
+        fresh_location = False
+        if around_user:
+            # Ne garde pas le micro fermé en attendant un téléphone :
+            # une mesure de plus de cinq minutes est trop ancienne
+            # pour annoncer des distances de proximité.
+            from core.geolocation import get_precise_user_coords
+            fresh_location = get_precise_user_coords(max_age_s=300.0) is not None
+
+        if around_user and not fresh_location:
+            result = (
+                "Je n'ai aucune position GPS de moins de cinq minutes. Ouvre ANO "
+                "Remote, autorise la localisation, puis redemande ; je n'utiliserai "
+                "pas une position IP ou une ancienne position comme position précise."
+            )
+        else:
+            lookup_args = dict(args)
+            if around_user:
+                lookup_args["_require_precise_gps"] = True
+                lookup_args["_max_location_age_s"] = 300.0
+
+            def _do_find_nearby():
+                return find_nearby(
+                    parameters=lookup_args,
+                    session_memory=self._tool_session_memory,
+                    ui=self.ui,
+                )
+            result = await loop.run_in_executor(None, _do_find_nearby)
+        return result
+
+    async def _tool_close_map(self, fc, name, args, loop):
+        result = "Done."
+        self.ui.close_map()
+        result = "Carte fermée."
+        return result
+
+    async def _tool_tiktok_tracker(self, fc, name, args, loop):
+        result = "Done."
+        result = await loop.run_in_executor(
+            None,
+            lambda: tiktok_tracker(parameters=args, player=self.ui, speak=self.speak),
+        )
+        return result
+
     async def _execute_tool_impl(self, fc, prepared_args: dict | None = None) -> types.FunctionResponse:
         name = fc.name
         args = dict(prepared_args if prepared_args is not None else (fc.args or {}))
@@ -1440,218 +1680,31 @@ class ToolDispatcher:
                                     )
 
             elif name == "camera_control":
-                result = await loop.run_in_executor(
-                    None,
-                    self._camera_tool,
-                    (args.get("action") or "open").strip().lower(),
-                    (args.get("source") or "").strip().lower(),
-                    (args.get("lens") or "").strip().lower(),
-                )
+                result = await self._tool_camera_control(fc, name, args, loop)
 
             elif name == "point_on_screen":
-                result = await loop.run_in_executor(
-                    None, lambda: self._agent_point_on_screen(args)
-                )
+                result = await self._tool_point_on_screen(fc, name, args, loop)
 
             elif name == "self_repair":
-                # Une réparation peut réveiller dev_agent : elle a sa place dans
-                # un exécuteur, pas sur la boucle qui porte la voix.
-                result = await loop.run_in_executor(
-                    None, self._agent_self_repair, args
-                )
+                result = await self._tool_self_repair(fc, name, args, loop)
 
             elif name == "close_camera":
-                # Le studio peut attendre son worker : hors de la boucle vocale.
-                result = await loop.run_in_executor(None, self.close_all_cameras)
+                result = await self._tool_close_camera(fc, name, args, loop)
 
             elif name == "show_map":
-                query = (args.get("query") or "").strip()
-                radius_km = float(args.get("radius_km") or 3.0)
-                lat_arg = args.get("lat")
-                lon_arg = args.get("lon")
-                _view_arg = str(args.get("view") or "").strip().casefold()
-                view = "globe" if "globe" in _view_arg else (
-                    "leaflet" if _view_arg else None
-                )
-
-                # « Ma position » : relevé récent, sinon GPS redemandé (borné).
-                if not query and lat_arg is None and lon_arg is None and self._dashboard:
-                    from core.geolocation import get_precise_user_coords
-                    if get_precise_user_coords(max_age_s=_MAP_FIX_FRESH_S) is None:
-                        await self._dashboard.request_fresh_location(timeout=_MAP_FIX_WAIT_S)
-
-                def _do_show_map():
-                    if lat_arg is not None and lon_arg is not None:
-                        lat, lon = float(lat_arg), float(lon_arg)
-                        label = query or "position"
-                    else:
-                        from core.geolocation import geocode, get_precise_user_coords
-                        if query:
-                            coords = geocode(query)
-                            label = query
-                        else:
-                            coords = get_precise_user_coords()
-                            label = "votre position"
-                        if not coords:
-                            if not query:
-                                return (
-                                    "Je ne peux pas afficher votre position réelle sans un relevé GPS "
-                                    "précis. Ouvrez le contrôle à distance sur votre téléphone "
-                                    "et autorisez la localisation, puis réessayez. Je n'utiliserai pas "
-                                    "Conakry ou la position IP comme si c'était votre position."
-                                )
-                            return f"Impossible de localiser « {query} » sur la carte."
-                        lat, lon = coords
-                    quartier = ""
-                    if not query:
-                        # « Voici ta position » sans le quartier n'a jamais de
-                        # sens : le modèle n'avait alors que des coordonnées
-                        # brutes et devinait « Conakry » depuis sa culture
-                        # générale plutôt que de le dire précisément — et une
-                        # question de suivi (« dans quel quartier ? ») partait
-                        # en recherche web, qui ne peut évidemment pas savoir
-                        # où l'utilisateur se trouve en ce moment.
-                        from core.geolocation import reverse_geocode
-                        place = reverse_geocode(lat, lon) or {}
-                        quartier = str(place.get("city") or "")
-                        if quartier:
-                            label = f"{quartier}, {place.get('country_name') or 'votre position'}"
-                    self.ui.show_map(label, lat, lon, radius_km, view=view)
-                    style = {"globe": " (vue globe)", "leaflet": " (vue carte)"}.get(view, "")
-                    where = f"quartier {quartier}, " if quartier else ""
-                    return (
-                        f"Carte affichée, centrée sur {label} ({where}coordonnées "
-                        f"{lat:.4f}, {lon:.4f}){style}. Dis le quartier précis à "
-                        f"l'utilisateur s'il est connu, pas seulement la ville."
-                    )
-
-                result = await loop.run_in_executor(None, _do_show_map)
+                result = await self._tool_show_map(fc, name, args, loop)
 
             elif name == "show_country_info":
-                country_query = (args.get("country") or "").strip()
-                _view_arg = str(args.get("view") or "").strip().casefold()
-                view = "globe" if "globe" in _view_arg else (
-                    "leaflet" if _view_arg else None
-                )
-
-                def _do_show_country():
-                    from core.country_info import fetch_country_info
-                    info = fetch_country_info(country_query)
-                    if info is None:
-                        return (
-                            f"Je ne trouve pas de pays correspondant à « {country_query} ». "
-                            "Vérifie l'orthographe ou essaie le nom en anglais."
-                        )
-                    radius = max(200.0, (info.area_km2 or 1.0) ** 0.5 * 6.0)
-                    self.ui.show_map(
-                        info.name, info.lat, info.lon, radius, view=view,
-                        country={
-                            "flag": info.flag, "name": info.name,
-                            "capital": info.capital,
-                            "population": (
-                                f"{info.population:,}".replace(",", " ")
-                                if info.population else ""
-                            ),
-                            "currencies": info.currencies,
-                            "languages": info.languages,
-                            "timezone": info.timezone,
-                            "area": (
-                                f"{info.area_km2:,.0f} km²".replace(",", " ")
-                                if info.area_km2 else ""
-                            ),
-                            "neighbors": info.neighbors,
-                            "calling_code": info.calling_code,
-                            "weather": (
-                                f"{info.weather_emoji} {info.weather_text}, {info.temp_c:.0f}°C"
-                                if info.temp_c is not None else ""
-                            ),
-                        },
-                    )
-                    return info.as_tool_result()
-
-                result = await loop.run_in_executor(None, _do_show_country)
+                result = await self._tool_show_country_info(fc, name, args, loop)
 
             elif name == "navigate":
-                # Démarrer un guidage depuis une position IP ou périmée a déjà
-                # renvoyé des distances à des milliers de km de la réalité :
-                # même exigence de relevé frais qu'au premier « montre ma
-                # position ». Un statut/arrêt n'a pas besoin de position.
-                _nav_action = str(args.get("action") or "start").strip().lower()
-                _needs_origin = _nav_action not in (
-                    "stop", "cancel", "end", "close", "quitter", "arreter",
-                    "status", "info", "state", "where", "prochaine",
-                )
-                _gps_ok = True
-                if _needs_origin:
-                    from core.geolocation import get_precise_user_coords
-                    # Un relevé des 5 dernières minutes suffit — inutile de
-                    # réveiller le téléphone si la position vient d'être
-                    # utilisée (ex. juste après « montre ma position »).
-                    _gps_ok = get_precise_user_coords(max_age_s=300.0) is not None
-                    if not _gps_ok and self._dashboard:
-                        # request_fresh_location rend False sans attendre le
-                        # délai complet si aucun téléphone n'est connecté —
-                        # inutile alors de patienter 10 s pour rien.
-                        _gps_ok = await self._dashboard.request_fresh_location(timeout=10.0)
-                        if _gps_ok:
-                            _gps_ok = get_precise_user_coords(max_age_s=15.0) is not None
-
-                if _needs_origin and not _gps_ok:
-                    result = (
-                        "Je n'ai aucune position GPS précise pour démarrer le guidage. "
-                        "Ouvre ANO Remote sur ton téléphone, autorise la localisation, "
-                        "puis redemande ; je n'utiliserai pas une position IP ou "
-                        "ancienne comme point de départ."
-                    )
-                else:
-                    r = await loop.run_in_executor(
-                        None,
-                        lambda: navigation_action(
-                            parameters=args,
-                            player=self.ui,
-                            speak=self.speak,
-                        ),
-                    )
-                    result = r or "Navigation initialisée."
+                result = await self._tool_navigate(fc, name, args, loop)
 
             elif name == "find_nearby":
-                # Chercher « autour de moi » exige de savoir où l'on est
-                # maintenant : on redemande le GPS au téléphone avant de
-                # chercher, comme pour « montre ma position ». Sans cela, des
-                # distances au mètre près sont calculées depuis une position IP
-                # vieille de plusieurs heures.
-                around_user = not (args.get("near") or "").strip()
-                fresh_location = False
-                if around_user:
-                    # Ne garde pas le micro fermé en attendant un téléphone :
-                    # une mesure de plus de cinq minutes est trop ancienne
-                    # pour annoncer des distances de proximité.
-                    from core.geolocation import get_precise_user_coords
-                    fresh_location = get_precise_user_coords(max_age_s=300.0) is not None
-
-                if around_user and not fresh_location:
-                    result = (
-                        "Je n'ai aucune position GPS de moins de cinq minutes. Ouvre ANO "
-                        "Remote, autorise la localisation, puis redemande ; je n'utiliserai "
-                        "pas une position IP ou une ancienne position comme position précise."
-                    )
-                else:
-                    lookup_args = dict(args)
-                    if around_user:
-                        lookup_args["_require_precise_gps"] = True
-                        lookup_args["_max_location_age_s"] = 300.0
-
-                    def _do_find_nearby():
-                        return find_nearby(
-                            parameters=lookup_args,
-                            session_memory=self._tool_session_memory,
-                            ui=self.ui,
-                        )
-                    result = await loop.run_in_executor(None, _do_find_nearby)
+                result = await self._tool_find_nearby(fc, name, args, loop)
 
             elif name == "close_map":
-                self.ui.close_map()
-                result = "Carte fermée."
+                result = await self._tool_close_map(fc, name, args, loop)
 
             elif name == "interface_control":
                 result = self._interface_control(str(args.get("action") or "").strip().lower())
@@ -1673,10 +1726,7 @@ class ToolDispatcher:
                 result = await loop.run_in_executor(None, lambda: cloud_integrations_control(args))
 
             elif name == "tiktok_tracker":
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: tiktok_tracker(parameters=args, player=self.ui, speak=self.speak),
-                )
+                result = await self._tool_tiktok_tracker(fc, name, args, loop)
 
             elif name == "tiktok_coach" and str(args.get("action") or "").lower() in (
                 "viral_video", "generate_video", "create_video", "make_video", "video_virale",

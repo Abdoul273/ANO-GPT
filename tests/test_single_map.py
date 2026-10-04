@@ -106,13 +106,13 @@ MAIN = "\n".join(
 
 def test_ma_position_demande_un_releve_gps_frais():
     """Afficher une position périmée revient à mentir sur l'endroit où l'on est."""
-    start = MAIN.index('elif name == "show_map"')
+    start = MAIN.index("async def _tool_show_map(")
     block = MAIN[start:start + 1200]
     assert "request_fresh_location" in block
 
 
 def test_les_lieux_autour_de_moi_refusent_une_position_fixe():
-    start = MAIN.index('elif name == "find_nearby"')
+    start = MAIN.index("async def _tool_find_nearby(")
     block = MAIN[start:start + 2200]
     assert "fresh_location" in block
     assert "_require_precise_gps" in block
@@ -121,7 +121,7 @@ def test_les_lieux_autour_de_moi_refusent_une_position_fixe():
 
 def test_une_position_inconnue_est_avouee_et_non_inventee():
     """Centrer sur Conakry par défaut ferait passer une supposition pour un fait."""
-    start = MAIN.index('elif name == "show_map"')
+    start = MAIN.index("async def _tool_show_map(")
     block = MAIN[start:start + 2000]
     assert "Conakry" in block, "le garde-fou contre la position inventée a disparu"
 
@@ -188,7 +188,7 @@ def test_loutil_show_map_expose_un_parametre_vue():
 
 
 def test_le_handler_traduit_globe_ou_carte_en_mode_rendu():
-    start = DISPATCHER.index('elif name == "show_map":')
+    start = DISPATCHER.index("async def _tool_show_map(")
     block = DISPATCHER[start:start + 3600]
     assert '"globe" if "globe" in _view_arg' in block
     assert "view=view" in block
@@ -212,7 +212,7 @@ def test_loutil_show_country_info_existe_et_marche_pour_nimporte_quel_pays():
 
 
 def test_le_handler_pays_affiche_la_carte_avec_le_panneau():
-    start = DISPATCHER.index('elif name == "show_country_info":')
+    start = DISPATCHER.index("async def _tool_show_country_info(")
     block = DISPATCHER[start:start + 1600]
     assert "fetch_country_info" in block
     assert "self.ui.show_map(" in block
@@ -232,14 +232,14 @@ def test_le_panneau_pays_se_propage_jusquau_rendu():
 # ── Le guidage demande un relevé GPS frais, comme « montre ma position » ────
 
 def test_navigate_redemande_le_gps_avant_de_demarrer():
-    start = DISPATCHER.index('elif name == "navigate":')
+    start = DISPATCHER.index("async def _tool_navigate(")
     block = DISPATCHER[start:start + 1800]
     assert "request_fresh_location" in block
 
 
 def test_navigate_ne_redemande_pas_le_gps_pour_un_statut_ou_un_arret():
     """Inutile de réveiller le téléphone pour « où en est l'itinéraire ? »."""
-    start = DISPATCHER.index('elif name == "navigate":')
+    start = DISPATCHER.index("async def _tool_navigate(")
     block = DISPATCHER[start:start + 1800]
     assert '"stop"' in block and '"status"' in block
 
@@ -247,7 +247,7 @@ def test_navigate_ne_redemande_pas_le_gps_pour_un_statut_ou_un_arret():
 def test_navigate_echoue_vite_et_clairement_sans_gps():
     """Avant : attente de 10 s ignorée, puis message improvisé par le modèle
     (« la carte veut pas coopérer »). Maintenant : refus immédiat et net."""
-    start = DISPATCHER.index('elif name == "navigate":')
+    start = DISPATCHER.index("async def _tool_navigate(")
     block = DISPATCHER[start:start + 1800]
     assert "_gps_ok" in block
     assert "position GPS précise pour démarrer le guidage" in block
@@ -279,7 +279,7 @@ def test_le_chien_de_garde_audio_nignore_pas_un_outil_en_cours():
 # peut évidemment pas savoir où l'utilisateur se trouve en ce moment.
 
 def test_ma_position_resout_le_quartier_pas_seulement_la_ville():
-    start = DISPATCHER.index('elif name == "show_map":')
+    start = DISPATCHER.index("async def _tool_show_map(")
     block = DISPATCHER[start:start + 3500]
     assert "reverse_geocode" in block
     assert "quartier" in block
@@ -295,6 +295,6 @@ def test_ma_position_ne_fait_pas_attendre_le_micro():
     """Un téléphone connecté sans localisation gardait le micro 10 s fermé."""
     from core import tool_dispatcher as td
     assert td._MAP_FIX_WAIT_S <= 4.0
-    start = MAIN.index('elif name == "show_map"')
+    start = MAIN.index("async def _tool_show_map(")
     block = MAIN[start:start + 1200]
     assert "_MAP_FIX_FRESH_S" in block and "timeout=_MAP_FIX_WAIT_S" in block
