@@ -84,82 +84,6 @@ from actions.capability_guide import capability_guide as capability_guide_action
 types = _MainAttr("types")
 
 
-# Une commande brute de volume agit sur la sortie PipeWire/ALSA entière. Elle
-# ne doit jamais pouvoir être utilisée à la place du contrôle du morceau.
-_GLOBAL_VOLUME_SHELL_RE = re.compile(
-    r"\b(?:amixer\s+(?:-D\s+\S+\s+)?(?:s?set\s+)?master|"
-    r"pactl\s+set-sink-volume|wpctl\s+set-volume\s+@DEFAULT_AUDIO_SINK@)",
-    re.IGNORECASE,
-)
-
-# L'enregistrement d'écran peut ouvrir le portail Wayland et capter des
-# contenus privés. Une inférence isolée du modèle (« fais… » mal transcrit)
-# ne suffit donc jamais : l'énoncé reconnu doit nommer cette intention.
-_CAPTURE_INTENT_RE = re.compile(
-    r"\b(?:capture(?:r)?|capture d.?ecran|capture ecran|"
-    r"capture d.?écran|enregistre(?:r|ment)?|enregistrement|"
-    r"filme(?:r)?|video d.?ecran|vidéo d.?écran|screenshot|screen record)\b",
-    re.IGNORECASE,
-)
-
-
-def _has_explicit_capture_intent(transcript: object) -> bool:
-    """True seulement si l'utilisateur a clairement demandé une capture."""
-    return bool(_CAPTURE_INTENT_RE.search(str(transcript or "")))
-
-
-def _is_global_volume_shell_command(args: dict) -> bool:
-    raw = " ".join(str(args.get(key) or "") for key in ("command", "description"))
-    return bool(_GLOBAL_VOLUME_SHELL_RE.search(raw))
-
-
-def _explicit_system_volume_request(text: str) -> bool:
-    """Distingue « la musique » de « le système » à partir de la phrase dite."""
-    normalized = str(text or "").casefold()
-    return bool(
-        "volume" in normalized
-        and re.search(r"\b(?:syst[eè]me|global|ordinateur|pc|toutes? les applications)\b", normalized)
-    )
-
-
-def _media_volume_request(text: str) -> bool:
-    """Vrai uniquement quand l'utilisateur nomme le média à régler."""
-    normalized = str(text or "").casefold()
-    return bool(re.search(
-        r"\b(?:musique|morceau|chanson|spotify|audio|vid[eé]o|youtube|film|clip|lecteur)\b",
-        normalized,
-    ))
-
-
-def _system_volume_args_from_shell(args: dict) -> dict:
-    """Convertit une commande brute déjà proposée en action sûre et dédiée."""
-    raw = " ".join(str(args.get(key) or "") for key in ("command", "description"))
-    value = re.search(r"(?<![\w.])(\d{1,3})\s*%", raw)
-    amount = max(0, min(100, int(value.group(1)))) if value else 10
-    if re.search(r"(?:\+\s*\d+\s*%|\d+%\+|volume_up|augment)", raw, re.IGNORECASE):
-        return {"action": "volume_up", "value": str(max(1, amount))}
-    if re.search(r"(?:-\s*\d+\s*%|\d+%-|volume_down|diminu)", raw, re.IGNORECASE):
-        return {"action": "volume_down", "value": str(max(1, amount))}
-    return {"action": "volume_set", "value": str(amount)}
-
-
-def _relative_volume_value_from_shell(args: dict) -> str:
-    """Préserve le signe (+/-) d'une commande modèle pour un lecteur média."""
-    raw = " ".join(str(args.get(key) or "") for key in ("command", "description"))
-    match = re.search(r"([+-]?)\s*(\d{1,3})\s*%", raw)
-    if match and not match.group(1):
-        # ALSA formule les deltas comme « 10%- » plutôt que « -10% ».
-        suffix = re.search(r"\d{1,3}\s*%\s*([+-])", raw)
-        if suffix:
-            return f"{suffix.group(1)}{max(0, min(100, int(match.group(2))))}"
-    if not match:
-        return "-10" if re.search(r"diminu|baisse|moins", raw, re.IGNORECASE) else "+10"
-    sign, amount = match.groups()
-    if not sign:
-        sign = "-" if re.search(r"diminu|baisse|moins", raw, re.IGNORECASE) else "+"
-    return f"{sign}{max(0, min(100, int(amount)))}"
-
-
 def _get_api_key() -> str:
     from core.session_manager import _get_api_key as _key
     return _key()
@@ -169,254 +93,50 @@ def _voice_engine_settings() -> dict:
     from core.session_manager import _voice_engine_settings as _settings
     return _settings()
 
+from core.tool_intent import (  # noqa: F401 — ré-export public
+    _CAPTURE_INTENT_RE,
+    _GLOBAL_VOLUME_SHELL_RE,
+    _bluetooth_action_from_request,
+    _click_target_from_request,
+    _explicit_system_volume_request,
+    _has_explicit_capture_intent,
+    _is_global_volume_shell_command,
+    _media_volume_request,
+    _preset_requested,
+    _relative_volume_value_from_shell,
+    _system_volume_args_from_shell,
+)
+from core.tool_policy import (  # noqa: F401 — ré-export public
+    _ANNOUNCE_BEFORE_TOOLS,
+    _ANNOUNCE_PREFIX,
+    _DEFERRED_TIKTOK_ACTIONS,
+    _DEFERRED_VISION_ACTIONS,
+    _DESTRUCTIVE_SETTINGS,
+    _DESTRUCTIVE_TOOLS,
+    _FAILURE_MARKERS,
+    _is_destructive,
+    _looks_like_failure,
+    _music_is_deferred,
+    _tiktok_is_deferred,
+    _vision_is_deferred,
+    announce_before_call,
+)
+from core.tool_presentation import (
+    _TOOL_LABELS,
+    _render_phone_outcome,
+    _task_card_summary,
+    _task_result_excerpt,
+)
 from core.tool_declarations import (  # noqa: F401 — ré-export public
     CONSULT_BRAIN_DECLARATION,
     TOOL_DECLARATIONS,
     _RETIRED_TOOLS,
 )
 
-# Libellés humains pour la carte « tâche en cours » (latence perçue > 1 s).
-# Outils dont une exécution ne se rattrape pas : c'est la liste que ferme la
-# reconnaissance du locuteur. Le reste (chercher, ouvrir, afficher, la météo)
-# reste accessible à qui passe dans la pièce — un invité peut demander l'heure.
-_DESTRUCTIVE_TOOLS = frozenset({
-    "close_app", "shutdown_jarvis", "shell_exec", "file_controller",
-    "dev_agent", "code_helper", "game_updater", "send_message",
-    "email_control", "calendar_control", "cloud_integrations_control", "contacts_control", "github_control", "computer_control", "hypr_control",
-    "auto_extension_control",
-    "phone_call", "phone_hangup", "phone_sms", "phone_contacts",
-})
-
-# Ces deux-là ne sont dangereux que sur certaines actions : refuser à un invité
-# de baisser le volume n'aurait aucun sens.
-_DESTRUCTIVE_SETTINGS = frozenset({
-    "shutdown", "restart", "suspend", "lock_screen", "toggle_wifi",
-    "toggle_bluetooth", "airplane_mode", "close_window",
-})
-
-
-def _is_destructive(name: str, args: dict) -> bool:
-    if name == "computer_settings":
-        return str(args.get("action", "")).strip().lower() in _DESTRUCTIVE_SETTINGS
-    if name == "email_control":
-        # Lire ses mails est déjà une intrusion ; les envoyer l'est plus encore.
-        return True
-    if name == "github_control":
-        return True
-    return name in _DESTRUCTIVE_TOOLS
-
-
-_FAILURE_MARKERS = ("failed", "échec", "echec", "a échoué", "erreur", "error:",
-                    "impossible", "introuvable", "clic annulé", "aucun clic effectué",
-                    "je n'ai pas trouvé")
-
-
-def _looks_like_failure(result: Any) -> bool:
-    head = " ".join(str(result or "").split())[:160].casefold()
-    return head.startswith(("tool '", "erreur", "échec", "echec")) or any(
-        m in head[:60] for m in _FAILURE_MARKERS
-    )
-
-
-def _click_target_from_request(request: str) -> str:
-    """Repère une cible nommée pour empêcher un clic sur des coordonnées devinées."""
-    match = re.search(
-        r"\b(?:clique|cliquer|click)\s+(?:sur\s+)?(.+)$",
-        str(request or "").strip(), re.IGNORECASE,
-    )
-    if not match:
-        return ""
-    target = re.sub(
-        r"\s+(?:sur|dans)\s+(?:mon|l['’]|le)\s*[ée]cran\s*$",
-        "", match.group(1).strip(" .!?"), flags=re.IGNORECASE,
-    ).strip(" .!?")
-    if re.fullmatch(r"\d+\s*[,;]\s*\d+", target):
-        return ""
-    return target
-
-
-def _bluetooth_action_from_request(request: str) -> str:
-    text = str(request or "").casefold()
-    if ("bluetooth" not in text
-            and not re.search(r"\b(?:rallume|r[ée]active|[ée]teins|d[ée]sactive)[- ]le\b", text)):
-        return ""
-    if re.search(r"\b(d[ée]sactive|[ée]teins|coupe|arr[êe]te)\b", text):
-        return "bluetooth_off"
-    if re.search(r"\b(active|allume|rallume|r[ée]active|mets en marche)\b", text):
-        return "bluetooth_on"
-    return ""
-
-
-def _preset_requested(request: str) -> bool:
-    return bool(re.search(
-        r"\b(?:preset|mode\s+(?:coding|code|dev|devsecops|monitoring|web|focus))\b",
-        str(request or ""), re.IGNORECASE,
-    ))
-
-
-def _task_result_excerpt(result: Any, limit: int = 220) -> str:
-    """Première ligne utile du résultat, sans balisage ni consigne au modèle."""
-    text = str(result or "").strip()
-    if not text:
-        return ""
-    # Les blocs [VISION…] / [AGENT] et les consignes « dis-le à l'utilisateur »
-    # s'adressent au modèle, pas à l'œil.
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    keep = [ln for ln in lines if not ln.startswith(("[", "{", "```"))] or lines
-    excerpt = " ".join(keep[:3])
-    excerpt = re.sub(r"[*_`#>]+", "", excerpt)
-    excerpt = re.sub(r"\s+", " ", excerpt).strip()
-    return excerpt[: limit - 1] + "…" if len(excerpt) > limit else excerpt
-
-
-def _task_card_summary(name: str, args: Any) -> str:
-    """Ce que fait la tâche, en une ligne, d'après ses arguments."""
-    if not isinstance(args, dict):
-        return ""
-    for key in ("query", "question", "text", "app_name", "path", "file", "url", "title",
-                "message", "prompt", "command", "recipient", "to", "action"):
-        val = args.get(key)
-        if isinstance(val, str) and val.strip():
-            val = " ".join(val.split())
-            return val[:119] + "…" if len(val) > 120 else val
-    return ""
-
-
 # « Montre ma position » : âge maximal d'un relevé réutilisé tel quel, et
 # attente maximale d'un nouveau relevé demandé au téléphone.
 _MAP_FIX_FRESH_S = 30.0
 _MAP_FIX_WAIT_S = 4.0
-
-
-# Seules les identifications (photo + modèle de vision) sont longues ; lister
-# les visages connus ou en oublier un reste une réponse immédiate.
-_DEFERRED_VISION_ACTIONS = frozenset({"identify", "who", "what", "look", "regarde"})
-
-
-def _vision_is_deferred(args: dict) -> bool:
-    action = str(args.get("action") or "identify").strip().lower()
-    return action in _DEFERRED_VISION_ACTIONS
-
-
-# Le coach TikTok n'est long que lorsqu'il fait analyser des vidéos ;
-# l'export, la liste et le meilleur horaire lisent des données locales.
-_DEFERRED_TIKTOK_ACTIONS = frozenset({
-    "diagnose", "why", "pourquoi", "analyse", "analyze", "video",
-    "review", "account", "bilan", "compte", "plan",
-    "draft", "before_post", "pre_post", "file", "fichier", "avant",
-})
-
-
-def _music_is_deferred(args: dict) -> bool:
-    """Seule l'identification écoute la pièce ; rejouer ou lister est immédiat."""
-    action = str(args.get("action") or "identify").strip().lower()
-    return action not in {"play", "lance", "jouer", "play_last", "history",
-                          "historique", "last", "dernière", "derniere"}
-
-
-def _tiktok_is_deferred(args: dict) -> bool:
-    action = str(args.get("action") or "diagnose").strip().lower()
-    return action in _DEFERRED_TIKTOK_ACTIONS
-
-
-# Outils qui font attendre : leur description commence par la consigne
-# d'annoncer avant d'appeler. Une seule source pour tous, alignée sur la règle
-# « annonce avant d'agir » du prompt.
-_ANNOUNCE_BEFORE_TOOLS = frozenset({
-    "deep_think", "consult_brain", "web_search", "smart_search", "image_search",
-    "tiktok_coach", "visual_recognition", "music_recognition",
-    "generate_image", "generate_video", "generate_document", "download_music",
-    "youtube_video", "file_search", "file_processor", "background_tasks", "dev_agent",
-    "simulate_decision", "flight_finder", "find_nearby", "navigate",
-})
-_ANNOUNCE_PREFIX = (
-    "AVANT d'appeler cet outil, dis à voix haute une phrase courte qui nomme ce que tu lances "
-    "et demande de patienter (ex. « je lance ça, patiente, je te reviens ») ; ne l'appelle "
-    "jamais en silence. "
-)
-
-
-def announce_before_call(declarations: list[dict]) -> list[dict]:
-    """Préfixe la description des outils longs par la consigne d'annonce."""
-    out: list[dict] = []
-    for decl in declarations:
-        name = str(decl.get("name") or "")
-        desc = str(decl.get("description") or "")
-        if name in _ANNOUNCE_BEFORE_TOOLS and not desc.startswith(_ANNOUNCE_PREFIX):
-            decl = {**decl, "description": _ANNOUNCE_PREFIX + desc}
-        out.append(decl)
-    return out
-
-
-_TOOL_LABELS = {
-    "hud_appearance": "Apparence du HUD",
-    "consult_brain": "Réflexion",
-    "web_search": "Recherche web",
-    "image_search": "Recherche d'images",
-    "weather_report": "Météo",
-    "open_app": "Ouverture d'application",
-    "close_app": "Fermeture d'application",
-    "browser_control": "Navigateur",
-    "file_controller": "Fichiers",
-    "send_message": "Envoi de message",
-    "shell_exec": "Commande",
-    "visual_recognition": "Reconnaissance visuelle",
-    "music_recognition": "Reconnaissance musicale",
-    "music_control": "Musique",
-    "download_music": "Téléchargement musique",
-    "agent_process_monitor": "Surveillance des agents",
-    "proactive_mode": "Mode proactif",
-    "background_tasks": "Tâche de fond",
-    "calendar_control": "Agenda",
-    "cloud_integrations_control": "Intégration cloud",
-    "prayer_control": "Prière",
-    "tiktok_tracker": "TikTok",
-    "tiktok_coach": "Coach TikTok",
-    "github_control": "GitHub",
-    "simulate_decision": "Simulation stratégique",
-    "auto_extension_control": "Extensions autonomes",
-    "contacts_control": "Contacts",
-    "phone_call": "Appel téléphonique Android",
-    "phone_hangup": "Raccrochage",
-    "phone_contacts": "Contacts du téléphone",
-    "phone_sms": "SMS depuis le téléphone",
-    "sparring_partner": "Session d'entraînement",
-    "focus_guard": "Bouclier anti-distraction",
-    "youtube_video": "YouTube",
-    "show_map": "Carte",
-    "show_country_info": "Fiche pays",
-    "reminder": "Rappel",
-    "computer_control": "Contrôle de l'ordinateur",
-    "game_updater": "Mise à jour de jeu",
-    "flight_finder": "Recherche de vol",
-    "capture_control": "Capture d'écran",
-    "screen_process": "Analyse visuelle",
-    "camera_control": "Caméra",
-    "deep_think": "Réflexion approfondie",
-    "voice_style": "Style vocal",
-    "second_brain": "Second Brain",
-    "devsecops": "DevSecOps & Système",
-    "hypr_orchestrator": "Orchestrateur Hyprland",
-    "point_on_screen": "Pointeur visuel",
-    "capability_guide": "Compétences",
-}
-
-
-
-
-def _render_phone_outcome(outcome: dict, fallback: str,
-                          choices_hint: str = "Demande lequel utiliser.") -> str:
-    """Met en phrase la réponse d'ANO-Remote, listes de contacts comprises."""
-    message = str(outcome.get("message") or fallback)
-    choices = outcome.get("choices") or []
-    if choices:
-        rendered = ", ".join(
-            f"choix {item.get('index', '?')} : {item.get('name', 'contact')} "
-            f"({item.get('number_hint', 'numéro')})"
-            for item in choices if isinstance(item, dict)
-        )
-        message += f" Choix Android : {rendered}. {choices_hint}"
-    return message
 
 
 class ToolHost(Protocol):
