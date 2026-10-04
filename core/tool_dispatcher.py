@@ -1437,6 +1437,266 @@ class ToolDispatcher:
             result = "Un téléchargement est déjà en cours de préparation."
         return result
 
+    async def _tool_screen_process(self, fc, name, args, loop):
+        result = "Done."
+        import time as _t_mod
+        _now = _t_mod.monotonic()
+        _cooldown = 4.0  # seconds — covers echo window after speaking ends
+        if self._vision_busy or (_now - self._vision_last_time) < _cooldown:
+            _wait = max(0, _cooldown - (_now - self._vision_last_time))
+            print(f"[Vision] ⏳ Cooldown active ({_wait:.1f}s remaining) — ignoring duplicate call")
+            result = "Vision is still processing the previous request. I will not call this again."
+        else:
+            self._vision_busy      = True
+            self._vision_last_time = _now
+            angle     = args.get("angle", "screen").lower()
+            user_text = args.get("text", "What do you see?")
+            from core import screen_capture
+            vision_target = screen_capture.capture_target_for_query(user_text) if angle != "camera" else "camera"
+            _skip_vision_pipeline = False
+            _meta = {}
+            if angle == "camera":
+                img_b, mime_t = await loop.run_in_executor(
+                    None, self._grab_camera_still
+                )
+                self._vision_cam_active = True
+                print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
+                _stall = "camera"
+            else:
+                img_b = mime_t = _meta = None
+                mind = getattr(self, "_screen_mind", None)
+                cached = (mind.cached_capture(max_age_s=30.0)
+                          if mind is not None and vision_target == "active_window" else None)
+                if cached is not None and cached.webp_bytes:
+                    img_b, mime_t, _meta = (
+                        cached.webp_bytes, cached.mime_type, cached.as_meta()
+                    )
+                    print(
+                        f"[Vision] 🖥️  Veille ({_meta.get('window_class', 'screen')}, "
+                        f"{cached.age_s:.1f}s): {len(img_b):,} bytes"
+                    )
+                    if cached.ocr_usable and not screen_reader.wants_image(user_text):
+                        self._pending_vision = None
+                        self._vision_busy = False
+                        result = cached.as_tool_result(user_text)
+                        _skip_vision_pipeline = True
+                if not _skip_vision_pipeline:
+                    if img_b is None:
+                        if vision_target == "screen":
+                            from core.multimodal_vision import capture_policy
+                            policy = capture_policy(domain="document")
+                            img_b, mime_t, _meta = await loop.run_in_executor(
+                                None, lambda: screen_capture.capture_window_or_screen(
+                                    target="screen", max_dim=policy["max_dim"],
+                                    quality=policy["quality"])
+                            )
+                        else:
+                            img_b, mime_t, _meta = await loop.run_in_executor(
+                                None, lambda: screen_capture.capture_window_or_screen(target="active_window")
+                            )
+                    _win_cls = ("bureau complet" if vision_target == "screen"
+                                else _meta.get("window_class") or "écran")
+                    print(f"[Vision] 🖥️  {_win_cls}: {len(img_b):,} bytes")
+                    _stall = "screen"
+
+            if not _skip_vision_pipeline:
+                def _show_vision_thumb():
+                    try:
+                        import base64, io
+                        from PIL import Image
+                        im = Image.open(io.BytesIO(img_b)).convert("RGB")
+                        im.thumbnail((320, 200))
+                        buf = io.BytesIO()
+                        im.save(buf, format="JPEG", quality=70)
+                        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                        label = "Caméra" if angle == "camera" else f"Écran ({_win_cls})"
+                        body = (f"![aperçu](data:image/jpeg;base64,{b64})\n\n"
+                                f"_Ce que je regarde en ce moment — {user_text[:80]}_")
+                        self.ui.show_card("info", f"👁 {label}", body)
+                    except Exception as e:
+                        print(f"[Vision] Miniature indisponible : {e}")
+
+                await loop.run_in_executor(None, _show_vision_thumb)
+
+                # Si la question porte sur un bug, une erreur ou un build échoué
+                _is_debug_q = any(k in user_text.lower() for k in ("bug", "erreur", "error", "plante", "crash", "traceback", "panic", "build", "echec", "échec"))
+                if angle != "camera" and _is_debug_q:
+                    from core import auto_debug
+                    _spoken, _diag = await loop.run_in_executor(
+                        None, lambda: auto_debug.auto_debug_live(user_query=user_text, target_window="active_window", player=self.ui)
+                    )
+                    self._pending_vision = None
+                    self._vision_busy    = False
+                    result = f"[AUTO_DEBUG_DIRECT]\n{_diag.full_explanation}\n\nSynthèse vocale : {_spoken}"
+                else:
+                    from core.multimodal_vision import (
+                        detect_visual_domain,
+                        inspect_screen_live,
+                        should_use_expert_vision,
+                    )
+                    _read = None
+                    if angle != "camera":
+                        _read = await loop.run_in_executor(
+                            None, screen_reader.read, img_b, user_text
+                        )
+                    _win_info = None
+                    try:
+                        from core import screen_capture as _sc
+                        _win_info = (_sc.get_active_window(skip_anogpt=True)
+                                     if vision_target == "active_window" else None)
+                    except Exception:
+                        _win_info = None
+                    # Une image caméra n'a rien à voir avec la fenêtre
+                    # active : un terminal au premier plan ne fait pas
+                    # d'un visage une analyse de « code ».
+                    _domain = detect_visual_domain(user_text, None if angle == "camera" else _win_info)
+                    _ocr_ok = bool(_read is not None and _read.usable)
+                    if (
+                        not should_use_expert_vision(
+                            user_text,
+                            ocr_usable=_ocr_ok,
+                            domain=_domain,
+                            angle=angle,
+                        )
+                        and _ocr_ok
+                    ):
+                        self._pending_vision = None
+                        self._vision_busy = False
+                        result = _read.as_tool_result(user_text)
+                    else:
+                        def _expert():
+                            return inspect_screen_live(
+                                user_query=user_text,
+                                target=vision_target,
+                                domain=_domain,
+                                player=self.ui,
+                                image_bytes=img_b,
+                                mime_type=mime_t,
+                                window_info=_win_info,
+                                metadata=_meta if isinstance(_meta, dict) else {},
+                                # Le répartiteur vient de tenter l'OCR :
+                                # « » (et non None) évite de relancer
+                                # Tesseract 8 s de plus quand il a échoué.
+                                extracted_text=(
+                                    _read.text if _read is not None
+                                    else ("" if angle != "camera" else None)
+                                ),
+                            )
+
+                        try:
+                            _spoken, _diag = await loop.run_in_executor(None, _expert)
+                        except Exception as _vis_exc:
+                            print(f"[Vision] analyse experte échouée : {_vis_exc}")
+                            _spoken, _diag = "", None
+                        # À la caméra, la mémoire des visages dit qui est là :
+                        # le modèle ne devine jamais une identité.
+                        _faces = ""
+                        if angle == "camera":
+                            try:
+                                from core.face_memory import faces_block_for_vision
+                                _faces = await loop.run_in_executor(
+                                    None, faces_block_for_vision, img_b
+                                )
+                            except Exception as _face_exc:
+                                print(f"[Visages] bloc vision impossible : {_face_exc}")
+                        _vision_failed = (
+                            _diag is None
+                            or not _diag.spoken_summary
+                            or "clé api" in _diag.spoken_summary.casefold()
+                            or "rencontré une difficulté" in _diag.spoken_summary.casefold()
+                        )
+                        if _faces and _vision_failed:
+                            # Gemini est indisponible mais la mémoire
+                            # locale, elle, a répondu : c'est la réponse.
+                            self._pending_vision = None
+                            self._vision_busy = False
+                            result = (
+                                f"{_faces}\n\nL'analyse de scène Gemini est indisponible "
+                                "pour l'instant, mais l'identification ci-dessus est fiable "
+                                "et TERMINÉE : réponds à partir d'elle (nomme la personne "
+                                "connue, ou demande qui c'est pour un inconnu). Ne rappelle "
+                                "pas screen_process."
+                            )
+                        elif not _vision_failed:
+                            self._pending_vision = None
+                            self._vision_busy = False
+                            result = _diag.as_tool_result(user_text)
+                            if _faces:
+                                result += "\n\n" + _faces
+                        elif _read is not None and _read.usable:
+                            # Le distant a lâché mais Tesseract a lu
+                            # l'écran : c'est une vraie réponse, pas
+                            # une panne à annoncer.
+                            self._pending_vision = None
+                            self._vision_busy = False
+                            result = _read.as_tool_result(user_text)
+                        else:
+                            self._pending_vision = None
+                            self._vision_busy = False
+                            local_hint = ""
+                            if _read is not None and _read.text:
+                                local_hint = f"\n\nTexte local lisible :\n{_read.text[:2500]}"
+                            result = (
+                                f"[VISION_INDISPONIBLE] {_stall.capitalize()} capturé, "
+                                "mais aucun moteur distant n'a terminé l'analyse. "
+                                "Informe l'utilisateur en une phrase factuelle, sans inventer "
+                                "le contenu et sans rappeler automatiquement screen_process."
+                                + local_hint
+                            )
+        return result
+
+    async def _tool_shell_exec(self, fc, name, args, loop):
+        result = "Done."
+        if _is_global_volume_shell_command(args):
+            requested = str(getattr(self, "_live_user_text", "") or "")
+            if _media_volume_request(requested) and not _explicit_system_volume_request(requested):
+                relative = _relative_volume_value_from_shell(args)
+                if re.search(r"\b(?:vid[eé]o|youtube|film|clip)\b", requested, re.IGNORECASE):
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: youtube_video(
+                            {"action": "volume", "volume": relative},
+                            player=self.ui, session_memory=self._tool_session_memory,
+                        ),
+                    )
+                else:
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: music_control(
+                            {"action": "volume", "value": relative},
+                            player=self.ui, session_memory=self._tool_session_memory,
+                        ),
+                    )
+            else:
+                system_args = _system_volume_args_from_shell(args)
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: computer_settings(
+                        parameters=system_args, response=None, player=self.ui,
+                        session_memory=self._tool_session_memory,
+                    ),
+                )
+        else:
+            r = await loop.run_in_executor(None, lambda: shell_exec(parameters=args, player=self.ui))
+            result = r or "Commande exécutée."
+        if result.startswith("[NEEDS_CONFIRM] "):
+            _cmd = result[len("[NEEDS_CONFIRM] "):]
+            self.ui.show_card(
+                "confirmation", "Commande risquée",
+                f"```\n{_cmd}\n```\nCette commande peut avoir des effets difficiles à annuler. L'exécuter ?",
+                [
+                    {"label": "Oui, exécuter", "primary": True,
+                     "callback": (lambda: self.ui.on_text_command(f"confirme la commande : {_cmd}")
+                                  if self.ui.on_text_command else None)},
+                    {"label": "Annuler",
+                     "callback": (lambda: self.ui.on_text_command("annule, ne fais pas ça")
+                                  if self.ui.on_text_command else None)},
+                ],
+            )
+            result = (f"Commande risquée détectée, confirmation demandée à l'utilisateur "
+                      f"via une carte (ne l'exécute pas sans son accord explicite) : {_cmd}")
+        return result
+
     async def _execute_tool_impl(self, fc, prepared_args: dict | None = None) -> types.FunctionResponse:
         name = fc.name
         args = dict(prepared_args if prepared_args is not None else (fc.args or {}))
@@ -1659,210 +1919,7 @@ class ToolDispatcher:
                 result = await self._tool_agent_process_monitor(fc, name, args, loop)
 
             elif name == "screen_process":
-                import time as _t_mod
-                _now = _t_mod.monotonic()
-                _cooldown = 4.0  # seconds — covers echo window after speaking ends
-                if self._vision_busy or (_now - self._vision_last_time) < _cooldown:
-                    _wait = max(0, _cooldown - (_now - self._vision_last_time))
-                    print(f"[Vision] ⏳ Cooldown active ({_wait:.1f}s remaining) — ignoring duplicate call")
-                    result = "Vision is still processing the previous request. I will not call this again."
-                else:
-                    self._vision_busy      = True
-                    self._vision_last_time = _now
-                    angle     = args.get("angle", "screen").lower()
-                    user_text = args.get("text", "What do you see?")
-                    from core import screen_capture
-                    vision_target = screen_capture.capture_target_for_query(user_text) if angle != "camera" else "camera"
-                    _skip_vision_pipeline = False
-                    _meta = {}
-                    if angle == "camera":
-                        img_b, mime_t = await loop.run_in_executor(
-                            None, self._grab_camera_still
-                        )
-                        self._vision_cam_active = True
-                        print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
-                        _stall = "camera"
-                    else:
-                        img_b = mime_t = _meta = None
-                        mind = getattr(self, "_screen_mind", None)
-                        cached = (mind.cached_capture(max_age_s=30.0)
-                                  if mind is not None and vision_target == "active_window" else None)
-                        if cached is not None and cached.webp_bytes:
-                            img_b, mime_t, _meta = (
-                                cached.webp_bytes, cached.mime_type, cached.as_meta()
-                            )
-                            print(
-                                f"[Vision] 🖥️  Veille ({_meta.get('window_class', 'screen')}, "
-                                f"{cached.age_s:.1f}s): {len(img_b):,} bytes"
-                            )
-                            if cached.ocr_usable and not screen_reader.wants_image(user_text):
-                                self._pending_vision = None
-                                self._vision_busy = False
-                                result = cached.as_tool_result(user_text)
-                                _skip_vision_pipeline = True
-                        if not _skip_vision_pipeline:
-                            if img_b is None:
-                                if vision_target == "screen":
-                                    from core.multimodal_vision import capture_policy
-                                    policy = capture_policy(domain="document")
-                                    img_b, mime_t, _meta = await loop.run_in_executor(
-                                        None, lambda: screen_capture.capture_window_or_screen(
-                                            target="screen", max_dim=policy["max_dim"],
-                                            quality=policy["quality"])
-                                    )
-                                else:
-                                    img_b, mime_t, _meta = await loop.run_in_executor(
-                                        None, lambda: screen_capture.capture_window_or_screen(target="active_window")
-                                    )
-                            _win_cls = ("bureau complet" if vision_target == "screen"
-                                        else _meta.get("window_class") or "écran")
-                            print(f"[Vision] 🖥️  {_win_cls}: {len(img_b):,} bytes")
-                            _stall = "screen"
-
-                    if not _skip_vision_pipeline:
-                        def _show_vision_thumb():
-                            try:
-                                import base64, io
-                                from PIL import Image
-                                im = Image.open(io.BytesIO(img_b)).convert("RGB")
-                                im.thumbnail((320, 200))
-                                buf = io.BytesIO()
-                                im.save(buf, format="JPEG", quality=70)
-                                b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                                label = "Caméra" if angle == "camera" else f"Écran ({_win_cls})"
-                                body = (f"![aperçu](data:image/jpeg;base64,{b64})\n\n"
-                                        f"_Ce que je regarde en ce moment — {user_text[:80]}_")
-                                self.ui.show_card("info", f"👁 {label}", body)
-                            except Exception as e:
-                                print(f"[Vision] Miniature indisponible : {e}")
-
-                        await loop.run_in_executor(None, _show_vision_thumb)
-
-                        # Si la question porte sur un bug, une erreur ou un build échoué
-                        _is_debug_q = any(k in user_text.lower() for k in ("bug", "erreur", "error", "plante", "crash", "traceback", "panic", "build", "echec", "échec"))
-                        if angle != "camera" and _is_debug_q:
-                            from core import auto_debug
-                            _spoken, _diag = await loop.run_in_executor(
-                                None, lambda: auto_debug.auto_debug_live(user_query=user_text, target_window="active_window", player=self.ui)
-                            )
-                            self._pending_vision = None
-                            self._vision_busy    = False
-                            result = f"[AUTO_DEBUG_DIRECT]\n{_diag.full_explanation}\n\nSynthèse vocale : {_spoken}"
-                        else:
-                            from core.multimodal_vision import (
-                                detect_visual_domain,
-                                inspect_screen_live,
-                                should_use_expert_vision,
-                            )
-                            _read = None
-                            if angle != "camera":
-                                _read = await loop.run_in_executor(
-                                    None, screen_reader.read, img_b, user_text
-                                )
-                            _win_info = None
-                            try:
-                                from core import screen_capture as _sc
-                                _win_info = (_sc.get_active_window(skip_anogpt=True)
-                                             if vision_target == "active_window" else None)
-                            except Exception:
-                                _win_info = None
-                            # Une image caméra n'a rien à voir avec la fenêtre
-                            # active : un terminal au premier plan ne fait pas
-                            # d'un visage une analyse de « code ».
-                            _domain = detect_visual_domain(user_text, None if angle == "camera" else _win_info)
-                            _ocr_ok = bool(_read is not None and _read.usable)
-                            if (
-                                not should_use_expert_vision(
-                                    user_text,
-                                    ocr_usable=_ocr_ok,
-                                    domain=_domain,
-                                    angle=angle,
-                                )
-                                and _ocr_ok
-                            ):
-                                self._pending_vision = None
-                                self._vision_busy = False
-                                result = _read.as_tool_result(user_text)
-                            else:
-                                def _expert():
-                                    return inspect_screen_live(
-                                        user_query=user_text,
-                                        target=vision_target,
-                                        domain=_domain,
-                                        player=self.ui,
-                                        image_bytes=img_b,
-                                        mime_type=mime_t,
-                                        window_info=_win_info,
-                                        metadata=_meta if isinstance(_meta, dict) else {},
-                                        # Le répartiteur vient de tenter l'OCR :
-                                        # « » (et non None) évite de relancer
-                                        # Tesseract 8 s de plus quand il a échoué.
-                                        extracted_text=(
-                                            _read.text if _read is not None
-                                            else ("" if angle != "camera" else None)
-                                        ),
-                                    )
-
-                                try:
-                                    _spoken, _diag = await loop.run_in_executor(None, _expert)
-                                except Exception as _vis_exc:
-                                    print(f"[Vision] analyse experte échouée : {_vis_exc}")
-                                    _spoken, _diag = "", None
-                                # À la caméra, la mémoire des visages dit qui est là :
-                                # le modèle ne devine jamais une identité.
-                                _faces = ""
-                                if angle == "camera":
-                                    try:
-                                        from core.face_memory import faces_block_for_vision
-                                        _faces = await loop.run_in_executor(
-                                            None, faces_block_for_vision, img_b
-                                        )
-                                    except Exception as _face_exc:
-                                        print(f"[Visages] bloc vision impossible : {_face_exc}")
-                                _vision_failed = (
-                                    _diag is None
-                                    or not _diag.spoken_summary
-                                    or "clé api" in _diag.spoken_summary.casefold()
-                                    or "rencontré une difficulté" in _diag.spoken_summary.casefold()
-                                )
-                                if _faces and _vision_failed:
-                                    # Gemini est indisponible mais la mémoire
-                                    # locale, elle, a répondu : c'est la réponse.
-                                    self._pending_vision = None
-                                    self._vision_busy = False
-                                    result = (
-                                        f"{_faces}\n\nL'analyse de scène Gemini est indisponible "
-                                        "pour l'instant, mais l'identification ci-dessus est fiable "
-                                        "et TERMINÉE : réponds à partir d'elle (nomme la personne "
-                                        "connue, ou demande qui c'est pour un inconnu). Ne rappelle "
-                                        "pas screen_process."
-                                    )
-                                elif not _vision_failed:
-                                    self._pending_vision = None
-                                    self._vision_busy = False
-                                    result = _diag.as_tool_result(user_text)
-                                    if _faces:
-                                        result += "\n\n" + _faces
-                                elif _read is not None and _read.usable:
-                                    # Le distant a lâché mais Tesseract a lu
-                                    # l'écran : c'est une vraie réponse, pas
-                                    # une panne à annoncer.
-                                    self._pending_vision = None
-                                    self._vision_busy = False
-                                    result = _read.as_tool_result(user_text)
-                                else:
-                                    self._pending_vision = None
-                                    self._vision_busy = False
-                                    local_hint = ""
-                                    if _read is not None and _read.text:
-                                        local_hint = f"\n\nTexte local lisible :\n{_read.text[:2500]}"
-                                    result = (
-                                        f"[VISION_INDISPONIBLE] {_stall.capitalize()} capturé, "
-                                        "mais aucun moteur distant n'a terminé l'analyse. "
-                                        "Informe l'utilisateur en une phrase factuelle, sans inventer "
-                                        "le contenu et sans rappeler automatiquement screen_process."
-                                        + local_hint
-                                    )
+                result = await self._tool_screen_process(fc, name, args, loop)
 
             elif name == "camera_control":
                 result = await self._tool_camera_control(fc, name, args, loop)
@@ -2245,54 +2302,7 @@ class ToolDispatcher:
                               else "Lacune non enregistrée : demande insuffisante.")
 
             elif name == "shell_exec":
-                if _is_global_volume_shell_command(args):
-                    requested = str(getattr(self, "_live_user_text", "") or "")
-                    if _media_volume_request(requested) and not _explicit_system_volume_request(requested):
-                        relative = _relative_volume_value_from_shell(args)
-                        if re.search(r"\b(?:vid[eé]o|youtube|film|clip)\b", requested, re.IGNORECASE):
-                            result = await loop.run_in_executor(
-                                None,
-                                lambda: youtube_video(
-                                    {"action": "volume", "volume": relative},
-                                    player=self.ui, session_memory=self._tool_session_memory,
-                                ),
-                            )
-                        else:
-                            result = await loop.run_in_executor(
-                                None,
-                                lambda: music_control(
-                                    {"action": "volume", "value": relative},
-                                    player=self.ui, session_memory=self._tool_session_memory,
-                                ),
-                            )
-                    else:
-                        system_args = _system_volume_args_from_shell(args)
-                        result = await loop.run_in_executor(
-                            None,
-                            lambda: computer_settings(
-                                parameters=system_args, response=None, player=self.ui,
-                                session_memory=self._tool_session_memory,
-                            ),
-                        )
-                else:
-                    r = await loop.run_in_executor(None, lambda: shell_exec(parameters=args, player=self.ui))
-                    result = r or "Commande exécutée."
-                if result.startswith("[NEEDS_CONFIRM] "):
-                    _cmd = result[len("[NEEDS_CONFIRM] "):]
-                    self.ui.show_card(
-                        "confirmation", "Commande risquée",
-                        f"```\n{_cmd}\n```\nCette commande peut avoir des effets difficiles à annuler. L'exécuter ?",
-                        [
-                            {"label": "Oui, exécuter", "primary": True,
-                             "callback": (lambda: self.ui.on_text_command(f"confirme la commande : {_cmd}")
-                                          if self.ui.on_text_command else None)},
-                            {"label": "Annuler",
-                             "callback": (lambda: self.ui.on_text_command("annule, ne fais pas ça")
-                                          if self.ui.on_text_command else None)},
-                        ],
-                    )
-                    result = (f"Commande risquée détectée, confirmation demandée à l'utilisateur "
-                              f"via une carte (ne l'exécute pas sans son accord explicite) : {_cmd}")
+                result = await self._tool_shell_exec(fc, name, args, loop)
 
             elif name == "hypr_control":
                 r = await loop.run_in_executor(None, lambda: hypr_control(parameters=args, player=self.ui))
