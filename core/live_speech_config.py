@@ -113,6 +113,20 @@ FRENCH_TECH_PHRASES = [
     "Hyprland",
     "EndeavourOS",
     "Conakry",
+    "Antigravity",
+    "Claude",
+    "Codex",
+    "Kitty",
+    "Nautilus",
+    "Caelestia",
+    "Bluetooth",
+    "Wi-Fi",
+    "luminosité",
+    "augmente la luminosité à fond",
+    "clique sur",
+    "double-clique",
+    "clic droit",
+    "plein écran",
 ]
 
 # Les demandes de messagerie sont courantes et particulièrement pénibles à

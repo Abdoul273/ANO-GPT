@@ -615,3 +615,56 @@ def test_parse_modern_computer_commands():
     assert _parse_control_locally("quel est le volume") == {"action": "volume_get", "params": {}}
     assert _parse_control_locally("règle le volume à 35%") == {"action": "volume_set", "params": {"value": 35}}
     assert _parse_control_locally("état du système") == {"action": "system_status", "params": {}}
+    assert _parse_control_locally("augmente la luminosité à fond") == {"action": "brightness_set", "params": {"value": 100}}
+    assert _parse_control_locally("double-clique sur le dossier Documents") == {
+        "action": "double_click", "params": {"description": "le dossier documents"}
+    }
+    assert _parse_control_locally("fais un clic droit sur l'onglet") == {
+        "action": "right_click", "params": {"description": "l'onglet"}
+    }
+
+
+def test_brightness_already_at_max_reports_truthfully(monkeypatch):
+    import actions.computer_settings as cs
+
+    monkeypatch.setattr(cs, "get_current_brightness", lambda: 100)
+    called_set = []
+    monkeypatch.setattr(cs, "brightness_set", lambda v: called_set.append(v))
+    monkeypatch.setattr(cs, "brightness_up", lambda v=10: called_set.append(v))
+
+    res1 = cs.computer_settings({"description": "augmente la luminosité à fond"})
+    assert "déjà au maximum (100%)" in res1
+    assert not called_set
+
+    res2 = cs.computer_settings({"action": "brightness_up", "value": 10})
+    assert "déjà au maximum (100%)" in res2
+    assert not called_set
+
+    monkeypatch.setattr(cc, "_current_brightness_pct", lambda: 100)
+    res3 = computer_control({"action": "brightness_set", "value": 100})
+    assert "déjà au maximum (100%)" in res3
+
+
+def test_blind_click_without_target_or_coords_is_refused():
+    res = computer_control({"action": "click"})
+    assert "Cible manquante" in res
+    res_dbl = computer_control({"action": "double_click"})
+    assert "Cible manquante" in res_dbl
+    res_rt = computer_control({"action": "right_click"})
+    assert "Cible manquante" in res_rt
+
+
+def test_double_and_right_click_use_screen_target(monkeypatch):
+    monkeypatch.setattr(cc, "_screen_find", lambda desc: (420, 310))
+    clicks = []
+    monkeypatch.setattr(
+        cc, "_click",
+        lambda x=None, y=None, button="left", clicks_n=1, **kw: (
+            clicks.append((x, y, button, kw.get("clicks", clicks_n)))
+            or f"Clic {button} à ({x},{y})"
+        ),
+    )
+    res_dbl = computer_control({"action": "double_click", "description": "Dossier Projets"})
+    assert "Double-clic envoyé sur «Dossier Projets» à (420, 310)" in res_dbl
+    res_rt = computer_control({"action": "right_click", "description": "Icône Son"})
+    assert "Clic droit envoyé sur «Icône Son» à (420, 310)" in res_rt

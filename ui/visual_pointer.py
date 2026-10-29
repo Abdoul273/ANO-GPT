@@ -688,12 +688,14 @@ def _valid_target_box(values: Tuple[float, float, float, float]) -> bool:
 
 def _confirm_target_box(client, gtypes, img_bytes: bytes, mime: str,
                         values: Tuple[float, float, float, float],
-                        target: str, models) -> bool:
-    """Recadre la zone trouvée et demande si elle contient vraiment la cible.
+                        target: str, models):
+    """Recadre la zone trouvée, vérifie la cible et affine ses coordonnées.
 
     C'est la seule vérification qui attrape un pointage au hasard : le modèle
-    ne revoit plus tout l'écran, seulement ce qu'il a désigné. Une invention ne
-    survit pas au gros plan.
+    ne revoit plus tout l'écran, seulement ce qu'il a désigné. En retournant
+    en plus la boîte resserrée dans le gros plan, on obtient une localisation
+    en deux passes (vue globale → zoom haute précision) idéale pour les petits
+    boutons, onglets et icônes.
     """
     try:
         import io
@@ -704,17 +706,19 @@ def _confirm_target_box(client, gtypes, img_bytes: bytes, mime: str,
         image = Image.open(io.BytesIO(img_bytes))
         width, height = image.size
         ymin, xmin, ymax, xmax = values
-        pad_x = max(12.0, (xmax - xmin) * 0.25 / 1000.0 * width)
-        pad_y = max(12.0, (ymax - ymin) * 0.25 / 1000.0 * height)
+        pad_x = max(48.0, (xmax - xmin) * 0.45 / 1000.0 * width)
+        pad_y = max(48.0, (ymax - ymin) * 0.45 / 1000.0 * height)
         left = max(0, int(xmin / 1000.0 * width - pad_x))
         top = max(0, int(ymin / 1000.0 * height - pad_y))
         right = min(width, int(xmax / 1000.0 * width + pad_x))
         bottom = min(height, int(ymax / 1000.0 * height + pad_y))
-        if right - left < 8 or bottom - top < 8:
+        crop_w = right - left
+        crop_h = bottom - top
+        if crop_w < 8 or crop_h < 8:
             return False
         buffer = io.BytesIO()
         image.crop((left, top, right, bottom)).convert("RGB").save(
-            buffer, format="JPEG", quality=92)
+            buffer, format="JPEG", quality=94)
         crop_bytes = buffer.getvalue()
     except Exception:
         return False
@@ -722,8 +726,11 @@ def _confirm_target_box(client, gtypes, img_bytes: bytes, mime: str,
     from core.multimodal_vision import _call_gemini_vision
     prompt = (
         f"Ce gros plan est extrait d'une capture d'écran. Contient-il « {target} » ?\n"
-        "Réponds UNIQUEMENT par un JSON strict : {\"match\": true} ou {\"match\": false}.\n"
-        "En cas de doute, réponds false."
+        "Réponds UNIQUEMENT par un JSON strict :\n"
+        '{"match": true, "box": [ymin, xmin, ymax, xmax]} ou {"match": false}.\n'
+        "Si match est true, indique dans \"box\" les coordonnées normalisées (0 à 1000) "
+        f"de « {target} » à l'intérieur de ce gros plan pour viser son centre exact.\n"
+        "En cas de doute sur la présence de la cible, réponds {\"match\": false}."
     )
     try:
         resp, _model = _call_gemini_vision(
@@ -737,7 +744,29 @@ def _confirm_target_box(client, gtypes, img_bytes: bytes, mime: str,
         match = _re.search(r"\{.*\}", text, _re.DOTALL)
         if not match:
             return False
-        return bool(_json.loads(match.group(0)).get("match"))
+        payload = _json.loads(match.group(0))
+        if not payload.get("match"):
+            return False
+        sub_box = payload.get("box")
+        if isinstance(sub_box, list) and len(sub_box) >= 4 and width > 0 and height > 0:
+            try:
+                sy0, sx0, sy1, sx1 = (float(v) for v in sub_box[:4])
+                if (0.0 <= sy0 < sy1 <= 1000.0) and (0.0 <= sx0 < sx1 <= 1000.0):
+                    abs_x0 = left + (sx0 / 1000.0) * crop_w
+                    abs_y0 = top + (sy0 / 1000.0) * crop_h
+                    abs_x1 = left + (sx1 / 1000.0) * crop_w
+                    abs_y1 = top + (sy1 / 1000.0) * crop_h
+                    refined = (
+                        max(0.0, min(1000.0, (abs_y0 / height) * 1000.0)),
+                        max(0.0, min(1000.0, (abs_x0 / width) * 1000.0)),
+                        max(0.0, min(1000.0, (abs_y1 / height) * 1000.0)),
+                        max(0.0, min(1000.0, (abs_x1 / width) * 1000.0)),
+                    )
+                    if _valid_target_box(refined):
+                        return refined
+            except (TypeError, ValueError):
+                pass
+        return True
     except Exception as exc:
         print(f"[VisualPointer] Contre-vérification impossible : {exc}")
         return False
@@ -821,10 +850,14 @@ def detect_screen_target_live(target: str, query: str = "") -> Optional[ScreenTa
                     continue
                 # Toute cible externe doit survivre à un gros plan, même si
                 # le premier modèle s'est dit très sûr de lui.
-                if not _confirm_target_box(
-                        client, gtypes, img_bytes, mime, values, target, models):
+                confirmed = _confirm_target_box(
+                    client, gtypes, img_bytes, mime, values, target, models
+                )
+                if not confirmed:
                     print(f"[VisualPointer] « {target} » infirmé par la contre-vérification.")
                     continue
+                if isinstance(confirmed, tuple) and len(confirmed) == 4 and _valid_target_box(confirmed):
+                    values = confirmed
                 return ScreenTargetBox(
                     box=values,
                     origin=(float(origin[0]), float(origin[1])),

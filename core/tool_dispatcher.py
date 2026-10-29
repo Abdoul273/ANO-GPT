@@ -94,12 +94,17 @@ def _voice_engine_settings() -> dict:
     return _settings()
 
 from core.tool_intent import (  # noqa: F401 — ré-export public
+    _BRIGHTNESS_SHELL_RE,
     _CAPTURE_INTENT_RE,
     _GLOBAL_VOLUME_SHELL_RE,
     _bluetooth_action_from_request,
+    _brightness_args_from_shell,
+    _click_action_from_request,
     _click_target_from_request,
     _explicit_system_volume_request,
     _has_explicit_capture_intent,
+    _has_explicit_coordinates,
+    _is_brightness_shell_command,
     _is_global_volume_shell_command,
     _media_volume_request,
     _preset_requested,
@@ -402,6 +407,14 @@ class ToolDispatcher:
             ))
         return response
 
+    def _current_user_request(self) -> str:
+        """Retourne l'énoncé utilisateur du tour courant, même après le début d'une annonce vocale."""
+        return str(
+            getattr(self, "_live_user_text", "")
+            or getattr(self, "_turn_user_text", "")
+            or ""
+        ).strip()
+
     async def _verify_sensitive_voice_command(
         self, tool_name: str, args: dict | None = None,
     ) -> str:
@@ -410,7 +423,7 @@ class ToolDispatcher:
                 or not _is_destructive(tool_name, args or {})):
             return ""
         clip = self._last_voice_clip
-        main_text = str(self._live_user_text or "").strip()
+        main_text = self._current_user_request()
         if (clip is None or not main_text
                 or time.monotonic() - self._last_voice_clip_at > 20.0):
             return ""
@@ -1401,7 +1414,7 @@ class ToolDispatcher:
     async def _tool_capture_control(self, fc, name, args, loop):
         result = "Done."
         capture_action = str(args.get("action") or "").casefold()
-        spoken = getattr(self, "_live_user_text", "")
+        spoken = self._current_user_request()
         if (capture_action == "start_recording"
                 and not _has_explicit_capture_intent(spoken)):
             result = (
@@ -1647,8 +1660,18 @@ class ToolDispatcher:
 
     async def _tool_shell_exec(self, fc, name, args, loop):
         result = "Done."
+        requested = self._current_user_request()
+        if _is_brightness_shell_command(args):
+            brightness_args = _brightness_args_from_shell(args, requested)
+            result = await loop.run_in_executor(
+                None,
+                lambda: computer_settings(
+                    parameters=brightness_args, response=None, player=self.ui,
+                    session_memory=self._tool_session_memory,
+                ),
+            )
+            return result
         if _is_global_volume_shell_command(args):
-            requested = str(getattr(self, "_live_user_text", "") or "")
             if _media_volume_request(requested) and not _explicit_system_volume_request(requested):
                 relative = _relative_volume_value_from_shell(args)
                 if re.search(r"\b(?:vid[eé]o|youtube|film|clip)\b", requested, re.IGNORECASE):
@@ -1668,7 +1691,7 @@ class ToolDispatcher:
                         ),
                     )
             else:
-                system_args = _system_volume_args_from_shell(args)
+                system_args = _system_volume_args_from_shell(args, requested)
                 result = await loop.run_in_executor(
                     None,
                     lambda: computer_settings(
@@ -1796,12 +1819,14 @@ class ToolDispatcher:
     async def _tool_computer_settings(self, fc, name, args, loop):
         result = "Done."
         settings_args = dict(args)
+        req = self._current_user_request()
+        if req and not settings_args.get("description"):
+            settings_args["description"] = req
         if str(settings_args.get("action") or "").casefold() in {
             "toggle_bluetooth", "bluetooth", "toggle_bt",
         }:
             explicit = _bluetooth_action_from_request(
-                str(getattr(self, "_live_user_text", "") or "")
-                or str(settings_args.get("description") or "")
+                req or str(settings_args.get("description") or "")
             )
             if explicit:
                 settings_args["action"] = explicit
@@ -1817,15 +1842,37 @@ class ToolDispatcher:
     async def _tool_computer_control(self, fc, name, args, loop):
         result = "Done."
         control_args = dict(args)
-        if (str(control_args.get("action") or "").casefold() in {"click", "screen_click"}
-                and not control_args.get("description")):
-            target = _click_target_from_request(
-                getattr(self, "_live_user_text", "")
-            )
-            if target:
-                control_args["description"] = target
+        req = self._current_user_request()
+        action_norm = str(control_args.get("action") or "").casefold()
+        if action_norm in {"click", "screen_click", "double_click", "right_click"}:
+            click_kind = _click_action_from_request(req)
+            if click_kind and action_norm in {"click", "screen_click"}:
+                control_args["action"] = click_kind
+                action_norm = click_kind
+            # Si l'utilisateur n'a pas dicté de coordonnées x/y, écarter toute
+            # coordonnée inventée par le modèle afin d'imposer la capture écran.
+            if req and not _has_explicit_coordinates(req):
                 control_args.pop("x", None)
                 control_args.pop("y", None)
+            if not control_args.get("description"):
+                target = (
+                    _click_target_from_request(req)
+                    or str(control_args.get("target") or "").strip()
+                    or str(control_args.get("text") or "").strip()
+                    or str(control_args.get("title") or "").strip()
+                )
+                if target:
+                    control_args["description"] = target
+                    control_args.pop("x", None)
+                    control_args.pop("y", None)
+        elif action_norm in {"brightness_up", "brightness_set"} and req:
+            if re.search(r"\b(?:[àa]\s+fond|au\s+max(?:imum)?|maxi(?:mum)?|100\s*%)", req, re.I):
+                control_args["action"] = "brightness_set"
+                control_args["value"] = 100
+        elif action_norm in {"volume_up", "volume_set"} and req:
+            if re.search(r"\b(?:[àa]\s+fond|au\s+max(?:imum)?|maxi(?:mum)?|100\s*%)", req, re.I):
+                control_args["action"] = "volume_set"
+                control_args["value"] = 100
         r = await loop.run_in_executor(
             None, lambda: computer_control(parameters=control_args, player=self.ui)
         )
@@ -1930,7 +1977,7 @@ class ToolDispatcher:
 
     async def _tool_hypr_orchestrator(self, fc, name, args, loop):
         result = "Done."
-        heard = str(getattr(self, "_live_user_text", "") or "")
+        heard = self._current_user_request()
         preset_call = str(args.get("action") or "").casefold() in {
             "preset", "apply_preset",
         }
@@ -2375,7 +2422,7 @@ class ToolDispatcher:
             elif name == "capability_guide":
                 payload = dict(args)
                 if not str(payload.get("query") or "").strip():
-                    payload["query"] = str(getattr(self, "_live_user_text", "") or "")
+                    payload["query"] = self._current_user_request()
                 result = await asyncio.to_thread(
                     capability_guide_action, parameters=payload, player=self.ui,
                 )
@@ -2404,7 +2451,7 @@ class ToolDispatcher:
                 result = await self._tool_hypr_orchestrator(fc, name, args, loop)
 
             elif name == "shutdown_jarvis":
-                requested = str(getattr(self, "_live_user_text", "") or "").casefold()
+                requested = self._current_user_request().casefold()
                 if "veille" in requested or "repos" in requested:
                     # Filet final, y compris si une transcription a contourné
                     # l'interception locale : « veille » ne ferme jamais ANO.

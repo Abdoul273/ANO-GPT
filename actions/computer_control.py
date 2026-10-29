@@ -1146,16 +1146,59 @@ def _close_window(target: str = "") -> str:
 # Luminosité (brightnessctl, repli sysfs)
 # ════════════════════════════════════════════════════════════════════════════
 
+def _current_brightness_pct() -> Optional[int]:
+    if _have("brightnessctl"):
+        try:
+            r = _run(["brightnessctl", "-m"], timeout=2)
+            out = (getattr(r, "stdout", "") or "").strip()
+            if r.returncode == 0 and "," in out:
+                fields = out.splitlines()[0].split(",")
+                if len(fields) >= 5:
+                    pct_str = fields[3].strip().rstrip("%")
+                    if pct_str.isdigit():
+                        return int(pct_str)
+                    cur, mx = int(fields[2]), int(fields[4])
+                    if mx > 0:
+                        return round(cur * 100 / mx)
+        except Exception:
+            pass
+        return None
+    try:
+        base = Path("/sys/class/backlight")
+        if base.exists():
+            devs = [d for d in base.iterdir() if d.is_dir()]
+            if devs:
+                dev = devs[0]
+                cur = int((dev / "brightness").read_text().strip())
+                mx = int((dev / "max_brightness").read_text().strip())
+                if mx > 0:
+                    return round(cur * 100 / mx)
+    except Exception:
+        pass
+    return None
+
+
 def _brightness_set(value: int) -> str:
     try:
         value = max(0, min(100, int(value)))
     except (TypeError, ValueError):
         return "Valeur de luminosité invalide."
+    before = _current_brightness_pct()
+    if before is not None and before == value:
+        if value == 100:
+            return "La luminosité est déjà au maximum (100%) ; aucun changement effectué."
+        if value <= 1:
+            return f"La luminosité est déjà au minimum ({before}%) ; aucun changement effectué."
+        return f"La luminosité est déjà à {before}% ; aucun changement effectué."
     if _have("brightnessctl"):
         try:
             r = _run(["brightnessctl", "set", f"{value}%"], timeout=3)
             if r.returncode == 0:
-                return f"Luminosité réglée à {value}%."
+                after = _current_brightness_pct()
+                final_b = after if after is not None else value
+                if before is not None:
+                    return f"Luminosité réglée à {final_b}% (était à {before}%)."
+                return f"Luminosité réglée à {final_b}%."
         except Exception:
             pass
     try:
@@ -1165,6 +1208,8 @@ def _brightness_set(value: int) -> str:
             dev = devs[0]
             mx = int((dev / "max_brightness").read_text().strip())
             (dev / "brightness").write_text(str(int(mx * value / 100)))
+            if before is not None:
+                return f"Luminosité réglée à {value}% (était à {before}%)."
             return f"Luminosité réglée à {value}%."
     except Exception:
         pass
@@ -1173,7 +1218,41 @@ def _brightness_set(value: int) -> str:
             "est dans le groupe video.")
 
 
+def _brightness_delta(delta: int, up: bool = True) -> str:
+    try:
+        amount = max(1, min(100, abs(int(delta or 10))))
+    except (TypeError, ValueError):
+        amount = 10
+    before = _current_brightness_pct()
+    if up and before is not None and before >= 100:
+        return "La luminosité est déjà au maximum (100%) ; impossible de l'augmenter davantage."
+    if not up and before is not None and before <= 0:
+        return "La luminosité est déjà au minimum (0%) ; impossible de la baisser davantage."
+    if _have("brightnessctl"):
+        try:
+            op = f"{amount}%+" if up else f"{amount}%-"
+            r = _run(["brightnessctl", "set", op], timeout=3)
+            if r.returncode == 0:
+                after = _current_brightness_pct()
+                if before is not None and after is not None and after == before:
+                    bound = "maximum" if up else "minimum"
+                    return f"La luminosité est déjà au {bound} ({after}%) ; aucun changement effectué."
+                label = "augmentée" if up else "diminuée"
+                if before is not None and after is not None:
+                    return f"Luminosité {label} de {before}% → {after}%."
+                return f"Luminosité {label} de {amount}%{f' → {after}%' if after is not None else ''}."
+        except Exception:
+            pass
+    if before is not None:
+        target = min(100, before + amount) if up else max(0, before - amount)
+        return _brightness_set(target)
+    return "Impossible de modifier la luminosité."
+
+
 def _brightness_get() -> str:
+    pct = _current_brightness_pct()
+    if pct is not None:
+        return f"Luminosité actuelle : {pct}%."
     if _have("brightnessctl"):
         try:
             cur = _run(["brightnessctl", "get"], timeout=2).stdout.strip()
@@ -1183,16 +1262,6 @@ def _brightness_get() -> str:
                 return f"Luminosité actuelle : {pct}%."
         except Exception:
             pass
-    try:
-        base = Path("/sys/class/backlight")
-        devs = [d for d in base.iterdir() if d.is_dir()]
-        if devs:
-            dev = devs[0]
-            cur = int((dev / "brightness").read_text().strip())
-            mx = int((dev / "max_brightness").read_text().strip())
-            return f"Luminosité actuelle : {round(cur * 100 / mx)}%."
-    except Exception:
-        pass
     return "Impossible de lire la luminosité."
 
 
@@ -1263,17 +1332,27 @@ def _clipboard_status() -> str:
     return f"Presse-papiers prêt : {len(content)} caractères sur {lines} ligne(s)."
 
 
+def _current_volume_state() -> Tuple[Optional[int], Optional[bool]]:
+    if not _have("wpctl"):
+        return None, None
+    try:
+        result = _run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=2)
+        out = getattr(result, "stdout", "") or ""
+        match = re.search(r"Volume:\s*([0-9.]+)", out)
+        if result.returncode == 0 and match:
+            muted = "[MUTED]" in out.upper()
+            return round(float(match.group(1)) * 100), muted
+    except Exception:
+        pass
+    return None, None
+
+
 def _volume_get() -> str:
     if not _have("wpctl"):
         return "Audio PipeWire indisponible : installez wireplumber et wpctl."
-    try:
-        result = _run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=2)
-        match = re.search(r"Volume:\s*([0-9.]+)", result.stdout)
-        if result.returncode == 0 and match:
-            muted = " [MUTED]" in result.stdout.upper()
-            return f"Volume système : {round(float(match.group(1)) * 100)}%{' (muet)' if muted else ''}."
-    except Exception:
-        pass
+    vol, muted = _current_volume_state()
+    if vol is not None:
+        return f"Volume système : {vol}%{' (muet)' if muted else ''}."
     return "Impossible de lire le volume système."
 
 
@@ -1284,13 +1363,47 @@ def _volume_set(value: Any) -> str:
         return "Valeur de volume invalide : utilisez 0 à 100."
     if not _have("wpctl"):
         return "Audio PipeWire indisponible : installez wireplumber et wpctl."
+    before, _muted = _current_volume_state()
+    if before is not None and before == percent:
+        if percent == 100:
+            return "Le volume système est déjà au maximum (100%) ; aucun changement effectué."
+        if percent == 0:
+            return "Le volume système est déjà au minimum (0%) ; aucun changement effectué."
+        return f"Le volume système est déjà à {percent}% ; aucun changement effectué."
     try:
         result = _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{percent}%"], timeout=2)
         if result.returncode == 0:
+            if before is not None:
+                return f"Volume système réglé à {percent}% (était à {before}%)."
             return f"Volume système réglé à {percent}%."
     except Exception:
         pass
     return "Impossible de régler le volume système."
+
+
+def _volume_delta(delta: Any, up: bool = True) -> str:
+    try:
+        amount = max(1, min(100, abs(int(delta or 10))))
+    except (TypeError, ValueError):
+        amount = 10
+    if not _have("wpctl"):
+        return "Audio PipeWire indisponible : installez wireplumber et wpctl."
+    before, _muted = _current_volume_state()
+    if up and before is not None and before >= 100:
+        return "Le volume système est déjà au maximum (100%) ; impossible de l'augmenter davantage."
+    if not up and before is not None and before <= 0:
+        return "Le volume système est déjà au minimum (0%) ; impossible de le baisser davantage."
+    target = min(100, (before if before is not None else 50) + amount) if up else max(0, (before if before is not None else 50) - amount)
+    try:
+        result = _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{target}%"], timeout=2)
+        if result.returncode == 0:
+            label = "augmenté" if up else "diminué"
+            if before is not None:
+                return f"Volume système {label} de {before}% → {target}%."
+            return f"Volume système {label} à {target}%."
+    except Exception:
+        pass
+    return "Impossible de modifier le volume système."
 
 
 def _volume_mute(mode: str = "toggle") -> str:
@@ -1299,8 +1412,14 @@ def _volume_mute(mode: str = "toggle") -> str:
         return "Mode muet invalide : toggle, on ou off."
     if not _have("wpctl"):
         return "Audio PipeWire indisponible : installez wireplumber et wpctl."
+    _vol, before_muted = _current_volume_state()
+    if mode == "on" and before_muted is True:
+        return "Le son est déjà coupé (muet) ; aucun changement effectué."
+    if mode == "off" and before_muted is False:
+        return "Le son est déjà activé (non muet) ; aucun changement effectué."
+    wpctl_arg = "1" if mode == "on" else "0" if mode == "off" else "toggle"
     try:
-        result = _run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", mode], timeout=2)
+        result = _run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", wpctl_arg], timeout=2)
         if result.returncode == 0:
             return "Muet audio basculé." if mode == "toggle" else ("Audio coupé." if mode == "on" else "Audio rétabli.")
     except Exception:
@@ -1348,6 +1467,16 @@ def _screen_find(description: str) -> Optional[Tuple[int, int]]:
             and origin_y <= center_y <= origin_y + height):
         print(f"[ComputerControl] Cible « {description} » hors capture, clic annulé.")
         return None
+    try:
+        from ui.visual_pointer import get_visual_pointer
+        vp = get_visual_pointer()
+        rx = origin_x + (xmin / 1000.0) * width
+        ry = origin_y + (ymin / 1000.0) * height
+        rw = max(12.0, ((xmax - xmin) / 1000.0) * width)
+        rh = max(12.0, ((ymax - ymin) / 1000.0) * height)
+        vp.highlight_region(rx, ry, rw, rh, label=description[:40], duration=1.8)
+    except Exception:
+        pass
     return int(round(center_x)), int(round(center_y))
 
 
@@ -1359,7 +1488,8 @@ def _click_screen_target(description: str, button: str = "left", clicks: int = 1
     outcome = _click(x=coords[0], y=coords[1], button=button, clicks=clicks)
     if not re.match(r"^Clic (?:left|right|middle) à ", outcome):
         return f"{outcome} Cible «{description}» repérée à {coords}."
-    return f"Clic envoyé sur «{description}» à {coords}."
+    kind = "Double-clic" if int(clicks or 1) >= 2 else ("Clic droit" if button == "right" else "Clic")
+    return f"{kind} envoyé sur «{description}» à {coords}."
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1459,8 +1589,24 @@ def _parse_control_locally(text: str) -> Optional[Dict[str, Any]]:
     if re.search(r"\bcopie\b|\bcopy\b|ctrl\+c", t):
         return {"action": "copy", "params": {}}
 
-    # Clic (coordonnées ou description)
-    m = re.search(r"(?:clique|click)\s+(?:sur\s+|[àa]\s+|au\s+|en\s+)?[\"']?(.+?)[\"']?$", t)
+    # Clic (double-clic, clic droit, coordonnées ou description)
+    m_dbl = re.search(r"(?:double[- ]?clique|double[- ]?click|fais\s+un\s+double[- ]?clic)\s+(?:sur\s+|[àa]\s+|au\s+|en\s+)?[\"']?(.+?)[\"']?$", t)
+    if m_dbl:
+        target = m_dbl.group(1).strip()
+        cm = re.match(r"(\d+)\s*[,;]\s*(\d+)", target)
+        if cm:
+            return {"action": "double_click",
+                    "params": {"x": int(cm.group(1)), "y": int(cm.group(2))}}
+        return {"action": "double_click", "params": {"description": target}}
+    m_rt = re.search(r"(?:fais\s+un\s+)?(?:clic\s+droit|clique\s+droit|right[- ]?click)\s+(?:sur\s+|[àa]\s+|au\s+|en\s+)?[\"']?(.+?)[\"']?$", t)
+    if m_rt:
+        target = m_rt.group(1).strip()
+        cm = re.match(r"(\d+)\s*[,;]\s*(\d+)", target)
+        if cm:
+            return {"action": "right_click",
+                    "params": {"x": int(cm.group(1)), "y": int(cm.group(2))}}
+        return {"action": "right_click", "params": {"description": target}}
+    m = re.search(r"(?:clique|cliquer|click)\s+(?:sur\s+|[àa]\s+|au\s+|en\s+)?[\"']?(.+?)[\"']?$", t)
     if m:
         target = m.group(1).strip()
         cm = re.match(r"(\d+)\s*[,;]\s*(\d+)", target)
@@ -1501,20 +1647,46 @@ def _parse_control_locally(text: str) -> Optional[Dict[str, Any]]:
     if m:
         return {"action": "wait",
                 "params": {"seconds": int(m.group(1) or m.group(2))}}
+    if re.search(r"(?:(?:augmente|monte|hausse|mets?|r[èe]gle|pousse)\s+(?:la\s+)?)?(?:luminosit[ée]|brillance)\s+(?:[àa]\s+fond|au\s+max(?:imum)?|maxi(?:mum)?|[àa]\s+100\s*%?)", t):
+        return {"action": "brightness_set", "params": {"value": 100}}
+    if re.search(r"(?:(?:diminue|baisse|r[ée]duis|mets?|r[èe]gle)\s+(?:la\s+)?)?(?:luminosit[ée]|brillance)\s+(?:au\s+min(?:imum)?|mini(?:mum)?|[àa]\s+0\s*%?)", t):
+        return {"action": "brightness_set", "params": {"value": 1}}
     m = re.search(r"(?:r[èe]gle|mets?|ajuste|d[ée]finis?)\s+(?:la\s+)?"
                   r"(?:luminosit[ée]|brillance)\s+(?:[àa]|sur)\s+(\d+)\s*%?", t)
     if m:
         return {"action": "brightness_set", "params": {"value": int(m.group(1))}}
+    m = re.search(r"(?:augmente|monte|hausse)\s+(?:la\s+)?(?:luminosit[ée]|brillance)(?:\s+de\s+(\d+)\s*%?)?", t)
+    if m:
+        return {"action": "brightness_up", "params": {"value": int(m.group(1)) if m.group(1) else 10}}
+    m = re.search(r"(?:diminue|baisse|r[ée]duis)\s+(?:la\s+)?(?:luminosit[ée]|brillance)(?:\s+de\s+(\d+)\s*%?)?", t)
+    if m:
+        return {"action": "brightness_down", "params": {"value": int(m.group(1)) if m.group(1) else 10}}
+    if re.search(r"\b(?:quelle\s+est\s+la\s+)?(?:luminosit[ée]|brillance)\b", t):
+        return {"action": "brightness_get", "params": {}}
     if re.search(r"\b(?:[ée]tat|statut|sant[ée])\s+(?:du\s+)?(?:pc|syst[èe]me|ordinateur)\b", t):
         return {"action": "system_status", "params": {}}
     if re.search(r"\b(?:vue|[ée]tat|liste)\s+(?:des\s+)?(?:bureaux|workspaces)\b", t):
         return {"action": "workspace_overview", "params": {}}
     if re.search(r"\b(?:statut|[ée]tat)\s+(?:du\s+)?presse[- ]papiers\b", t):
         return {"action": "clipboard_status", "params": {}}
+    if re.search(r"(?:(?:augmente|monte|hausse|mets?|r[èe]gle)\s+(?:le\s+)?)?(?:volume|son)\s+(?:[àa]\s+fond|au\s+max(?:imum)?|maxi(?:mum)?|[àa]\s+100\s*%?)", t):
+        return {"action": "volume_set", "params": {"value": 100}}
+    if re.search(r"(?:(?:diminue|baisse|r[ée]duis|mets?|r[èe]gle)\s+(?:le\s+)?)?(?:volume|son)\s+(?:au\s+min(?:imum)?|mini(?:mum)?|[àa]\s+0\s*%?)", t):
+        return {"action": "volume_set", "params": {"value": 0}}
     m = re.search(r"(?:r[èe]gle|mets?|baisse|monte)\s+(?:le\s+)?volume\s+(?:[àa]|sur)\s*(\d+)\s*%?", t)
     if m:
         return {"action": "volume_set", "params": {"value": int(m.group(1))}}
-    if re.search(r"\b(?:coupe|active|d[ée]sactive|mute|muet)\s+(?:le\s+)?(?:son|audio|volume)\b", t):
+    m = re.search(r"(?:augmente|monte|hausse)\s+(?:le\s+)?(?:volume|son)(?:\s+de\s+(\d+)\s*%?)?", t)
+    if m:
+        return {"action": "volume_up", "params": {"value": int(m.group(1)) if m.group(1) else 10}}
+    m = re.search(r"(?:diminue|baisse|r[ée]duis)\s+(?:le\s+)?(?:volume|son)(?:\s+de\s+(\d+)\s*%?)?", t)
+    if m:
+        return {"action": "volume_down", "params": {"value": int(m.group(1)) if m.group(1) else 10}}
+    if re.search(r"\b(?:coupe|mute|muet)\s+(?:le\s+)?(?:son|audio|volume)\b", t):
+        return {"action": "volume_mute", "params": {"mode": "on"}}
+    if re.search(r"\b(?:remets?|r[ée]active|unmute)\s+(?:le\s+)?(?:son|audio|volume)\b", t):
+        return {"action": "volume_mute", "params": {"mode": "off"}}
+    if re.search(r"\b(?:active|d[ée]sactive|bascule)\s+(?:le\s+)?(?:son|audio|volume)\b", t):
         return {"action": "volume_mute", "params": {"mode": "toggle"}}
     if re.search(r"\b(?:quel\s+est\s+le\s+)?volume\b", t):
         return {"action": "volume_get", "params": {}}
@@ -1606,11 +1778,13 @@ _CANONICAL_MAP = {
     "screenshot": "screenshot", "capture": "screenshot",
     "wait": "wait", "attends": "wait", "pause": "wait",
     "brightness_set": "brightness_set", "brightness_get": "brightness_get",
+    "brightness_up": "brightness_up", "brightness_down": "brightness_down",
     "system_status": "system_status", "status": "system_status", "état": "system_status", "etat": "system_status",
     "workspace_overview": "workspace_overview", "vue_bureaux": "workspace_overview",
     "clipboard_status": "clipboard_status",
     "volume_get": "volume_get", "volume": "volume_get",
-    "volume_set": "volume_set", "volume_mute": "volume_mute", "mute": "volume_mute",
+    "volume_set": "volume_set", "volume_up": "volume_up", "volume_down": "volume_down",
+    "volume_mute": "volume_mute", "mute": "volume_mute",
 }
 
 
@@ -1694,9 +1868,15 @@ def computer_control(parameters: dict, **kwargs) -> str:
             _hotkey("ctrl", "c")
             return "Contenu copié."
         elif action == "click":
-            if params.get("description"):
+            target_desc = (
+                params.get("description")
+                or params.get("target")
+                or params.get("label")
+                or (params.get("text") if params.get("x") is None and params.get("y") is None else "")
+            )
+            if target_desc and (params.get("x") is None or params.get("y") is None):
                 return _click_screen_target(
-                    str(params["description"]),
+                    str(target_desc),
                     button=str(params.get("button") or "left"),
                     clicks=int(params.get("clicks", 1)),
                 )
@@ -1704,6 +1884,12 @@ def computer_control(parameters: dict, **kwargs) -> str:
             y = params.get("y")
             button = params.get("button", "left")
             clicks = int(params.get("clicks", 1))
+            if x is None or y is None:
+                if not params.get("allow_cursor_click"):
+                    return (
+                        "Cible manquante pour le clic : précise l'élément visible à cliquer "
+                        "(description='...') afin que je prenne une capture et vise la cible."
+                    )
             return _click(x=x, y=y, button=button, clicks=clicks)
         elif action == "scroll":
             return _scroll(params.get("direction", "down"),
@@ -1717,11 +1903,45 @@ def computer_control(parameters: dict, **kwargs) -> str:
             parts = [k.strip() for k in re.split(r"[+\s]+", keys) if k.strip()]
             return _hotkey(*parts) if parts else "Combinaison de touches invalide."
         elif action == "double_click":
-            return _click(x=params.get("x"), y=params.get("y"),
-                          button=params.get("button", "left"), clicks=2)
+            target_desc = (
+                params.get("description")
+                or params.get("target")
+                or params.get("label")
+                or (params.get("text") if params.get("x") is None and params.get("y") is None else "")
+            )
+            if target_desc and (params.get("x") is None or params.get("y") is None):
+                return _click_screen_target(
+                    str(target_desc),
+                    button=str(params.get("button") or "left"),
+                    clicks=2,
+                )
+            x, y = params.get("x"), params.get("y")
+            if (x is None or y is None) and not params.get("allow_cursor_click"):
+                return (
+                    "Cible manquante pour le double-clic : précise l'élément visible à cliquer "
+                    "(description='...') afin que je prenne une capture et vise la cible."
+                )
+            return _click(x=x, y=y, button=params.get("button", "left"), clicks=2)
         elif action == "right_click":
-            return _click(x=params.get("x"), y=params.get("y"),
-                          button="right", clicks=1)
+            target_desc = (
+                params.get("description")
+                or params.get("target")
+                or params.get("label")
+                or (params.get("text") if params.get("x") is None and params.get("y") is None else "")
+            )
+            if target_desc and (params.get("x") is None or params.get("y") is None):
+                return _click_screen_target(
+                    str(target_desc),
+                    button="right",
+                    clicks=1,
+                )
+            x, y = params.get("x"), params.get("y")
+            if (x is None or y is None) and not params.get("allow_cursor_click"):
+                return (
+                    "Cible manquante pour le clic droit : précise l'élément visible à cliquer "
+                    "(description='...') afin que je prenne une capture et vise la cible."
+                )
+            return _click(x=x, y=y, button="right", clicks=1)
         elif action == "move":
             x, y = params.get("x"), params.get("y")
             if x is None or y is None:
@@ -1742,17 +1962,21 @@ def computer_control(parameters: dict, **kwargs) -> str:
                 _remember_typed(text, submitted=False)
             return res
         elif action == "screen_find":
-            desc = params.get("description", "")
+            desc = params.get("description") or params.get("target") or params.get("text") or ""
             if not desc:
                 return "Aucune description fournie pour la recherche à l'écran."
-            coords = _screen_find(desc)
+            coords = _screen_find(str(desc))
             return (f"Trouvé «{desc}» à {coords}." if coords
                     else f"Je n'ai pas trouvé «{desc}» à l'écran.")
         elif action == "screen_click":
-            desc = params.get("description", "")
+            desc = params.get("description") or params.get("target") or params.get("text") or ""
             if not desc:
                 return "Aucune description fournie."
-            return _click_screen_target(str(desc))
+            return _click_screen_target(
+                str(desc),
+                button=str(params.get("button") or "left"),
+                clicks=int(params.get("clicks", 1)),
+            )
         elif action == "move_to_workspace":
             ws = params.get("workspace", params.get("value"))
             if ws is None:
@@ -1788,6 +2012,10 @@ def computer_control(parameters: dict, **kwargs) -> str:
             return f"Pause de {secs} seconde(s)."
         elif action == "brightness_set":
             return _brightness_set(int(params.get("value", 50)))
+        elif action == "brightness_up":
+            return _brightness_delta(params.get("value", params.get("amount", 10)), up=True)
+        elif action == "brightness_down":
+            return _brightness_delta(params.get("value", params.get("amount", 10)), up=False)
         elif action == "brightness_get":
             return _brightness_get()
         elif action == "system_status":
@@ -1800,6 +2028,10 @@ def computer_control(parameters: dict, **kwargs) -> str:
             return _volume_get()
         elif action == "volume_set":
             return _volume_set(params.get("value", params.get("volume", 50)))
+        elif action == "volume_up":
+            return _volume_delta(params.get("value", params.get("amount", 10)), up=True)
+        elif action == "volume_down":
+            return _volume_delta(params.get("value", params.get("amount", 10)), up=False)
         elif action == "volume_mute":
             return _volume_mute(params.get("mode", "toggle"))
         elif action == "random_data":

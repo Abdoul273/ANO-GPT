@@ -1104,8 +1104,8 @@ TOOL_DECLARATIONS = [
                 "action": {
                     "type": "STRING",
                     "description": (
-                        "volume_set | volume_up | volume_down | mute | unmute | toggle_mute | "
-                        "brightness_up | brightness_down | sleep_display | pause_video | "
+                        "volume_set | volume_up | volume_down | volume_get | mute | unmute | toggle_mute | "
+                        "brightness_set | brightness_up | brightness_down | brightness_get | sleep_display | pause_video | "
                         "close_window | fullscreen | minimize | maximize | "
                         "snap_left | snap_right | switch_window | show_desktop | task_manager | "
                         "focus_search | refresh_page | close_tab | new_tab | next_tab | prev_tab | "
@@ -1301,7 +1301,8 @@ TOOL_DECLARATIONS = [
                         "move_to_workspace | switch_workspace | list_windows | "
                         "screen_find | screen_click | random_data | user_data | "
                         "system_status | workspace_overview | clipboard_status | "
-                        "volume_get | volume_set | volume_mute. "
+                        "brightness_get | brightness_set | brightness_up | brightness_down | "
+                        "volume_get | volume_set | volume_up | volume_down | volume_mute. "
                         "Pour une capture d'écran destinée à l'utilisateur, utiliser capture_control, "
                         "jamais cet outil. "
                         "type types text into active window, or target 'window' if provided. "

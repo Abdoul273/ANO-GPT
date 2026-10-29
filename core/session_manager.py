@@ -405,6 +405,7 @@ class SessionManager:
         self._foreign_noise_turn = True
         self._noise_turn = True
         self._live_user_text = ""
+        self._turn_user_text = ""
         return True
 
     def _extend_toolkit(self, text: str, *, origin: str = "demande") -> bool:
@@ -912,6 +913,7 @@ class SessionManager:
                 done.clear()
             if user_request:
                 self._live_user_text = user_request
+                self._turn_user_text = user_request
                 self._last_user_phrase = user_request
                 self._turn_tool_calls = 0
                 self._turn_tool_evidence = []
@@ -1577,6 +1579,7 @@ class SessionManager:
                                             pending_confirm.token, verdict, source="voix")
                                         in_buf = []
                                         self._live_user_text = ""
+                                        self._turn_user_text = ""
                                         self.ui.set_user_transcript(merged, final=True)
                                         continue
                                 if self._try_switch_conversation_language(merged):
@@ -1587,6 +1590,7 @@ class SessionManager:
                                     self.interrupt()
                                     in_buf = []
                                     self._live_user_text = ""
+                                    self._turn_user_text = ""
                                     self.ui.set_user_transcript(merged, final=True)
                                     continue
                                 auto_persona = self.detect_contextual_persona(merged)
@@ -1598,6 +1602,7 @@ class SessionManager:
                                         name="contextual-persona-switch", ui=self.ui,
                                     )
                                 self._live_user_text = merged
+                                self._turn_user_text = merged
                                 self._last_user_phrase = merged
                                 self._last_user_speech = time.monotonic()
                                 # Fermer la caméra dès que la demande est reconnue.
@@ -1759,6 +1764,7 @@ class SessionManager:
                             in_buf = []
                             # Le tour est clos : plus rien n'attend de réponse.
                             self._live_user_text = ""
+                            self._turn_user_text = ""
                             self._noise_turn = False
                             self._foreign_noise_turn = False
 

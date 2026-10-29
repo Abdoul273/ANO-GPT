@@ -264,21 +264,33 @@ def get_current_volume() -> Optional[int]:
         except Exception:
             return None
     backend = _linux_volume_cmd()
-    # Le volume est relu avant chaque hausse ou baisse, et l'interface le
-    # réaffiche : une seconde de cache supprime la moitié des processus sans
-    # jamais afficher une valeur périmée à l'oreille.
+    # Lecture directe sans cache : indispensable pour comparer l'état réel
+    # avant et immédiatement après une commande (« déjà à 100 % »).
     if backend == "wpctl":
-        res = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
-                  timeout=3, cache_ttl=1.0)
+        res = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=3)
         match = re.search(r"Volume:\s*([0-9.]+)", res.out) if res.ok else None
         if match:
             return round(float(match.group(1)) * 100)
     elif backend == "pactl":
-        res = run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"],
-                  timeout=3, cache_ttl=1.0)
+        res = run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"], timeout=3)
         match = re.search(r"(\d+)%", res.out) if res.ok else None
         if match:
             return int(match.group(1))
+    return None
+
+
+def get_current_mute() -> Optional[bool]:
+    if _OS != "Linux":
+        return None
+    backend = _linux_volume_cmd()
+    if backend == "wpctl":
+        res = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=3)
+        if res.ok and res.out:
+            return "[MUTED]" in res.out.upper()
+    elif backend == "pactl":
+        res = run(["pactl", "get-sink-mute", "@DEFAULT_SINK@"], timeout=3)
+        if res.ok and res.out:
+            return "yes" in res.out.lower() or "oui" in res.out.lower()
     return None
 
 
@@ -295,19 +307,23 @@ def get_current_brightness() -> Optional[int]:
         return None
     cmd = _get_brightness_cmd()
     if cmd == "brightnessctl":
-        # `brightnessctl -m` donne courant et maximum en une seule ligne :
-        # un processus au lieu de deux, et la valeur reste bonne une seconde.
-        res = run(["brightnessctl", "-m", "get"], timeout=3, cache_ttl=1.0)
+        # `brightnessctl -m` donne courant, pourcentage et maximum en une ligne.
+        # Aucun cache sur la valeur courante afin que la lecture avant/après
+        # reflète immédiatement le changement réel.
+        res = run(["brightnessctl", "-m"], timeout=3)
         if res.ok:
-            fields = res.out.strip().split(",")
+            fields = res.out.strip().splitlines()[0].split(",") if res.out.strip() else []
             try:
-                # device,classe,valeur,pourcentage,maximum
+                # device,classe,valeur,pourcentage%,maximum
                 if len(fields) >= 5:
+                    pct_str = fields[3].strip().rstrip("%")
+                    if pct_str.isdigit():
+                        return int(pct_str)
                     cur, max_val = int(fields[2]), int(fields[4])
                     return round((cur / max_val) * 100) if max_val > 0 else None
             except (ValueError, IndexError):
                 pass
-        cur_res = run(["brightnessctl", "get"], timeout=3, cache_ttl=1.0)
+        cur_res = run(["brightnessctl", "get"], timeout=3)
         max_res = run(["brightnessctl", "max"], timeout=3, cache_ttl=30.0)
         if cur_res.ok and max_res.ok:
             try:
@@ -316,12 +332,24 @@ def get_current_brightness() -> Optional[int]:
             except ValueError:
                 return None
     elif cmd == "light":
-        res = run(["light", "-G"], timeout=3, cache_ttl=1.0)
+        res = run(["light", "-G"], timeout=3)
         if res.ok:
             try:
                 return round(float(res.out.strip()))
             except ValueError:
                 return None
+    try:
+        base = Path("/sys/class/backlight")
+        if base.exists():
+            devs = [d for d in base.iterdir() if d.is_dir()]
+            if devs:
+                dev = devs[0]
+                cur = int((dev / "brightness").read_text().strip())
+                max_val = int((dev / "max_brightness").read_text().strip())
+                if max_val > 0:
+                    return round((cur / max_val) * 100)
+    except Exception:
+        pass
     return None
 
 
@@ -367,13 +395,37 @@ def volume_down(amount: int = 10):
             raise RuntimeError("Aucun backend volume (installez wireplumber ou pulseaudio-utils).")
 
 
-def volume_mute():
+def volume_mute() -> str:
     if _OS == "Windows":
         if _PYAUTOGUI:
             pyautogui.press("volumemute")
+        return "Son coupé (muet)."
+    elif _OS == "Darwin":
+        kit.run(["osascript", "-e", "set volume output muted true"], timeout=15)
+        return "Son coupé (muet)."
+    else:
+        before = get_current_mute()
+        if before is True:
+            return "Le son est déjà coupé (muet) ; aucun changement effectué."
+        backend = _linux_volume_cmd()
+        if backend == "wpctl":
+            _run_ok(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"])
+        elif backend == "pactl":
+            _run_ok(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1"])
+        else:
+            raise RuntimeError("Aucun backend volume.")
+        return "Son coupé (muet)."
+
+
+def volume_toggle_mute() -> str:
+    if _OS == "Windows":
+        if _PYAUTOGUI:
+            pyautogui.press("volumemute")
+        return "Muet audio basculé."
     elif _OS == "Darwin":
         kit.run(["osascript", "-e",
-                        "set volume output muted not (output muted of (get volume settings))"], timeout=15)
+                 "set volume output muted not (output muted of (get volume settings))"], timeout=15)
+        return "Muet audio basculé."
     else:
         backend = _linux_volume_cmd()
         if backend == "wpctl":
@@ -382,17 +434,29 @@ def volume_mute():
             _run_ok(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
         else:
             raise RuntimeError("Aucun backend volume.")
+        after = get_current_mute()
+        if after is True:
+            return "Son coupé (muet)."
+        if after is False:
+            return "Son rétabli."
+        return "Muet audio basculé."
 
 
-def volume_unmute():
+def volume_unmute() -> str:
     if _OS == "Darwin":
         kit.run(["osascript", "-e", "set volume output muted false"], timeout=15)
+        return "Son rétabli."
     elif _OS == "Linux":
+        before = get_current_mute()
+        if before is False:
+            return "Le son est déjà activé (non muet) ; aucun changement effectué."
         backend = _linux_volume_cmd()
         if backend == "wpctl":
-            _run_ok(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "off"])
+            _run_ok(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"])
         elif backend == "pactl":
             _run_ok(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"])
+        return "Son rétabli."
+    return "Son rétabli."
 
 
 def volume_set(value: int):
@@ -1211,19 +1275,27 @@ _DELTA_PATTERNS = {
 
 _SPECIAL_PATTERNS = {
     "volume_max": [
-        r"(?:volume|son|audio)\s+(?:à\s+fond|au\s+max|maxi|maximum|100\s*%?)",
-        r"(?:set|put)\s+(?:the\s+)?(?:volume|sound|audio)\s+(?:to\s+)?(?:max|full)",
+        r"(?:(?:augmente|monte|hausse|mets?|r[èe]gle)\s+(?:le\s+)?)?(?:volume|son|audio)\s+(?:[àa]\s+fond|au\s+max(?:imum)?|maxi(?:mum)?|[àa]\s+100\s*%?)",
+        r"(?:set|put|turn)\s+(?:the\s+)?(?:volume|sound|audio)\s+(?:to\s+)?(?:max|full|100\s*%?)",
     ],
     "volume_min": [
-        r"(?:volume|son|audio)\s+(?:au\s+min|mini|minimum|0\s*%?)",
-        r"(?:set|put)\s+(?:the\s+)?(?:volume|sound|audio)\s+(?:to\s+)?(?:min|mute|0)",
+        r"(?:(?:diminue|baisse|r[ée]duis|mets?|r[èe]gle)\s+(?:le\s+)?)?(?:volume|son|audio)\s+(?:au\s+min(?:imum)?|mini(?:mum)?|[àa]\s+0\s*%?)",
+        r"(?:set|put|turn)\s+(?:the\s+)?(?:volume|sound|audio)\s+(?:to\s+)?(?:min|mute|0)",
+    ],
+    "brightness_max": [
+        r"(?:(?:augmente|monte|hausse|mets?|r[èe]gle|pousse)\s+(?:la\s+)?)?(?:luminosit[ée]|brillance|[ée]cran)\s+(?:[àa]\s+fond|au\s+max(?:imum)?|maxi(?:mum)?|[àa]\s+100\s*%?)",
+        r"(?:set|put|turn|increase)\s+(?:the\s+)?(?:brightness|screen)\s+(?:to\s+)?(?:max|full|100\s*%?)",
+    ],
+    "brightness_min": [
+        r"(?:(?:diminue|baisse|r[ée]duis|mets?|r[èe]gle)\s+(?:la\s+)?)?(?:luminosit[ée]|brillance|[ée]cran)\s+(?:au\s+min(?:imum)?|mini(?:mum)?|[àa]\s+0\s*%?)",
+        r"(?:set|put|turn|decrease)\s+(?:the\s+)?(?:brightness|screen)\s+(?:to\s+)?(?:min|minimum|0)",
     ],
     "mute": [
         r"(?:coupe|muet|mute|silencieux)\s+(?:le\s+)?(?:son|volume|audio)",
         r"(?:mute|silence)\s+(?:the\s+)?(?:sound|audio|volume)",
     ],
     "unmute": [
-        r"(?:remets?\s+le\s+son|réactive?\s+le\s+son|annule\s+mute|unmute)",
+        r"(?:remets?\s+le\s+son|r[ée]active?\s+le\s+son|annule\s+mute|unmute)",
         r"(?:unmute|restore\s+sound)",
     ],
 }
@@ -1240,6 +1312,10 @@ def _parse_command_locally(text: str) -> Optional[dict]:
                     return {"action": "volume_set", "value": 100, "confidence": 1.0}
                 elif action == "volume_min":
                     return {"action": "volume_set", "value": 0, "confidence": 1.0}
+                elif action == "brightness_max":
+                    return {"action": "brightness_set", "value": 100, "confidence": 1.0}
+                elif action == "brightness_min":
+                    return {"action": "brightness_set", "value": 1, "confidence": 1.0}
                 elif action == "mute":
                     return {"action": "mute", "value": None, "confidence": 1.0}
                 elif action == "unmute":
@@ -1342,7 +1418,7 @@ ACTION_MAP: Dict[str, Callable] = {
     "volume_down": volume_down,
     "mute": volume_mute,
     "unmute": volume_unmute,
-    "toggle_mute": volume_mute,
+    "toggle_mute": volume_toggle_mute,
     "volume_get": volume_get,
     "brightness_up": brightness_up,
     "brightness_down": brightness_down,
@@ -1458,7 +1534,6 @@ def computer_settings(parameters: dict = None, response=None, player=None,
     raw_action = str(params.get("action", "") or "").strip()
     description = str(params.get("description", "") or "").strip()
     value = params.get("value", None)
-    confirmed = str(params.get("confirmed", "")).lower() in _TRUTHY
 
     # ── Étape 1 : parsing local si aucune action explicite ───────────────
     parsed = None
@@ -1468,14 +1543,6 @@ def computer_settings(parameters: dict = None, response=None, player=None,
             raw_action = parsed["action"]
             if value is None:
                 value = parsed.get("value")
-            if raw_action in ("volume_set", "brightness_set", "volume_up",
-                              "volume_down", "brightness_up", "brightness_down"):
-                target = "volume" if "volume" in raw_action else "brightness"
-                current = get_current_volume() if target == "volume" else get_current_brightness()
-                parsed = _validate_command(parsed, current, target)
-                if parsed.get("warn") and not confirmed:
-                    return (f"⚠️ {parsed['warn']} "
-                            f"Je peux exécuter « {raw_action} {value} » si tu confirmes.")
         else:
             detected = _detect_action(description)
             if detected.get("error"):
@@ -1487,8 +1554,36 @@ def computer_settings(parameters: dict = None, response=None, player=None,
     action = raw_action.lower().strip().replace(" ", "_").replace("-", "_")
     action = _ACTION_ALIASES.get(action, action)
 
+    # Si le modèle a choisi brightness_up / volume_up alors que la consigne
+    # dit « à fond / au max / à 100% », convertir en *_set(100).
+    if description:
+        desc_low = description.lower()
+        if action in ("brightness_up", "brightness_set") and re.search(
+            r"\b(?:[àa]\s+fond|au\s+max(?:imum)?|maxi(?:mum)?|100\s*%)", desc_low
+        ):
+            action = "brightness_set"
+            value = 100
+        elif action in ("brightness_down", "brightness_set") and re.search(
+            r"\b(?:au\s+min(?:imum)?|mini(?:mum)?)\b", desc_low
+        ) and value is None:
+            action = "brightness_set"
+            value = 1
+        elif action in ("volume_up", "volume_set") and re.search(
+            r"\b(?:[àa]\s+fond|au\s+max(?:imum)?|maxi(?:mum)?|100\s*%)", desc_low
+        ):
+            action = "volume_set"
+            value = 100
+        elif action in ("volume_down", "volume_set") and re.search(
+            r"\b(?:au\s+min(?:imum)?|mini(?:mum)?|0\s*%)", desc_low
+        ) and value is None:
+            action = "volume_set"
+            value = 0
+
     # Extraction de valeur depuis la description si toujours absente
     if action == "brightness_set" and value is None and description:
+        match = re.search(r"(\d+)\s*%?", description)
+        value = int(match.group(1)) if match else 50
+    elif action == "volume_set" and value is None and description:
         match = re.search(r"(\d+)\s*%?", description)
         value = int(match.group(1)) if match else 50
 
@@ -1531,54 +1626,92 @@ def computer_settings(parameters: dict = None, response=None, player=None,
     # ── Exécution ────────────────────────────────────────────────────────
     try:
         if action == "volume_set":
+            target_val = max(0, min(100, int(value if value is not None else 50)))
             before = get_current_volume()
-            volume_set(int(value if value is not None else 50))
+            if before is not None and before == target_val:
+                if target_val == 100:
+                    return "Le volume est déjà au maximum (100%) ; aucun changement effectué."
+                if target_val == 0:
+                    return "Le volume est déjà au minimum (0%) ; aucun changement effectué."
+                return f"Le volume est déjà à {before}% ; aucun changement effectué."
+            volume_set(target_val)
             if before is not None:
                 push_undo(
-                    f"réglage du volume à {value}%",
+                    f"réglage du volume à {target_val}%",
                     lambda old=before: (volume_set(old), f"Volume restauré à {old}%.")[1],
                 )
             vol_after = get_current_volume()
-            return (f"Volume réglé à {vol_after}%." if vol_after is not None
-                    else f"Volume réglé à {value}%.")
+            final_vol = vol_after if vol_after is not None else target_val
+            if before is not None:
+                return f"Volume réglé à {final_vol}% (était à {before}%)."
+            return f"Volume réglé à {final_vol}%."
         if action == "brightness_set":
+            target_val = max(0, min(100, int(value if value is not None else 50)))
             before = get_current_brightness()
-            brightness_set(int(value if value is not None else 50))
+            if before is not None and before == target_val:
+                if target_val == 100:
+                    return "La luminosité est déjà au maximum (100%) ; aucun changement effectué."
+                if target_val <= 1:
+                    return f"La luminosité est déjà au minimum ({before}%) ; aucun changement effectué."
+                return f"La luminosité est déjà à {before}% ; aucun changement effectué."
+            brightness_set(target_val)
             if before is not None:
                 push_undo(
-                    f"réglage de la luminosité à {value}%",
+                    f"réglage de la luminosité à {target_val}%",
                     lambda old=before: (brightness_set(old), f"Luminosité restaurée à {old}%.")[1],
                 )
-            return f"Luminosité réglée à {value}%."
+            b_after = get_current_brightness()
+            final_b = b_after if b_after is not None else target_val
+            if before is not None:
+                return f"Luminosité réglée à {final_b}% (était à {before}%)."
+            return f"Luminosité réglée à {final_b}%."
         if action in ("volume_up", "volume_down"):
             before = get_current_volume()
             delta = int(value or 10)
+            if action == "volume_up" and before is not None and before >= 100:
+                return "Le volume est déjà au maximum (100%) ; impossible de l'augmenter davantage."
+            if action == "volume_down" and before is not None and before <= 0:
+                return "Le volume est déjà au minimum (0%) ; impossible de le baisser davantage."
             if action == "volume_up":
                 volume_up(delta)
             else:
                 volume_down(delta)
             v = get_current_volume()
+            if before is not None and v is not None and v == before:
+                bound = "maximum" if action == "volume_up" else "minimum"
+                return f"Le volume est déjà au {bound} ({v}%) ; aucun changement effectué."
             if before is not None:
                 push_undo(
                     f"modification du volume ({action})",
                     lambda old=before: (volume_set(old), f"Volume restauré à {old}%.")[1],
                 )
             label = "augmenté" if action == "volume_up" else "diminué"
+            if before is not None and v is not None:
+                return f"Volume {label} de {before}% → {v}%."
             return f"Volume {label} de {delta}%{f' → {v}%' if v is not None else ''}."
         if action in ("brightness_up", "brightness_down"):
             before = get_current_brightness()
             delta = int(value or 10)
+            if action == "brightness_up" and before is not None and before >= 100:
+                return "La luminosité est déjà au maximum (100%) ; impossible de l'augmenter davantage."
+            if action == "brightness_down" and before is not None and before <= 0:
+                return "La luminosité est déjà au minimum (0%) ; impossible de la baisser davantage."
             if action == "brightness_up":
                 brightness_up(delta)
             else:
                 brightness_down(delta)
             b = get_current_brightness()
+            if before is not None and b is not None and b == before:
+                bound = "maximum" if action == "brightness_up" else "minimum"
+                return f"La luminosité est déjà au {bound} ({b}%) ; aucun changement effectué."
             if before is not None:
                 push_undo(
                     f"modification de la luminosité ({action})",
                     lambda old=before: (brightness_set(old), f"Luminosité restaurée à {old}%.")[1],
                 )
             label = "augmentée" if action == "brightness_up" else "diminuée"
+            if before is not None and b is not None:
+                return f"Luminosité {label} de {before}% → {b}%."
             return f"Luminosité {label} de {delta}%{f' → {b}%' if b is not None else ''}."
         if action in ("type_text", "write_on_screen", "type", "write"):
             text = str(value or params.get("text", "")).strip()
